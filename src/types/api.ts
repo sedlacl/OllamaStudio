@@ -121,17 +121,40 @@ export type ActiveRequestPhase =
   | 'done'
   | 'unknown'
 
+export type RequestHistoryResult = 'done' | 'stale'
+
 export interface ActiveRequest {
   taskId: number
   slotId: number | null
   phase: ActiveRequestPhase
   progressPercent: number | null
   nTokens: number | null
+  promptTokens: number | null
+  generationTokens: number | null
   elapsedSeconds: number | null
   tokensPerSec: number | null
+  promptTokensPerSec: number | null
+  generationTokensPerSec: number | null
   firstSeenAt: number
   updatedAt: number
   status: 'active' | 'completed'
+  completionReason: string | null
+}
+
+export interface RequestHistoryItem {
+  taskId: number
+  slotId: number | null
+  phase: ActiveRequestPhase | null
+  result: RequestHistoryResult
+  completionReason: string | null
+  progressPercent: number | null
+  promptTokens: number | null
+  generationTokens: number | null
+  elapsedSeconds: number | null
+  promptTokensPerSec: number | null
+  generationTokensPerSec: number | null
+  startedAt: number
+  completedAt: number
 }
 
 export interface DashboardData {
@@ -146,6 +169,7 @@ export interface DashboardData {
   memory: { workingSetMb: number; pid: number | null }
   activeRequests: number | null
   activeRequestDetails: ActiveRequest[]
+  requestHistory: RequestHistoryItem[]
   tokensPerSec: number | null
   uptimeSeconds: number | null
   serveStatus: string

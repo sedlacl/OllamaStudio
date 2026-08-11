@@ -167,6 +167,7 @@ function registerIpc(): void {
       () => logBuffer.getRollingTokensPerSec(),
       () => logBuffer.getActiveRequestEstimate(),
       () => logBuffer.getActiveRequests(),
+      () => logBuffer.getRequestHistory(),
       state.status
     )
     loadedModelCount = metrics.loadedCount

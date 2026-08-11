@@ -4,7 +4,9 @@ import {
   api,
   type ActiveRequest,
   type ActiveRequestPhase,
-  type DashboardData
+  type DashboardData,
+  type RequestHistoryItem,
+  type RequestHistoryResult
 } from '../types/api'
 
 function formatMb(mb: number): string {
@@ -49,6 +51,32 @@ function formatElapsed(seconds: number | null): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${m}m ${s.toFixed(0)}s`
+}
+
+function formatClock(ts: number): string {
+  return new Date(ts).toLocaleTimeString('cs-CZ', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+function resultLabel(result: RequestHistoryResult): string {
+  return result === 'done' ? 'Dokončeno' : 'Stale / timeout'
+}
+
+function formatTokenPair(prompt: number | null, generation: number | null): string {
+  if (prompt == null && generation == null) return '—'
+  const p = prompt != null ? prompt.toLocaleString('cs-CZ') : '—'
+  const g = generation != null ? generation.toLocaleString('cs-CZ') : '—'
+  return `${p} / ${g}`
+}
+
+function formatTpsPair(prompt: number | null, generation: number | null): string {
+  if (prompt == null && generation == null) return '—'
+  const p = prompt != null ? prompt.toFixed(1) : '—'
+  const g = generation != null ? generation.toFixed(1) : '—'
+  return `${p} / ${g}`
 }
 
 function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
@@ -99,6 +127,37 @@ function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
   )
 }
 
+function HistoryRow({ item }: { item: RequestHistoryItem }): JSX.Element {
+  const resultClass =
+    item.result === 'done' ? 'history-result-done' : 'history-result-stale'
+  const reason =
+    item.completionReason ??
+    (item.phase && item.phase !== 'done' ? phaseLabel(item.phase) : null)
+
+  return (
+    <tr>
+      <td className="mono">{item.taskId}</td>
+      <td className="mono">{item.slotId != null ? item.slotId : '—'}</td>
+      <td>
+        <span className={resultClass}>{resultLabel(item.result)}</span>
+        {reason && <div className="history-reason">{reason}</div>}
+      </td>
+      <td>
+        {item.progressPercent != null ? `${item.progressPercent.toFixed(0)} %` : '—'}
+      </td>
+      <td className="mono">
+        {formatTokenPair(item.promptTokens, item.generationTokens)}
+      </td>
+      <td>{formatElapsed(item.elapsedSeconds)}</td>
+      <td className="mono">
+        {formatTpsPair(item.promptTokensPerSec, item.generationTokensPerSec)}
+      </td>
+      <td className="mono">{formatClock(item.startedAt)}</td>
+      <td className="mono">{formatClock(item.completedAt)}</td>
+    </tr>
+  )
+}
+
 export default function Dashboard(): JSX.Element {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -128,6 +187,7 @@ export default function Dashboard(): JSX.Element {
   const vramUsed = gpu ? gpu.memoryUsedMb : data?.vramFallbackMb
   const vramTotal = gpu?.memoryTotalMb ?? null
   const details = data?.activeRequestDetails ?? []
+  const history = data?.requestHistory ?? []
 
   return (
     <div>
@@ -224,6 +284,42 @@ export default function Dashboard(): JSX.Element {
             {details.map((req) => (
               <ActiveRequestCard key={req.taskId} req={req} />
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="active-req-section-header">
+          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Poslední požadavky</h2>
+          <span className="metric-label" style={{ margin: 0 }}>
+            Max. 10 · nejnovější nahoře
+          </span>
+        </div>
+
+        {history.length === 0 ? (
+          <p className="history-empty">Zatím žádná historie požadavků</p>
+        ) : (
+          <div className="history-table-wrap">
+            <table className="table history-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Slot</th>
+                  <th>Výsledek</th>
+                  <th>Progress</th>
+                  <th>Tokeny (p/g)</th>
+                  <th>Čas</th>
+                  <th>tok/s (p/g)</th>
+                  <th>Start</th>
+                  <th>Konec</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((item) => (
+                  <HistoryRow key={`${item.taskId}-${item.startedAt}`} item={item} />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

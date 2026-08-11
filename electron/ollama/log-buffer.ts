@@ -9,6 +9,9 @@ export type ActiveRequestPhase =
   | 'done'
   | 'unknown'
 
+/** Outcome retained in request history (never invent success for stale tasks). */
+export type RequestHistoryResult = 'done' | 'stale'
+
 export interface ParsedLogEvent {
   durationMs?: number
   promptTokensPerSec?: number
@@ -21,11 +24,14 @@ export interface ParsedLogEvent {
   taskId?: number
   phase?: ActiveRequestPhase
   nTokens?: number
+  /** Which token counter the nTokens value represents, when known. */
+  tokenKind?: 'prompt' | 'generation'
   progress?: number
   elapsedSeconds?: number
   tokensPerSec?: number
   isSlotActivity?: boolean
   isTaskComplete?: boolean
+  completionReason?: string
 }
 
 export interface ActiveRequest {
@@ -35,24 +41,37 @@ export interface ActiveRequest {
   /** 0–100 when known from logs; null when absent (do not invent). */
   progressPercent: number | null
   nTokens: number | null
+  promptTokens: number | null
+  generationTokens: number | null
   elapsedSeconds: number | null
   tokensPerSec: number | null
+  promptTokensPerSec: number | null
+  generationTokensPerSec: number | null
   firstSeenAt: number
   updatedAt: number
   status: 'active' | 'completed'
+  completionReason: string | null
 }
 
-export interface LogEntry {
-  id: number
-  timestamp: number
-  stream: 'stdout' | 'stderr'
-  text: string
-  level: LogLevel
-  category: LogCategory
-  parsed?: ParsedLogEvent
+/** Completed/stale task snapshot for dashboard history (max 10, newest first). */
+export interface RequestHistoryItem {
+  taskId: number
+  slotId: number | null
+  phase: ActiveRequestPhase | null
+  result: RequestHistoryResult
+  completionReason: string | null
+  progressPercent: number | null
+  promptTokens: number | null
+  generationTokens: number | null
+  elapsedSeconds: number | null
+  promptTokensPerSec: number | null
+  generationTokensPerSec: number | null
+  startedAt: number
+  completedAt: number
 }
 
 const MAX_ENTRIES = 5000
+const MAX_HISTORY = 10
 /** Keep completed tasks briefly so the UI can show a short done state. */
 const COMPLETED_RETENTION_MS = 8_000
 /** Drop tasks with no log updates (stale/aborted). */
@@ -91,6 +110,22 @@ const SLOT_SUMMARY_TOKENS_RE = /\/\s*(\d+)\s+tokens\b/i
 const SLOT_DONE_RE =
   /\bslot\s+release\b|\bstop(?:ped)?\s+processing\b|\bdone processing\b/i
 
+export interface LogEntry {
+  id: number
+  timestamp: number
+  stream: 'stdout' | 'stderr'
+  text: string
+  level: LogLevel
+  category: LogCategory
+  parsed?: ParsedLogEvent
+}
+
+export interface LogBufferOptions {
+  /** Injectable clock for deterministic tests. */
+  now?: () => number
+  maxHistory?: number
+}
+
 export class LogBuffer {
   private entries: LogEntry[] = []
   private nextId = 1
@@ -99,6 +134,18 @@ export class LogBuffer {
   private recentGenTps: number[] = []
   private activeRequestEstimate = 0
   private activeRequests = new Map<number, ActiveRequest>()
+  private requestHistory: RequestHistoryItem[] = []
+  private readonly nowFn: () => number
+  private readonly maxHistory: number
+
+  constructor(options?: LogBufferOptions) {
+    this.nowFn = options?.now ?? (() => Date.now())
+    this.maxHistory = options?.maxHistory ?? MAX_HISTORY
+  }
+
+  private now(): number {
+    return this.nowFn()
+  }
 
   setFileWriter(writer: { write: (s: string) => void } | null): void {
     this.fileStream = writer
@@ -155,11 +202,18 @@ export class LogBuffer {
     })
   }
 
+  /** Newest-first completed/stale snapshots (max 10). Independent of live grace period. */
+  getRequestHistory(): RequestHistoryItem[] {
+    this.syncActiveRequestsFromEntries()
+    return this.requestHistory.slice()
+  }
+
   clear(): void {
     this.entries = []
     this.recentGenTps = []
     this.activeRequestEstimate = 0
     this.activeRequests.clear()
+    this.requestHistory = []
   }
 
   private createEntry(stream: 'stdout' | 'stderr', line: string): LogEntry {
@@ -197,7 +251,7 @@ export class LogBuffer {
 
     return {
       id: this.nextId++,
-      timestamp: Date.now(),
+      timestamp: this.now(),
       stream,
       text: line,
       level,
@@ -224,13 +278,22 @@ export class LogBuffer {
    * Rebuild live task map from recent buffer entries so dashboard stays correct
    * even if the in-memory map drifted (hot reload, missed updates, prune races).
    */
-  private syncActiveRequestsFromEntries(now = Date.now()): void {
+  private syncActiveRequestsFromEntries(now = this.now()): void {
+    const previous = new Map(this.activeRequests)
     this.activeRequests.clear()
     const cutoff = now - STALE_ACTIVE_MS
     for (const entry of this.entries) {
       if (entry.timestamp < cutoff) continue
       this.updateActiveRequests(entry, now)
     }
+
+    // Active tasks that fell out of the replay window were never completed → stale.
+    for (const [taskId, req] of previous) {
+      if (req.status === 'active' && !this.activeRequests.has(taskId)) {
+        this.archiveRequest(req, 'stale', now, req.completionReason)
+      }
+    }
+
     this.pruneActiveRequests(now)
   }
 
@@ -246,11 +309,16 @@ export class LogBuffer {
       phase: p.phase ?? 'unknown',
       progressPercent: null,
       nTokens: null,
+      promptTokens: null,
+      generationTokens: null,
       elapsedSeconds: null,
       tokensPerSec: null,
+      promptTokensPerSec: null,
+      generationTokensPerSec: null,
       firstSeenAt: now,
       updatedAt: now,
-      status: 'active'
+      status: 'active',
+      completionReason: null
     }
 
     if (p.slotId != null) req.slotId = p.slotId
@@ -261,37 +329,119 @@ export class LogBuffer {
         p.phase === 'caching'
       if (!preferKeep) req.phase = p.phase
     }
-    if (p.nTokens != null) req.nTokens = p.nTokens
+    if (p.nTokens != null) {
+      req.nTokens = p.nTokens
+      if (p.tokenKind === 'prompt') req.promptTokens = p.nTokens
+      else if (p.tokenKind === 'generation') req.generationTokens = p.nTokens
+      else if (req.phase === 'prompt_processing') req.promptTokens = p.nTokens
+      else if (req.phase === 'generation') req.generationTokens = p.nTokens
+    }
     if (p.progress != null) {
       // Logs emit progress as 0–1 (e.g. 0.53); tolerate accidental percentages.
       req.progressPercent = p.progress <= 1 ? p.progress * 100 : p.progress
     }
     if (p.elapsedSeconds != null) req.elapsedSeconds = p.elapsedSeconds
     if (p.tokensPerSec != null) req.tokensPerSec = p.tokensPerSec
+    if (p.promptTokensPerSec != null) req.promptTokensPerSec = p.promptTokensPerSec
+    if (p.generationTokensPerSec != null) {
+      req.generationTokensPerSec = p.generationTokensPerSec
+    }
+    if (p.completionReason) req.completionReason = p.completionReason
+
+    // Snapshot observed progress before live UI forces a full bar on completion.
+    const observedProgress = req.progressPercent
 
     if (p.isTaskComplete || p.phase === 'done') {
       req.status = 'completed'
       req.phase = 'done'
       req.progressPercent = 100
+      this.activeRequests.set(p.taskId, req)
+      // Archive only on live append — sync replay must not re-insert evicted history rows.
+      if (pruneNow == null) {
+        this.archiveRequest(req, 'done', now, req.completionReason, observedProgress)
+      }
     } else {
       req.status = 'active'
+      this.activeRequests.set(p.taskId, req)
     }
 
     req.updatedAt = now
-    this.activeRequests.set(p.taskId, req)
     if (pruneNow == null) this.pruneActiveRequests(now)
   }
 
-  private pruneActiveRequests(now = Date.now()): void {
+  private pruneActiveRequests(now = this.now()): void {
     for (const [taskId, req] of this.activeRequests) {
       if (req.status === 'completed' && now - req.updatedAt > COMPLETED_RETENTION_MS) {
+        // Already snapshotted on completion; just drop from live map.
         this.activeRequests.delete(taskId)
         continue
       }
       if (req.status === 'active' && now - req.updatedAt > STALE_ACTIVE_MS) {
+        this.archiveRequest(req, 'stale', now, req.completionReason)
         this.activeRequests.delete(taskId)
       }
     }
+  }
+
+  private archiveRequest(
+    req: ActiveRequest,
+    result: RequestHistoryResult,
+    completedAt: number,
+    completionReason: string | null,
+    /** Observed progress only — do not pass fabricated 100% unless seen in logs. */
+    progressPercent: number | null = req.progressPercent
+  ): void {
+    const item: RequestHistoryItem = {
+      taskId: req.taskId,
+      slotId: req.slotId,
+      phase: result === 'done' ? 'done' : req.phase === 'done' ? null : req.phase,
+      result,
+      completionReason,
+      progressPercent,
+      promptTokens: req.promptTokens,
+      generationTokens: req.generationTokens,
+      elapsedSeconds: req.elapsedSeconds,
+      promptTokensPerSec: req.promptTokensPerSec,
+      generationTokensPerSec: req.generationTokensPerSec,
+      startedAt: req.firstSeenAt,
+      completedAt
+    }
+
+    const existingIdx = this.requestHistory.findIndex(
+      (h) => h.taskId === item.taskId && h.startedAt === item.startedAt
+    )
+
+    if (existingIdx >= 0) {
+      const prev = this.requestHistory[existingIdx]
+      // Never downgrade a successful completion to stale via replay/prune races.
+      if (prev.result === 'done' && result !== 'done') return
+      // Update in place — do not reorder (sync replay must not reshuffle newest-first).
+      this.requestHistory[existingIdx] = mergeHistoryItem(prev, item)
+      return
+    }
+
+    this.requestHistory.unshift(item)
+    if (this.requestHistory.length > this.maxHistory) {
+      this.requestHistory.length = this.maxHistory
+    }
+  }
+}
+
+function mergeHistoryItem(prev: RequestHistoryItem, next: RequestHistoryItem): RequestHistoryItem {
+  return {
+    taskId: next.taskId,
+    slotId: next.slotId ?? prev.slotId,
+    phase: next.phase ?? prev.phase,
+    result: next.result === 'done' || prev.result === 'done' ? 'done' : next.result,
+    completionReason: next.completionReason ?? prev.completionReason,
+    progressPercent: next.progressPercent ?? prev.progressPercent,
+    promptTokens: next.promptTokens ?? prev.promptTokens,
+    generationTokens: next.generationTokens ?? prev.generationTokens,
+    elapsedSeconds: next.elapsedSeconds ?? prev.elapsedSeconds,
+    promptTokensPerSec: next.promptTokensPerSec ?? prev.promptTokensPerSec,
+    generationTokensPerSec: next.generationTokensPerSec ?? prev.generationTokensPerSec,
+    startedAt: prev.startedAt,
+    completedAt: Math.max(prev.completedAt, next.completedAt)
   }
 }
 
@@ -310,6 +460,13 @@ function parseExplicitLevel(line: string): LogLevel | undefined {
     default:
       return 'info'
   }
+}
+
+function detectCompletionReason(line: string): string | null {
+  if (/\bslot\s+release\b/i.test(line)) return 'slot release'
+  if (/\bstop(?:ped)?\s+processing\b/i.test(line)) return 'stop processing'
+  if (/\bdone processing\b/i.test(line)) return 'done processing'
+  return null
 }
 
 function detectPhase(line: string): ActiveRequestPhase | undefined {
@@ -374,11 +531,16 @@ function parseLine(line: string): ParsedLogEvent {
     const nDecoded = line.match(SLOT_N_DECODED_RE)
     if (nDecoded) {
       parsed.nTokens = parseInt(nDecoded[1], 10)
+      parsed.tokenKind = 'generation'
       parsed.phase = parsed.phase ?? 'generation'
     }
 
     const nTokens = line.match(SLOT_N_TOKENS_RE)
-    if (nTokens) parsed.nTokens = parseInt(nTokens[1], 10)
+    if (nTokens) {
+      parsed.nTokens = parseInt(nTokens[1], 10)
+      if (parsed.phase === 'prompt_processing') parsed.tokenKind = 'prompt'
+      else if (parsed.phase === 'generation') parsed.tokenKind = 'generation'
+    }
 
     if (parsed.nTokens == null) {
       const summaryTokens = line.match(SLOT_SUMMARY_TOKENS_RE)
@@ -410,6 +572,7 @@ function parseLine(line: string): ParsedLogEvent {
     if (parsed.phase === 'done' || SLOT_DONE_RE.test(line)) {
       parsed.isTaskComplete = true
       parsed.phase = parsed.phase ?? 'done'
+      parsed.completionReason = detectCompletionReason(line)
     }
   }
 

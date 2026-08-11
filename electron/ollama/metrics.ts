@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import type { OllamaClient } from './client'
-import type { ActiveRequest } from './log-buffer'
+import type { ActiveRequest, RequestHistoryItem } from './log-buffer'
 
 const execFileAsync = promisify(execFile)
 
@@ -24,6 +24,7 @@ export interface DashboardMetrics {
   memory: ProcessMemory
   activeRequests: number | null
   activeRequestDetails: ActiveRequest[]
+  requestHistory: RequestHistoryItem[]
   tokensPerSec: number | null
   uptimeSeconds: number | null
   serveStatus: string
@@ -38,6 +39,7 @@ export async function collectMetrics(
   getTokensPerSec: () => number | null,
   getActiveRequestCount: () => number | null,
   getActiveRequestDetails: () => ActiveRequest[],
+  getRequestHistory: () => RequestHistoryItem[],
   serveStatus: string
 ): Promise<DashboardMetrics> {
   const [gpu, ps, version, memory] = await Promise.all([
@@ -67,6 +69,7 @@ export async function collectMetrics(
     memory,
     activeRequests: getActiveRequestCount(),
     activeRequestDetails: getActiveRequestDetails(),
+    requestHistory: getRequestHistory(),
     tokensPerSec: getTokensPerSec(),
     uptimeSeconds,
     serveStatus,

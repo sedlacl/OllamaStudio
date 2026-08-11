@@ -451,6 +451,45 @@ button {
   }
 }
 
+.history-empty {
+  margin: 0;
+  padding: 8px 0 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.history-table-wrap {
+  overflow-x: auto;
+}
+
+.history-table {
+  margin: 0;
+  font-size: 12px;
+}
+
+.history-table th,
+.history-table td {
+  padding: 6px 8px;
+  white-space: nowrap;
+}
+
+.history-result-done {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.history-result-stale {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.history-reason {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 .progress-bar {
   height: 6px;
   background: var(--border);
