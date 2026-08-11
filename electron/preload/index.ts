@@ -1,0 +1,57 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+export interface Api {
+  getServeStatus: () => Promise<unknown>
+  getDashboard: () => Promise<unknown>
+  getModelsTags: () => Promise<unknown>
+  getModelsPs: () => Promise<unknown>
+  modelShow: (name: string) => Promise<unknown>
+  modelLoad: (name: string) => Promise<void>
+  modelUnload: (name: string) => Promise<void>
+  modelDelete: (name: string) => Promise<void>
+  modelCopy: (source: string, destination: string) => Promise<void>
+  modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
+  onPullProgress: (cb: (data: unknown) => void) => () => void
+  getServerConfig: () => Promise<unknown>
+  saveServerConfigAndRestart: (config: unknown) => Promise<unknown>
+  startServer: (forceKillConflict?: boolean) => Promise<unknown>
+  stopServer: () => Promise<unknown>
+  restartServer: (forceKillConflict?: boolean) => Promise<unknown>
+  getLogs: (limit?: number) => Promise<unknown>
+  clearLogs: () => Promise<boolean>
+  subscribeLogs: (cb: (entry: unknown) => void) => () => void
+  detectOllamaBinary: () => Promise<string | null>
+}
+
+const api: Api = {
+  getServeStatus: () => ipcRenderer.invoke('get-serve-status'),
+  getDashboard: () => ipcRenderer.invoke('get-dashboard'),
+  getModelsTags: () => ipcRenderer.invoke('get-models-tags'),
+  getModelsPs: () => ipcRenderer.invoke('get-models-ps'),
+  modelShow: (name) => ipcRenderer.invoke('model-show', name),
+  modelLoad: (name) => ipcRenderer.invoke('model-load', name),
+  modelUnload: (name) => ipcRenderer.invoke('model-unload', name),
+  modelDelete: (name) => ipcRenderer.invoke('model-delete', name),
+  modelCopy: (source, destination) => ipcRenderer.invoke('model-copy', source, destination),
+  modelPull: (name) => ipcRenderer.invoke('model-pull', name),
+  onPullProgress: (cb) => {
+    const handler = (_: unknown, data: unknown) => cb(data)
+    ipcRenderer.on('pull-progress', handler)
+    return () => ipcRenderer.removeListener('pull-progress', handler)
+  },
+  getServerConfig: () => ipcRenderer.invoke('get-server-config'),
+  saveServerConfigAndRestart: (config) => ipcRenderer.invoke('save-server-config-and-restart', config),
+  startServer: (force) => ipcRenderer.invoke('start-server', force),
+  stopServer: () => ipcRenderer.invoke('stop-server'),
+  restartServer: (force) => ipcRenderer.invoke('restart-server', force),
+  getLogs: (limit) => ipcRenderer.invoke('get-logs', limit),
+  clearLogs: () => ipcRenderer.invoke('clear-logs'),
+  subscribeLogs: (cb) => {
+    const handler = (_: unknown, entry: unknown) => cb(entry)
+    ipcRenderer.on('log-entry', handler)
+    return () => ipcRenderer.removeListener('log-entry', handler)
+  },
+  detectOllamaBinary: () => ipcRenderer.invoke('detect-ollama-binary')
+}
+
+contextBridge.exposeInMainWorld('ollamaStudio', api)
