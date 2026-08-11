@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { api, type DashboardData } from '../types/api'
+import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
+import {
+  api,
+  type ActiveRequest,
+  type ActiveRequestPhase,
+  type DashboardData
+} from '../types/api'
 
 function formatMb(mb: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
@@ -26,9 +32,77 @@ function connectionLabel(c: string): string {
   return map[c] ?? c
 }
 
+function phaseLabel(phase: ActiveRequestPhase): string {
+  const map: Record<ActiveRequestPhase, string> = {
+    prompt_processing: 'Zpracování promptu',
+    generation: 'Generování',
+    caching: 'Cache / KV',
+    done: 'Dokončeno',
+    unknown: 'Neznámá fáze'
+  }
+  return map[phase]
+}
+
+function formatElapsed(seconds: number | null): string {
+  if (seconds == null) return '—'
+  if (seconds < 60) return `${seconds.toFixed(1)} s`
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}m ${s.toFixed(0)}s`
+}
+
+function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
+  const showBar = req.progressPercent != null
+  const pct = showBar ? Math.min(100, Math.max(0, req.progressPercent!)) : null
+
+  return (
+    <div className={`active-req ${req.status === 'completed' ? 'active-req-done' : ''}`}>
+      <div className="active-req-header">
+        <div className="active-req-ids">
+          <span className="mono">task {req.taskId}</span>
+          {req.slotId != null && <span className="mono">slot {req.slotId}</span>}
+        </div>
+        <span className="active-req-phase">{phaseLabel(req.phase)}</span>
+      </div>
+
+      {showBar && (
+        <div className="progress-bar active-req-bar">
+          <div className="progress-fill" style={{ width: `${pct}%` }} />
+        </div>
+      )}
+
+      <div className="active-req-metrics">
+        <div>
+          <div className="metric-label">Progress</div>
+          <div className="active-req-value">
+            {pct != null ? `${pct.toFixed(0)} %` : '—'}
+          </div>
+        </div>
+        <div>
+          <div className="metric-label">Tokeny</div>
+          <div className="active-req-value">
+            {req.nTokens != null ? req.nTokens.toLocaleString('cs-CZ') : '—'}
+          </div>
+        </div>
+        <div>
+          <div className="metric-label">Čas</div>
+          <div className="active-req-value">{formatElapsed(req.elapsedSeconds)}</div>
+        </div>
+        <div>
+          <div className="metric-label">Tokeny/s</div>
+          <div className="active-req-value">
+            {req.tokensPerSec != null ? req.tokensPerSec.toFixed(1) : '—'}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Dashboard(): JSX.Element {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [detailsModel, setDetailsModel] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async (): Promise<void> => {
@@ -53,6 +127,7 @@ export default function Dashboard(): JSX.Element {
   const gpu = data?.gpu
   const vramUsed = gpu ? gpu.memoryUsedMb : data?.vramFallbackMb
   const vramTotal = gpu?.memoryTotalMb ?? null
+  const details = data?.activeRequestDetails ?? []
 
   return (
     <div>
@@ -132,6 +207,27 @@ export default function Dashboard(): JSX.Element {
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="active-req-section-header">
+          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Aktivní požadavky (live)</h2>
+          <span className="metric-label" style={{ margin: 0 }}>
+            Parsováno z Ollama / llama runner logů (slot · task)
+          </span>
+        </div>
+
+        {details.length === 0 ? (
+          <p className="empty-state" style={{ padding: '16px 0 4px' }}>
+            Žádný aktivní požadavek v logách
+          </p>
+        ) : (
+          <div className="active-req-list">
+            {details.map((req) => (
+              <ActiveRequestCard key={req.taskId} req={req} />
+            ))}
+          </div>
+        )}
+      </div>
+
       {data && data.loadedModels.length > 0 && (
         <div className="card">
           <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Načtené modely</h2>
@@ -140,6 +236,7 @@ export default function Dashboard(): JSX.Element {
               <tr>
                 <th>Název</th>
                 <th>VRAM</th>
+                <th aria-label="Akce" />
               </tr>
             </thead>
             <tbody>
@@ -147,11 +244,26 @@ export default function Dashboard(): JSX.Element {
                 <tr key={m.name}>
                   <td className="mono">{m.name}</td>
                   <td>{m.sizeVram ? formatMb(m.sizeVram / (1024 * 1024)) : '—'}</td>
+                  <td className="table-actions">
+                    <button
+                      type="button"
+                      className="btn btn-icon"
+                      title="Zobrazit všechny parametry"
+                      aria-label={`Parametry modelu ${m.name}`}
+                      onClick={() => setDetailsModel(m.name)}
+                    >
+                      …
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {detailsModel && (
+        <LoadedModelDetailsDialog modelName={detailsModel} onClose={() => setDetailsModel(null)} />
       )}
     </div>
   )

@@ -87,10 +87,12 @@ export default function Logs(): JSX.Element {
           filtered.map((e) => (
             <div
               key={e.id}
-              className={`log-line${e.level === 'error' ? ' error' : e.level === 'warn' ? ' warn' : ''}`}
+              className={`log-line${e.level === 'error' ? ' error' : e.level === 'warn' ? ' warn' : e.level === 'debug' ? ' debug' : ''}`}
             >
               <span style={{ color: 'var(--text-muted)' }}>[{formatTime(e.timestamp)}]</span>{' '}
-              <span style={{ color: 'var(--text-muted)' }}>[{e.stream}]</span> {e.text}
+              <span style={{ color: 'var(--text-muted)' }}>[{e.stream}]</span>
+              {e.level === 'debug' && <span className="log-level-badge debug">DEBUG</span>}{' '}
+              {e.text}
               {e.parsed?.generationTokensPerSec != null && (
                 <span style={{ color: 'var(--accent)' }}> · {e.parsed.generationTokensPerSec.toFixed(1)} tok/s</span>
               )}

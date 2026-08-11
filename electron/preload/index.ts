@@ -6,11 +6,12 @@ export interface Api {
   getModelsTags: () => Promise<unknown>
   getModelsPs: () => Promise<unknown>
   modelShow: (name: string) => Promise<unknown>
-  modelLoad: (name: string) => Promise<void>
+  modelLoad: (name: string, options?: unknown) => Promise<void>
   modelUnload: (name: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
+  getModelLoadOptions: (name: string) => Promise<unknown>
   onPullProgress: (cb: (data: unknown) => void) => () => void
   getServerConfig: () => Promise<unknown>
   saveServerConfigAndRestart: (config: unknown) => Promise<unknown>
@@ -29,11 +30,12 @@ const api: Api = {
   getModelsTags: () => ipcRenderer.invoke('get-models-tags'),
   getModelsPs: () => ipcRenderer.invoke('get-models-ps'),
   modelShow: (name) => ipcRenderer.invoke('model-show', name),
-  modelLoad: (name) => ipcRenderer.invoke('model-load', name),
+  modelLoad: (name, options) => ipcRenderer.invoke('model-load', name, options),
   modelUnload: (name) => ipcRenderer.invoke('model-unload', name),
   modelDelete: (name) => ipcRenderer.invoke('model-delete', name),
   modelCopy: (source, destination) => ipcRenderer.invoke('model-copy', source, destination),
   modelPull: (name) => ipcRenderer.invoke('model-pull', name),
+  getModelLoadOptions: (name) => ipcRenderer.invoke('get-model-load-options', name),
   onPullProgress: (cb) => {
     const handler = (_: unknown, data: unknown) => cb(data)
     ipcRenderer.on('pull-progress', handler)

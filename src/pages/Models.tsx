@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type ModelShow, type ModelTag, type PullProgress, type RunningModel } from '../types/api'
+import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
+import LoadModelDialog from '../components/LoadModelDialog'
+import {
+  api,
+  type AppConfig,
+  type ModelLoadOptions,
+  type ModelShow,
+  type ModelTag,
+  type PullProgress,
+  type RunningModel
+} from '../types/api'
 
 function formatSize(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
@@ -19,6 +29,12 @@ export default function Models(): JSX.Element {
   const [cloneModal, setCloneModal] = useState<string | null>(null)
   const [cloneDest, setCloneDest] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
+  const [loadModel, setLoadModel] = useState<ModelTag | null>(null)
+  const [loadModelInfo, setLoadModelInfo] = useState<ModelShow | null>(null)
+  const [loadServerConfig, setLoadServerConfig] = useState<AppConfig | null>(null)
+  const [loadLoading, setLoadLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [detailsModel, setDetailsModel] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -47,15 +63,47 @@ export default function Models(): JSX.Element {
 
   const isLoaded = (name: string): boolean => running.some((r) => r.name === name || r.model === name)
 
-  const handleLoad = async (name: string): Promise<void> => {
+  const openLoadDialog = async (model: ModelTag): Promise<void> => {
+    setLoadModel(model)
+    setLoadModelInfo(null)
+    setLoadServerConfig(null)
+    setLoadError(null)
+    setLoadLoading(true)
+    try {
+      const [info, config] = await Promise.all([api().modelShow(model.name), api().getServerConfig()])
+      setLoadModelInfo(info)
+      setLoadServerConfig(config)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Nepodařilo se načíst nastavení modelu')
+    } finally {
+      setLoadLoading(false)
+    }
+  }
+
+  const handleLoad = async (name: string, options?: ModelLoadOptions): Promise<void> => {
     setBusy(name)
     try {
-      await api().modelLoad(name)
+      await api().modelLoad(name, options)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Načtení selhalo')
+      throw e
     } finally {
       setBusy(null)
+    }
+  }
+
+  const handleDialogLoad = async (options: ModelLoadOptions): Promise<void> => {
+    if (!loadModel) return
+    setLoadLoading(true)
+    setLoadError(null)
+    try {
+      await handleLoad(loadModel.name, options)
+      setLoadModel(null)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Načtení selhalo')
+    } finally {
+      setLoadLoading(false)
     }
   }
 
@@ -181,13 +229,24 @@ export default function Models(): JSX.Element {
                   <td className="mono">{m.name}</td>
                   <td>{m.size_vram ? formatSize(m.size_vram) : '—'}</td>
                   <td>
-                    <button
-                      className="btn"
-                      disabled={busy === m.name}
-                      onClick={() => handleUnload(m.name)}
-                    >
-                      Uvolnit
-                    </button>
+                    <div className="btn-row">
+                      <button
+                        type="button"
+                        className="btn btn-icon"
+                        title="Zobrazit všechny parametry"
+                        aria-label={`Parametry modelu ${m.name}`}
+                        onClick={() => setDetailsModel(m.name)}
+                      >
+                        …
+                      </button>
+                      <button
+                        className="btn"
+                        disabled={busy === m.name}
+                        onClick={() => handleUnload(m.name)}
+                      >
+                        Uvolnit
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -221,7 +280,11 @@ export default function Models(): JSX.Element {
                   <td>
                     <div className="btn-row">
                       {!isLoaded(m.name) && (
-                        <button className="btn btn-primary" disabled={busy === m.name} onClick={() => handleLoad(m.name)}>
+                        <button
+                          className="btn btn-primary"
+                          disabled={busy === m.name}
+                          onClick={() => void openLoadDialog(m)}
+                        >
                           Načíst
                         </button>
                       )}
@@ -253,6 +316,24 @@ export default function Models(): JSX.Element {
           </table>
         )}
       </div>
+
+      {loadModel && (
+        <LoadModelDialog
+          model={loadModel}
+          modelInfo={loadModelInfo}
+          serverConfig={loadServerConfig}
+          loading={loadLoading}
+          error={loadError}
+          onCancel={() => {
+            if (!loadLoading) setLoadModel(null)
+          }}
+          onLoad={handleDialogLoad}
+        />
+      )}
+
+      {detailsModel && (
+        <LoadedModelDetailsDialog modelName={detailsModel} onClose={() => setDetailsModel(null)} />
+      )}
 
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(null)}>

@@ -8,8 +8,14 @@ import {
 } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { ollamaClient } from '../ollama/client'
+import { ollamaClient, type ModelLoadOptions } from '../ollama/client'
 import { loadConfig, type AppConfig } from '../ollama/config'
+import {
+  clearAllLoadOptions,
+  getLoadOptions,
+  recordLoadOptions,
+  removeLoadOptions
+} from '../ollama/load-options-registry'
 import { logBuffer, type LogEntry } from '../ollama/log-buffer'
 import { collectMetrics } from '../ollama/metrics'
 import { serveManager } from '../ollama/serve-manager'
@@ -160,6 +166,7 @@ function registerIpc(): void {
       serveManager.getSpawnTime(),
       () => logBuffer.getRollingTokensPerSec(),
       () => logBuffer.getActiveRequestEstimate(),
+      () => logBuffer.getActiveRequests(),
       state.status
     )
     loadedModelCount = metrics.loadedCount
@@ -171,12 +178,23 @@ function registerIpc(): void {
   ipcMain.handle('get-models-tags', () => ollamaClient.getTags())
   ipcMain.handle('get-models-ps', () => ollamaClient.getPs())
   ipcMain.handle('model-show', (_e, name: string) => ollamaClient.show(name))
-  ipcMain.handle('model-load', (_e, name: string) => ollamaClient.load(name))
-  ipcMain.handle('model-unload', (_e, name: string) => ollamaClient.unload(name))
-  ipcMain.handle('model-delete', (_e, name: string) => ollamaClient.delete(name))
+  ipcMain.handle('model-load', async (_e, name: string, options?: ModelLoadOptions) => {
+    const loadOptions = options ?? { keepAlive: '-1' }
+    await ollamaClient.load(name, loadOptions)
+    recordLoadOptions(name, loadOptions)
+  })
+  ipcMain.handle('model-unload', async (_e, name: string) => {
+    await ollamaClient.unload(name)
+    removeLoadOptions(name)
+  })
+  ipcMain.handle('model-delete', async (_e, name: string) => {
+    await ollamaClient.delete(name)
+    removeLoadOptions(name)
+  })
   ipcMain.handle('model-copy', (_e, source: string, destination: string) =>
     ollamaClient.copy(source, destination)
   )
+  ipcMain.handle('get-model-load-options', (_e, name: string) => getLoadOptions(name))
 
   ipcMain.handle('model-pull', async (event, name: string) => {
     try {
@@ -191,6 +209,7 @@ function registerIpc(): void {
 
   ipcMain.handle('get-server-config', () => loadConfig())
   ipcMain.handle('save-server-config-and-restart', async (_e, config: AppConfig) => {
+    clearAllLoadOptions()
     await serveManager.saveConfigAndRestart(config)
     return serveManager.getState()
   })
@@ -202,10 +221,12 @@ function registerIpc(): void {
 
   ipcMain.handle('stop-server', async () => {
     await serveManager.stop()
+    clearAllLoadOptions()
     return serveManager.getState()
   })
 
   ipcMain.handle('restart-server', async (_e, forceKillConflict?: boolean) => {
+    clearAllLoadOptions()
     await serveManager.restart(forceKillConflict ?? false)
     return serveManager.getState()
   })
@@ -224,7 +245,12 @@ app.whenReady().then(async () => {
   createTray()
   registerIpc()
 
-  serveManager.subscribe(() => updateTrayMenu())
+  serveManager.subscribe((state) => {
+    updateTrayMenu()
+    if (state.status === 'stopped' || state.status === 'error') {
+      clearAllLoadOptions()
+    }
+  })
 
   logBuffer.subscribe((entry: LogEntry) => {
     mainWindow?.webContents.send('log-entry', entry)

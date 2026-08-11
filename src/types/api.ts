@@ -19,6 +19,18 @@ export interface AppConfig {
   configVersion?: number
 }
 
+export interface ModelLoadOptions {
+  keepAlive: string
+  numCtx?: number
+  numBatch?: number
+  numGpu?: number
+  numThread?: number
+  useMmap?: boolean
+  useMlock?: boolean
+  ropeFrequencyBase?: number
+  ropeFrequencyScale?: number
+}
+
 export interface ServeState {
   status: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
   pid: number | null
@@ -42,6 +54,15 @@ export interface ModelTag {
   }
 }
 
+export interface RunningModelDetails {
+  parent_model?: string
+  format?: string
+  family?: string
+  families?: string[]
+  parameter_size?: string
+  quantization_level?: string
+}
+
 export interface RunningModel {
   name: string
   model: string
@@ -49,6 +70,8 @@ export interface RunningModel {
   size_vram?: number
   digest: string
   expires_at: string
+  context_length?: number
+  details?: RunningModelDetails
 }
 
 export interface ModelShow {
@@ -56,6 +79,14 @@ export interface ModelShow {
   parameters?: string
   template?: string
   details?: Record<string, unknown>
+  model_info?: Record<string, unknown>
+  capabilities?: string[]
+}
+
+export interface RecordedLoadOptions {
+  modelName: string
+  options: ModelLoadOptions
+  recordedAt: number
 }
 
 export interface PullProgress {
@@ -83,6 +114,26 @@ export interface LogEntry {
   }
 }
 
+export type ActiveRequestPhase =
+  | 'prompt_processing'
+  | 'generation'
+  | 'caching'
+  | 'done'
+  | 'unknown'
+
+export interface ActiveRequest {
+  taskId: number
+  slotId: number | null
+  phase: ActiveRequestPhase
+  progressPercent: number | null
+  nTokens: number | null
+  elapsedSeconds: number | null
+  tokensPerSec: number | null
+  firstSeenAt: number
+  updatedAt: number
+  status: 'active' | 'completed'
+}
+
 export interface DashboardData {
   gpu: {
     name: string
@@ -94,6 +145,7 @@ export interface DashboardData {
   loadedModels: Array<{ name: string; sizeVram: number }>
   memory: { workingSetMb: number; pid: number | null }
   activeRequests: number | null
+  activeRequestDetails: ActiveRequest[]
   tokensPerSec: number | null
   uptimeSeconds: number | null
   serveStatus: string
@@ -108,11 +160,12 @@ export interface Api {
   getModelsTags: () => Promise<ModelTag[]>
   getModelsPs: () => Promise<RunningModel[]>
   modelShow: (name: string) => Promise<ModelShow>
-  modelLoad: (name: string) => Promise<void>
+  modelLoad: (name: string, options?: ModelLoadOptions) => Promise<void>
   modelUnload: (name: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
+  getModelLoadOptions: (name: string) => Promise<RecordedLoadOptions | null>
   onPullProgress: (cb: (data: { name: string; progress: PullProgress }) => void) => () => void
   getServerConfig: () => Promise<AppConfig>
   saveServerConfigAndRestart: (config: AppConfig) => Promise<ServeState>
