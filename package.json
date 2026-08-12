@@ -1,6 +1,6 @@
 {
   "name": "ollamastudio",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OllamaStudio — desktopový hostitel ollama serve",
   "main": "./out/main/index.js",
   "author": "OllamaStudio",
