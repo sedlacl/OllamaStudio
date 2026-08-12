@@ -28,7 +28,7 @@ export default function Layout(): JSX.Element {
       api().getServeStatus().then(setServe).catch(() => {})
     }
     refresh()
-    const id = setInterval(refresh, 2000)
+    const id = setInterval(refresh, 8000)
     return () => clearInterval(id)
   }, [])
 

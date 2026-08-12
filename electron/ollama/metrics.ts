@@ -145,12 +145,14 @@ export function formatUptime(seconds: number | null): string {
   return `${s}s`
 }
 
+export type GpuMemorySource = 'nvidia-smi' | 'perf-counter' | 'process-list'
+
 export interface GpuProcess {
   pid: number
   processName: string
-  /** null = nvidia-smi nevrátilo číslo (typicky WDDM [N/A]) */
+  /** null = zdroj nevrátil číslo (typicky nvidia-smi [N/A] na WDDM) */
   gpuMemoryMb: number | null
-  source: 'nvidia-smi' | 'process-list'
+  source: GpuMemorySource
 }
 
 export interface SystemMemory {
@@ -162,8 +164,12 @@ export interface SystemMemory {
 export interface ResourceUsageData {
   gpu: GpuMetrics | null
   gpuAvailable: boolean
-  /** false na Windows WDDM — used_gpu_memory je vždy [N/A] */
+  /** false, když per-proces VRAM neumí ani nvidia-smi, ani výkonnostní čítače */
   perProcessVramAvailable: boolean
+  /** zdroj, ze kterého pocházejí per-proces hodnoty VRAM */
+  perProcessSource: GpuMemorySource | null
+  /** součet per-proces VRAM; může být vyšší než gpu.memoryUsedMb (sdílené alokace) */
+  perProcessVramTotalMb: number | null
   gpuProcesses: GpuProcess[]
   ollamaProcesses: GpuProcess[]
   vramFallbackMb: number | null
@@ -178,9 +184,10 @@ export async function collectResourceUsage(
   servePid: number | null,
   serveStatus: string
 ): Promise<ResourceUsageData> {
-  const [gpu, smiProcesses, ollamaProcs, ps, serveMemory] = await Promise.all([
+  const [gpu, smiProcesses, perfProcesses, ollamaProcs, ps, serveMemory] = await Promise.all([
     getGpuMetrics(),
     getGpuProcessesFromSmi(),
+    getGpuProcessesFromPerfCounters(),
     getOllamaRelatedProcesses(servePid),
     client.getPs().catch(() => []),
     getProcessMemory(servePid)
@@ -195,19 +202,37 @@ export async function collectResourceUsage(
   const modelVramMb =
     loadedModels.reduce((sum, m) => sum + m.sizeVram, 0) / (1024 * 1024)
 
-  const perProcessVramAvailable = smiProcesses.some((p) => p.gpuMemoryMb != null)
+  const smiByPid = new Map(smiProcesses.map((p) => [p.pid, p]))
+  const perfByPid = new Map(perfProcesses.map((p) => [p.pid, p]))
 
-  // Skuteční spotřebitelé VRAM (známá čísla z nvidia-smi). Na WDDM prázdné.
-  const gpuProcesses = smiProcesses
-    .filter((p) => p.gpuMemoryMb != null && p.gpuMemoryMb > 0)
+  // Výkonnostní čítače Windows fungují i na WDDM, kde nvidia-smi vrací [N/A].
+  const perProcessSource: GpuMemorySource | null = perfProcesses.some(
+    (p) => p.gpuMemoryMb != null
+  )
+    ? 'perf-counter'
+    : smiProcesses.some((p) => p.gpuMemoryMb != null)
+      ? 'nvidia-smi'
+      : null
+  const perProcessVramAvailable = perProcessSource !== null
+
+  const gpuProcesses = (perProcessSource === 'perf-counter' ? perfProcesses : smiProcesses)
+    // Alokace pod 1 MB jsou režie ovladače, ne reálná spotřeba aplikace
+    .filter((p) => p.gpuMemoryMb != null && p.gpuMemoryMb >= MIN_LISTED_VRAM_MB)
+    .map((p) => ({ ...p, processName: displayProcessName(p.pid, perfByPid, smiByPid, p.processName) }))
     .sort(compareGpuMemoryDesc)
 
-  const smiByPid = new Map(smiProcesses.map((p) => [p.pid, p]))
-  const ollamaProcesses = mergeOllamaProcesses(ollamaProcs, smiByPid, servePid).sort(
-    compareGpuMemoryDesc
-  )
+  const perProcessVramTotalMb = perProcessVramAvailable
+    ? gpuProcesses.reduce((sum, p) => sum + (p.gpuMemoryMb ?? 0), 0)
+    : null
 
-  // Když nvidia-smi neumí per-process VRAM, ale máme /api/ps, označ fallback jasně.
+  const ollamaProcesses = mergeOllamaProcesses(
+    ollamaProcs,
+    smiByPid,
+    perfByPid,
+    servePid
+  ).sort(compareGpuMemoryDesc)
+
+  // Fallback na /api/ps jen tehdy, když per-proces VRAM opravdu nemáme z žádného zdroje.
   const vramFallbackMb =
     (!perProcessVramAvailable || gpu === null) && modelVramMb > 0 ? modelVramMb : null
 
@@ -218,6 +243,8 @@ export async function collectResourceUsage(
     gpu,
     gpuAvailable: gpu !== null,
     perProcessVramAvailable,
+    perProcessSource,
+    perProcessVramTotalMb,
     gpuProcesses,
     ollamaProcesses,
     vramFallbackMb,
@@ -244,6 +271,20 @@ export function parseGpuMemoryMb(raw: string | undefined): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/** Alokace menší než tato hodnota nepovažujeme za spotřebu aplikace. */
+const MIN_LISTED_VRAM_MB = 1
+
+/** Čítače dávají jméno bez přípony, nvidia-smi celou cestu — sjednocujeme na kratší tvar. */
+function displayProcessName(
+  pid: number,
+  perfByPid: Map<number, GpuProcess>,
+  smiByPid: Map<number, GpuProcess>,
+  fallback: string
+): string {
+  const name = perfByPid.get(pid)?.processName ?? smiByPid.get(pid)?.processName ?? fallback
+  return basenameProcess(name)
+}
+
 function basenameProcess(pathOrName: string): string {
   const normalized = pathOrName.replace(/\\/g, '/')
   const base = normalized.split('/').pop() ?? pathOrName
@@ -254,10 +295,10 @@ function isOllamaRelatedName(name: string): boolean {
   const base = basenameProcess(name).toLowerCase()
   return (
     base.includes('ollama') ||
-    base.includes('llama_server') ||
-    base.includes('ollama_llama') ||
-    /^runner(\.exe)?$/i.test(base) ||
-    /llama\.cpp/i.test(base)
+    // runner se podle verze jmenuje llama-server.exe, llama_server nebo ollama_llama_server
+    /llama[-_. ]?server/.test(base) ||
+    /llama[-_.]?cpp/.test(base) ||
+    /^runner(\.exe)?$/.test(base)
   )
 }
 
@@ -273,33 +314,95 @@ function compareGpuMemoryDesc(a: GpuProcess, b: GpuProcess): number {
 function mergeOllamaProcesses(
   discovered: GpuProcess[],
   smiByPid: Map<number, GpuProcess>,
+  perfByPid: Map<number, GpuProcess>,
   servePid: number | null
 ): GpuProcess[] {
   const byPid = new Map<number, GpuProcess>()
 
-  for (const p of discovered) {
-    const fromSmi = smiByPid.get(p.pid)
-    byPid.set(p.pid, {
-      pid: p.pid,
-      processName: basenameProcess(fromSmi?.processName ?? p.processName),
-      gpuMemoryMb: fromSmi?.gpuMemoryMb ?? null,
-      source: fromSmi ? 'nvidia-smi' : 'process-list'
-    })
+  const resolve = (pid: number, fallbackName: string): GpuProcess => {
+    const perfMb = perfByPid.get(pid)?.gpuMemoryMb ?? null
+    const smiMb = smiByPid.get(pid)?.gpuMemoryMb ?? null
+    return {
+      pid,
+      processName: displayProcessName(pid, perfByPid, smiByPid, fallbackName),
+      gpuMemoryMb: perfMb ?? smiMb,
+      source: perfMb != null ? 'perf-counter' : smiMb != null ? 'nvidia-smi' : 'process-list'
+    }
   }
 
-  // Doplň Ollama PIDy, které nvidia-smi vidí, ale process-list nechytil
-  for (const p of smiByPid.values()) {
+  for (const p of discovered) {
+    byPid.set(p.pid, resolve(p.pid, p.processName))
+  }
+
+  // Doplň Ollama PIDy, které vidí nvidia-smi nebo čítače, ale process-list je nechytil
+  for (const p of [...smiByPid.values(), ...perfByPid.values()]) {
     if (!isOllamaRelatedName(p.processName) && p.pid !== servePid) continue
     if (byPid.has(p.pid)) continue
-    byPid.set(p.pid, {
-      pid: p.pid,
-      processName: basenameProcess(p.processName),
-      gpuMemoryMb: p.gpuMemoryMb,
-      source: 'nvidia-smi'
-    })
+    byPid.set(p.pid, resolve(p.pid, p.processName))
   }
 
   return [...byPid.values()]
+}
+
+/**
+ * Per-proces VRAM z výkonnostních čítačů Windows (\GPU Process Memory\Dedicated Usage).
+ * Na rozdíl od nvidia-smi vrací na WDDM skutečná čísla. Hodnoty se sčítají přes všechny
+ * instance (adaptéry) jednoho PID.
+ */
+async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
+  if (process.platform !== 'win32') return []
+  try {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      'function Get-GpuSamples {',
+      "  $s = (Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples",
+      '  if ($s) { return $s }',
+      // Lokalizované Windows mají přeložené názvy čítačů; instance pid_* zůstávají stejné.
+      "  $set = Get-Counter -ListSet * -ErrorAction SilentlyContinue | Where-Object { $_.Paths -match '\\(pid_' } | Select-Object -First 1",
+      '  if (-not $set) { return @() }',
+      "  $path = $set.Counter | Where-Object { $_ -match 'Dedicated' } | Select-Object -First 1",
+      '  if (-not $path) { $path = $set.Counter | Select-Object -First 1 }',
+      '  return (Get-Counter $path -ErrorAction SilentlyContinue).CounterSamples',
+      '}',
+      '$agg = @{}',
+      'foreach ($s in Get-GpuSamples) {',
+      "  if ($s.InstanceName -match 'pid_(\\d+)_' -and $s.CookedValue -gt 0) {",
+      '    $id = [int]$Matches[1]',
+      '    $agg[$id] = [double]$agg[$id] + [double]$s.CookedValue',
+      '  }',
+      '}',
+      'foreach ($k in $agg.Keys) {',
+      '  $p = Get-Process -Id $k -ErrorAction SilentlyContinue',
+      "  $n = ''",
+      '  if ($p) { $n = $p.ProcessName }',
+      '  "$k|$n|$($agg[$k])"',
+      '}'
+    ].join('\n')
+
+    const { stdout } = await execFileAsync(
+      'powershell',
+      ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { timeout: 10000, windowsHide: true }
+    )
+
+    const out: GpuProcess[] = []
+    for (const line of stdout.split(/\r?\n/)) {
+      const parts = line.trim().split('|')
+      if (parts.length < 3) continue
+      const pid = parseInt(parts[0], 10)
+      const bytes = parseFloat(parts[2])
+      if (!Number.isFinite(pid) || !Number.isFinite(bytes)) continue
+      out.push({
+        pid,
+        processName: parts[1] || `pid ${pid}`,
+        gpuMemoryMb: bytes / (1024 * 1024),
+        source: 'perf-counter'
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
 }
 
 async function getGpuProcessesFromSmi(): Promise<GpuProcess[]> {
@@ -350,7 +453,7 @@ async function getOllamaRelatedProcesses(servePid: number | null): Promise<GpuPr
           [
             "$procs = Get-CimInstance Win32_Process |",
             "  Where-Object {",
-            "    $_.Name -match 'ollama|llama_server|ollama_llama|^runner' -or",
+            "    $_.Name -match 'ollama|llama[-_. ]?server|llama[-_.]?cpp|^runner' -or",
             `    ($null -ne ${servePid ?? -1} -and ($_.ProcessId -eq ${servePid ?? -1} -or $_.ParentProcessId -eq ${servePid ?? -1}))`,
             '  };',
             "$procs | ForEach-Object { \"$($_.ProcessId)|$($_.Name)\" }"

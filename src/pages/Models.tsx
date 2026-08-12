@@ -54,7 +54,7 @@ export default function Models(): JSX.Element {
 
   useEffect(() => {
     refresh()
-    const id = setInterval(refresh, 5000)
+    const id = setInterval(refresh, 8000)
     return () => clearInterval(id)
   }, [refresh])
 

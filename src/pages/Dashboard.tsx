@@ -201,7 +201,7 @@ export default function Dashboard(): JSX.Element {
     }
 
     void load()
-    const pollId = setInterval(load, 2000)
+    const pollId = setInterval(load, 5000)
     const unsubRequests = api().subscribeDashboardRequests(scheduleRefresh)
 
     return () => {

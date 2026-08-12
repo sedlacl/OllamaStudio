@@ -94,7 +94,11 @@ async function httpError(res: Response): Promise<Error> {
 }
 
 export class OllamaClient {
+  private static readonly VERSION_CACHE_MS = 10_000
+
   private baseUrl: string
+  private versionCache: { value: string; at: number } | null = null
+  private versionFetch: Promise<string> | null = null
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl ?? this.resolveBaseUrl()
@@ -102,6 +106,8 @@ export class OllamaClient {
 
   refreshBaseUrl(): void {
     this.baseUrl = this.resolveBaseUrl()
+    this.versionCache = null
+    this.versionFetch = null
   }
 
   private resolveBaseUrl(): string {
@@ -116,7 +122,7 @@ export class OllamaClient {
 
   async ping(): Promise<boolean> {
     try {
-      await this.getVersion()
+      await this.getVersion({ bypassCache: true })
       return true
     } catch {
       return false
@@ -133,7 +139,39 @@ export class OllamaClient {
     }
   }
 
-  async getVersion(): Promise<string> {
+  async getVersion(options?: { bypassCache?: boolean }): Promise<string> {
+    const bypassCache = options?.bypassCache ?? false
+    const now = Date.now()
+    if (
+      !bypassCache &&
+      this.versionCache &&
+      now - this.versionCache.at < OllamaClient.VERSION_CACHE_MS
+    ) {
+      return this.versionCache.value
+    }
+    if (!bypassCache && this.versionFetch) {
+      return this.versionFetch
+    }
+
+    const fetchPromise = this.fetchVersion()
+    if (!bypassCache) {
+      this.versionFetch = fetchPromise
+    }
+
+    try {
+      const value = await fetchPromise
+      if (!bypassCache) {
+        this.versionCache = { value, at: Date.now() }
+      }
+      return value
+    } finally {
+      if (!bypassCache && this.versionFetch === fetchPromise) {
+        this.versionFetch = null
+      }
+    }
+  }
+
+  private async fetchVersion(): Promise<string> {
     const res = await fetch(`${this.baseUrl}/api/version`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) throw await httpError(res)
     const data = (await res.json()) as { version?: string }

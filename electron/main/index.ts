@@ -8,7 +8,11 @@ import {
 } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import { ollamaClient, type ModelLoadOptions } from '../ollama/client'
+import {
+  ollamaClient,
+  type ModelLoadOptions,
+  type ServeConnectionStatus
+} from '../ollama/client'
 import { loadConfig, type AppConfig } from '../ollama/config'
 import {
   clearAllLoadOptions,
@@ -145,6 +149,15 @@ function updateTrayMenu(): void {
   tray.setContextMenu(menu)
 }
 
+function deriveConnectionStatus(
+  serveStatus: string,
+  version: string | null
+): ServeConnectionStatus {
+  if (serveStatus !== 'running') return 'disconnected'
+  if (version) return 'connected'
+  return 'starting'
+}
+
 function statusText(status: string): string {
   switch (status) {
     case 'running':
@@ -184,7 +197,7 @@ function registerIpc(): void {
     )
     loadedModelCount = metrics.loadedCount
     updateTrayMenu()
-    const connection = await ollamaClient.getConnectionStatus(state.status === 'running')
+    const connection = deriveConnectionStatus(state.status, metrics.version)
     return { ...metrics, connection }
   })
 

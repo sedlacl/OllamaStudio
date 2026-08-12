@@ -178,19 +178,23 @@ export interface DashboardData {
   connection: string
 }
 
+export type GpuMemorySource = 'nvidia-smi' | 'perf-counter' | 'process-list'
+
 export interface GpuProcessInfo {
   pid: number
   processName: string
-  /** null = hodnota není dostupná (např. WDDM [N/A]) */
+  /** null = hodnota není dostupná (např. nvidia-smi [N/A] na WDDM) */
   gpuMemoryMb: number | null
-  source: 'nvidia-smi' | 'process-list'
+  source: GpuMemorySource
 }
 
 export interface ResourceUsageData {
   gpu: DashboardData['gpu']
   gpuAvailable: boolean
-  /** false když nvidia-smi neumí per-process VRAM (typicky Windows WDDM) */
+  /** false, když per-proces VRAM neumí ani nvidia-smi, ani výkonnostní čítače */
   perProcessVramAvailable: boolean
+  perProcessSource: GpuMemorySource | null
+  perProcessVramTotalMb: number | null
   gpuProcesses: GpuProcessInfo[]
   ollamaProcesses: GpuProcessInfo[]
   vramFallbackMb: number | null
