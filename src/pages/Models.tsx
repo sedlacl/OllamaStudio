@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LoadModelDialog from '../components/LoadModelDialog'
+import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
   type AppConfig,
@@ -37,6 +38,7 @@ function findContinueEntry(
 }
 
 export default function Models(): JSX.Element {
+  const { t } = useI18n()
   const [tags, setTags] = useState<ModelTag[]>([])
   const [running, setRunning] = useState<RunningModel[]>([])
   const [loading, setLoading] = useState(true)
@@ -72,16 +74,16 @@ export default function Models(): JSX.Element {
 
   const refresh = useCallback(async () => {
     try {
-      const [t, p] = await Promise.all([api().getModelsTags(), api().getModelsPs()])
-      setTags(t)
-      setRunning(p)
+      const [tagsList, ps] = await Promise.all([api().getModelsTags(), api().getModelsPs()])
+      setTags(tagsList)
+      setRunning(ps)
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Nepodařilo se načíst modely')
+      setError(e instanceof Error ? e.message : t('models.fetchFailed'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     refresh()
@@ -101,14 +103,19 @@ export default function Models(): JSX.Element {
         return [...next, state]
       })
       if (state.status === 'success') {
-        setLoadNotice(`Model „${state.name}" byl úspěšně načten.`)
+        setLoadNotice(t('models.loadSuccess', { name: state.name }))
         void refresh()
       } else if (state.status === 'error') {
-        setError(`Načtení modelu „${state.name}" selhalo: ${state.error ?? 'neznámá chyba'}`)
+        setError(
+          t('models.loadFailed', {
+            name: state.name,
+            error: state.error ?? t('models.unknownError')
+          })
+        )
       }
     })
     return unsub
-  }, [refresh])
+  }, [refresh, t])
 
   useEffect(() => {
     if (!pulling) return
@@ -130,7 +137,7 @@ export default function Models(): JSX.Element {
       setLoadModelInfo(info)
       setLoadServerConfig(config)
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Nepodařilo se načíst nastavení modelu')
+      setLoadError(e instanceof Error ? e.message : t('models.settingsFailed'))
     } finally {
       setLoadLoading(false)
     }
@@ -139,8 +146,8 @@ export default function Models(): JSX.Element {
   const handleLoad = async (name: string, options?: ModelLoadOptions): Promise<void> => {
     const result = await api().modelLoad(name, options)
     if (!result.ok) {
-      setError(result.error ?? 'Načtení se nepodařilo spustit')
-      throw new Error(result.error ?? 'Načtení se nepodařilo spustit')
+      setError(result.error ?? t('models.loadStartFailed'))
+      throw new Error(result.error ?? t('models.loadStartFailed'))
     }
   }
 
@@ -160,20 +167,20 @@ export default function Models(): JSX.Element {
       await api().modelUnload(name)
       await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Uvolnění selhalo')
+      setError(e instanceof Error ? e.message : t('models.unloadFailed'))
     } finally {
       setBusy(null)
     }
   }
 
   const handleDelete = async (name: string): Promise<void> => {
-    if (!confirm(`Smazat model „${name}"?`)) return
+    if (!confirm(t('models.deleteConfirm', { name }))) return
     setBusy(name)
     try {
       await api().modelDelete(name)
       await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Smazání selhalo')
+      setError(e instanceof Error ? e.message : t('models.deleteFailed'))
     } finally {
       setBusy(null)
     }
@@ -184,7 +191,7 @@ export default function Models(): JSX.Element {
       const data = await api().modelShow(name)
       setShowModal({ name, data })
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Načtení detailu selhalo')
+      setError(e instanceof Error ? e.message : t('models.detailFailed'))
     }
   }
 
@@ -197,7 +204,7 @@ export default function Models(): JSX.Element {
     const result = await api().modelPull(name)
     setPulling(false)
     if (!result.ok) {
-      setError(result.error ?? 'Stažení selhalo')
+      setError(result.error ?? t('models.pullFailed'))
     } else {
       setPullName('')
       await refresh()
@@ -213,7 +220,7 @@ export default function Models(): JSX.Element {
       setCloneDest('')
       await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Klonování selhalo')
+      setError(e instanceof Error ? e.message : t('models.cloneFailed'))
     } finally {
       setBusy(null)
     }
@@ -226,13 +233,15 @@ export default function Models(): JSX.Element {
     try {
       const entry = await api().upsertContinueModel(name)
       setLoadNotice(
-        `Continue: model „${entry.name}" (${entry.model}) byl ${
-          wasPresent ? 'aktualizován' : 'nahrán'
-        } podle aktuálních settings.`
+        t('models.continueUpserted', {
+          name: entry.name,
+          model: entry.model,
+          action: wasPresent ? t('models.continueUpdated') : t('models.continueUploaded')
+        })
       )
       await refreshContinue()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Zápis do Continue selhal')
+      setError(e instanceof Error ? e.message : t('models.continueWriteFailed'))
     } finally {
       setContinueBusy(null)
     }
@@ -241,15 +250,15 @@ export default function Models(): JSX.Element {
   const handleContinueRemove = async (name: string): Promise<void> => {
     const entry = findContinueEntry(continueModels, name)
     if (!entry) return
-    if (!confirm(`Odebrat „${entry.name}" z Continue konfigurace?`)) return
+    if (!confirm(t('models.continueRemoveConfirm', { name: entry.name }))) return
     setContinueBusy(name)
     setError(null)
     try {
       await api().removeContinueModel(name)
-      setLoadNotice(`Continue: model „${entry.name}" byl odebrán.`)
+      setLoadNotice(t('models.continueRemoved', { name: entry.name }))
       await refreshContinue()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Odebrání z Continue selhalo')
+      setError(e instanceof Error ? e.message : t('models.continueRemoveFailed'))
     } finally {
       setContinueBusy(null)
     }
@@ -262,36 +271,36 @@ export default function Models(): JSX.Element {
 
   return (
     <div>
-      <h1 className="page-title">Modely</h1>
+      <h1 className="page-title">{t('models.title')}</h1>
 
       {loadNotice && <div className="alert alert-info">{loadNotice}</div>}
       {error && <div className="alert alert-error">{error}</div>}
 
       {modelLoads.some((s) => s.status === 'loading') && (
         <div className="alert alert-info" style={{ marginBottom: 16 }}>
-          Načítání na pozadí:{' '}
+          {t('models.loadingBg')}{' '}
           {modelLoads
             .filter((s) => s.status === 'loading')
             .map((s) => s.name)
             .join(', ')}
-          . Průběh sledujte na Přehledu nebo v Logách.
+          {t('models.loadingBgHint')}
         </div>
       )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="form-field">
-          <label>Stáhnout model (ollama pull)</label>
+          <label>{t('models.pullLabel')}</label>
           <div className="btn-row">
             <input
               type="text"
-              placeholder="např. llama3.2:3b"
+              placeholder={t('models.pullPlaceholder')}
               value={pullName}
               onChange={(e) => setPullName(e.target.value)}
               disabled={pulling}
               style={{ flex: 1, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
             />
             <button className="btn btn-primary" onClick={handlePull} disabled={pulling || !pullName.trim()}>
-              {pulling ? 'Stahuje se…' : 'Stáhnout'}
+              {pulling ? t('models.downloading') : t('models.download')}
             </button>
           </div>
         </div>
@@ -309,13 +318,15 @@ export default function Models(): JSX.Element {
 
       {running.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Načteno v paměti</h2>
+          <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
+            {t('models.loadedInMemory')}
+          </h2>
           <table className="table">
             <thead>
               <tr>
-                <th>Model</th>
-                <th>VRAM</th>
-                <th>Akce</th>
+                <th>{t('models.colModel')}</th>
+                <th>{t('models.colVram')}</th>
+                <th>{t('models.colActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -328,8 +339,8 @@ export default function Models(): JSX.Element {
                       <button
                         type="button"
                         className="btn btn-icon"
-                        title="Zobrazit všechny parametry"
-                        aria-label={`Parametry modelu ${m.name}`}
+                        title={t('models.showParams')}
+                        aria-label={t('models.modelParamsAria', { name: m.name })}
                         onClick={() => setDetailsModel(m.name)}
                       >
                         …
@@ -339,7 +350,7 @@ export default function Models(): JSX.Element {
                         disabled={busy === m.name}
                         onClick={() => handleUnload(m.name)}
                       >
-                        Uvolnit
+                        {t('models.unload')}
                       </button>
                     </div>
                   </td>
@@ -351,25 +362,27 @@ export default function Models(): JSX.Element {
       )}
 
       <div className="card">
-        <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Lokální modely</h2>
+        <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
+          {t('models.localModels')}
+        </h2>
         {continuePath && (
           <p className="metric-label" style={{ margin: '0 0 12px' }}>
-            Continue: <span className="mono">{continuePath}</span>
+            {t('models.continuePath')} <span className="mono">{continuePath}</span>
           </p>
         )}
         {loading ? (
-          <p className="empty-state">Načítání…</p>
+          <p className="empty-state">{t('models.loading')}</p>
         ) : tags.length === 0 ? (
-          <p className="empty-state">Žádné modely. Stáhněte model pomocí pole výše.</p>
+          <p className="empty-state">{t('models.empty')}</p>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Název</th>
-                <th>Velikost</th>
-                <th>Stav</th>
-                <th>Continue</th>
-                <th>Akce</th>
+                <th>{t('models.colName')}</th>
+                <th>{t('models.colSize')}</th>
+                <th>{t('models.colStatus')}</th>
+                <th>{t('models.colContinue')}</th>
+                <th>{t('models.colActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -382,9 +395,9 @@ export default function Models(): JSX.Element {
                     <td>{formatSize(m.size)}</td>
                     <td>
                       {isLoading(m.name)
-                        ? 'Načítá se…'
+                        ? t('models.statusLoading')
                         : running.some((r) => r.name === m.name || r.model === m.name)
-                          ? 'Načteno'
+                          ? t('models.statusLoaded')
                           : '—'}
                     </td>
                     <td>
@@ -403,7 +416,7 @@ export default function Models(): JSX.Element {
                               .join(' · ')}
                           >
                             <span className="status-dot" />
-                            V Continue
+                            {t('models.inContinue')}
                           </span>
                           <span className="metric-label" style={{ margin: 0 }}>
                             {continueEntry.name}
@@ -415,7 +428,7 @@ export default function Models(): JSX.Element {
                       ) : (
                         <span className="status-badge">
                           <span className="status-dot" />
-                          Není
+                          {t('models.notInContinue')}
                         </span>
                       )}
                     </td>
@@ -427,7 +440,7 @@ export default function Models(): JSX.Element {
                             disabled={busy === m.name || isLoading(m.name)}
                             onClick={() => void openLoadDialog(m)}
                           >
-                            {isLoading(m.name) ? 'Načítá se…' : 'Načíst'}
+                            {isLoading(m.name) ? t('models.statusLoading') : t('models.load')}
                           </button>
                         )}
                         {running.some((r) => r.name === m.name || r.model === m.name) && (
@@ -436,7 +449,7 @@ export default function Models(): JSX.Element {
                             disabled={busy === m.name}
                             onClick={() => handleUnload(m.name)}
                           >
-                            Uvolnit
+                            {t('models.unload')}
                           </button>
                         )}
                         <button
@@ -444,29 +457,29 @@ export default function Models(): JSX.Element {
                           disabled={continueBusyHere}
                           title={
                             continueEntry
-                              ? 'Aktualizovat Continue záznam podle aktuálních settings (host, context)'
-                              : 'Nahrát model do Continue podle aktuálních settings'
+                              ? t('models.updateContinueTitle')
+                              : t('models.toContinueTitle')
                           }
                           onClick={() => void handleContinueUpsert(m.name)}
                         >
                           {continueBusyHere
                             ? '…'
                             : continueEntry
-                              ? 'Aktualizovat Continue'
-                              : 'Do Continue'}
+                              ? t('models.updateContinue')
+                              : t('models.toContinue')}
                         </button>
                         {continueEntry && (
                           <button
                             className="btn btn-danger"
                             disabled={continueBusyHere}
-                            title="Odebrat z Continue konfigurace"
+                            title={t('models.removeContinueTitle')}
                             onClick={() => void handleContinueRemove(m.name)}
                           >
-                            Odebrat z Continue
+                            {t('models.removeContinue')}
                           </button>
                         )}
                         <button className="btn" onClick={() => handleShow(m.name)}>
-                          Detail
+                          {t('models.detail')}
                         </button>
                         <button
                           className="btn"
@@ -475,14 +488,14 @@ export default function Models(): JSX.Element {
                             setCloneDest(`${m.name}-copy`)
                           }}
                         >
-                          Klonovat
+                          {t('models.clone')}
                         </button>
                         <button
                           className="btn btn-danger"
                           disabled={busy === m.name}
                           onClick={() => handleDelete(m.name)}
                         >
-                          Smazat
+                          {t('models.delete')}
                         </button>
                       </div>
                     </td>
@@ -515,13 +528,13 @@ export default function Models(): JSX.Element {
       {showModal && (
         <div className="modal-backdrop" onClick={() => setShowModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Detail — {showModal.name}</h3>
+            <h3>{t('models.detailTitle', { name: showModal.name })}</h3>
             <pre className="mono" style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
               {showModal.data.parameters ?? showModal.data.modelfile ?? JSON.stringify(showModal.data, null, 2)}
             </pre>
             <div className="modal-actions">
               <button className="btn" onClick={() => setShowModal(null)}>
-                Zavřít
+                {t('common.close')}
               </button>
             </div>
           </div>
@@ -531,18 +544,20 @@ export default function Models(): JSX.Element {
       {cloneModal && (
         <div className="modal-backdrop" onClick={() => setCloneModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Klonovat model</h3>
-            <p>Zdroj: <span className="mono">{cloneModal}</span></p>
+            <h3>{t('models.cloneTitle')}</h3>
+            <p>
+              {t('models.cloneSource')} <span className="mono">{cloneModal}</span>
+            </p>
             <div className="form-field">
-              <label>Cílový název</label>
+              <label>{t('models.cloneDest')}</label>
               <input value={cloneDest} onChange={(e) => setCloneDest(e.target.value)} />
             </div>
             <div className="modal-actions">
               <button className="btn" onClick={() => setCloneModal(null)}>
-                Zrušit
+                {t('common.cancel')}
               </button>
               <button className="btn btn-primary" onClick={handleClone} disabled={!cloneDest.trim()}>
-                Klonovat
+                {t('models.clone')}
               </button>
             </div>
           </div>

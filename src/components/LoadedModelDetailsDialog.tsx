@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
   type AppConfig,
@@ -8,26 +9,24 @@ import {
   type RunningModel
 } from '../types/api'
 
-const UNAVAILABLE = 'Nedostupné z Ollama API'
-
 export interface LoadedModelDetailsDialogProps {
   modelName: string
   onClose: () => void
 }
 
-function formatBytes(bytes: number | undefined | null): string {
-  if (bytes == null || !Number.isFinite(bytes)) return UNAVAILABLE
+function formatBytes(bytes: number | undefined | null, unavailable: string): string {
+  if (bytes == null || !Number.isFinite(bytes)) return unavailable
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
   return `${bytes} B`
 }
 
-function formatValue(value: unknown): string {
-  if (value === undefined || value === null || value === '') return UNAVAILABLE
+function formatValue(value: unknown, unavailable: string): string {
+  if (value === undefined || value === null || value === '') return unavailable
   if (typeof value === 'boolean') return value ? 'true' : 'false'
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : UNAVAILABLE
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : unavailable
   if (typeof value === 'string') return value
-  if (Array.isArray(value)) return value.length ? value.map(String).join(', ') : UNAVAILABLE
+  if (Array.isArray(value)) return value.length ? value.map(String).join(', ') : unavailable
   try {
     return JSON.stringify(value)
   } catch {
@@ -41,13 +40,6 @@ function formatLoadOptionValue(value: unknown): string {
   return String(value)
 }
 
-function formatRecordedAt(ts: number): string {
-  try {
-    return new Date(ts).toLocaleString('cs-CZ')
-  } catch {
-    return String(ts)
-  }
-}
 
 function DetailRow({
   label,
@@ -94,7 +86,7 @@ function KvGrid({ children }: { children: ReactNode }): JSX.Element {
   return <div className="detail-kv-grid">{children}</div>
 }
 
-function MonoBlock({ text, emptyLabel = UNAVAILABLE }: { text?: string | null; emptyLabel?: string }): JSX.Element {
+function MonoBlock({ text, emptyLabel }: { text?: string | null; emptyLabel: string }): JSX.Element {
   if (!text?.trim()) {
     return <p className="detail-unavailable">{emptyLabel}</p>
   }
@@ -103,10 +95,12 @@ function MonoBlock({ text, emptyLabel = UNAVAILABLE }: { text?: string | null; e
 
 function ObjectGrid({
   data,
-  emptyLabel = UNAVAILABLE
+  emptyLabel,
+  unavailableLabel
 }: {
   data?: Record<string, unknown> | null
-  emptyLabel?: string
+  emptyLabel: string
+  unavailableLabel: string
 }): JSX.Element {
   if (!data || Object.keys(data).length === 0) {
     return <p className="detail-unavailable">{emptyLabel}</p>
@@ -118,8 +112,8 @@ function ObjectGrid({
         const formatted =
           value !== null && typeof value === 'object'
             ? JSON.stringify(value, null, 2)
-            : formatValue(value)
-        const unavailable = formatted === UNAVAILABLE
+            : formatValue(value, unavailableLabel)
+        const unavailable = formatted === unavailableLabel
         return (
           <DetailRow
             key={key}
@@ -156,6 +150,8 @@ export default function LoadedModelDetailsDialog({
   modelName,
   onClose
 }: LoadedModelDetailsDialogProps): JSX.Element {
+  const { t, formatNumber, formatDateTime } = useI18n()
+  const unavailable = t('details.unavailable')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState<RunningModel | null>(null)
@@ -183,7 +179,7 @@ export default function LoadedModelDetailsDialog({
         setRecorded(loadOpts)
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Nepodařilo se načíst detaily modelu')
+          setError(e instanceof Error ? e.message : t('details.loadFailed'))
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -193,7 +189,7 @@ export default function LoadedModelDetailsDialog({
     return () => {
       cancelled = true
     }
-  }, [modelName])
+  }, [modelName, t])
 
   const details = running?.details
   const env = config?.ollamaEnv
@@ -227,121 +223,121 @@ export default function LoadedModelDetailsDialog({
       >
         <div className="load-dialog-header">
           <div>
-            <h3 id="loaded-model-details-title">Parametry načteného modelu</h3>
+            <h3 id="loaded-model-details-title">{t('details.title')}</h3>
             <p className="load-dialog-subtitle mono">{modelName}</p>
           </div>
-          <button className="dialog-close" onClick={onClose} aria-label="Zavřít">
+          <button className="dialog-close" onClick={onClose} aria-label={t('details.closeAria')}>
             ×
           </button>
         </div>
 
         <div className="load-dialog-body detail-dialog-body">
-          {loading && <p className="empty-state">Načítání parametrů…</p>}
+          {loading && <p className="empty-state">{t('details.loading')}</p>}
           {error && <div className="alert alert-error">{error}</div>}
 
           {!loading && !error && (
             <>
-              <Section title="Runtime (/api/ps)" sourceNote="Hodnoty vrácené Ollama API — ne interní runner stav">
+              <Section title={t('details.runtimeTitle')} sourceNote={t('details.runtimeNote')}>
                 {!running ? (
                   <p className="detail-unavailable">
-                    Model není v /api/ps (možná byl mezitím uvolněn).
+                    {t('details.notInPs')}
                   </p>
                 ) : (
                   <KvGrid>
-                    <DetailRow label="name" value={formatValue(running.name)} />
-                    <DetailRow label="model" value={formatValue(running.model)} />
-                    <DetailRow label="digest" value={formatValue(running.digest)} />
-                    <DetailRow label="size" value={formatBytes(running.size)} unavailable={running.size == null} />
+                    <DetailRow label="name" value={formatValue(running.name, unavailable)} />
+                    <DetailRow label="model" value={formatValue(running.model, unavailable)} />
+                    <DetailRow label="digest" value={formatValue(running.digest, unavailable)} />
+                    <DetailRow label="size" value={formatBytes(running.size, unavailable)} unavailable={running.size == null} />
                     <DetailRow
                       label="size_vram"
-                      value={formatBytes(running.size_vram)}
+                      value={formatBytes(running.size_vram, unavailable)}
                       unavailable={running.size_vram == null}
                     />
                     <DetailRow
                       label="context_length"
                       value={
                         running.context_length != null
-                          ? running.context_length.toLocaleString('cs-CZ')
-                          : UNAVAILABLE
+                          ? formatNumber(running.context_length)
+                          : unavailable
                       }
                       unavailable={running.context_length == null}
                     />
-                    <DetailRow label="expires_at" value={formatValue(running.expires_at)} />
-                    <DetailRow label="details.format" value={formatValue(details?.format)} unavailable={!details?.format} />
-                    <DetailRow label="details.family" value={formatValue(details?.family)} unavailable={!details?.family} />
+                    <DetailRow label="expires_at" value={formatValue(running.expires_at, unavailable)} />
+                    <DetailRow label="details.format" value={formatValue(details?.format, unavailable)} unavailable={!details?.format} />
+                    <DetailRow label="details.family" value={formatValue(details?.family, unavailable)} unavailable={!details?.family} />
                     <DetailRow
                       label="details.parameter_size"
-                      value={formatValue(details?.parameter_size)}
+                      value={formatValue(details?.parameter_size, unavailable)}
                       unavailable={!details?.parameter_size}
                     />
                     <DetailRow
                       label="details.quantization_level"
-                      value={formatValue(details?.quantization_level)}
+                      value={formatValue(details?.quantization_level, unavailable)}
                       unavailable={!details?.quantization_level}
                     />
                     <DetailRow
                       label="details.families"
-                      value={formatValue(details?.families)}
+                      value={formatValue(details?.families, unavailable)}
                       unavailable={!details?.families?.length}
                     />
                     <DetailRow
                       label="details.parent_model"
-                      value={formatValue(details?.parent_model || undefined)}
+                      value={formatValue(details?.parent_model || undefined, unavailable)}
                       unavailable={!details?.parent_model}
                     />
                   </KvGrid>
                 )}
                 <p className="detail-epistemic-note">
-                  Další interní hodnoty runneru (batch, thread, mmap, …) Ollama v /api/ps nevrací →{' '}
-                  <span className="detail-unavailable">{UNAVAILABLE}</span>.
+                  {t('details.runtimeEpistemic')}{' '}
+                  <span className="detail-unavailable">{unavailable}</span>.
                 </p>
               </Section>
 
-              <Section title="Model (/api/show)" sourceNote="Metadata modelu z Ollama API">
+              <Section title={t('details.modelTitle')} sourceNote={t('details.modelNote')}>
                 {!show ? (
-                  <p className="detail-unavailable">{UNAVAILABLE}</p>
+                  <p className="detail-unavailable">{unavailable}</p>
                 ) : (
                   <>
                     <h5 className="detail-subsection">parameters</h5>
-                    <MonoBlock text={show.parameters} />
+                    <MonoBlock text={show.parameters} emptyLabel={unavailable} />
 
                     <h5 className="detail-subsection">details</h5>
-                    <ObjectGrid data={show.details as Record<string, unknown> | undefined} />
+                    <ObjectGrid data={show.details as Record<string, unknown> | undefined} emptyLabel={unavailable} unavailableLabel={unavailable} />
 
                     <h5 className="detail-subsection">model_info</h5>
-                    <ObjectGrid data={show.model_info} />
+                    <ObjectGrid data={show.model_info} emptyLabel={unavailable} unavailableLabel={unavailable} />
 
                     <h5 className="detail-subsection">capabilities</h5>
                     <KvGrid>
                       <DetailRow
                         label="capabilities"
-                        value={formatValue(show.capabilities)}
+                        value={formatValue(show.capabilities, unavailable)}
                         unavailable={!show.capabilities?.length}
                       />
                     </KvGrid>
 
                     <h5 className="detail-subsection">template</h5>
-                    <MonoBlock text={show.template} />
+                    <MonoBlock text={show.template} emptyLabel={unavailable} />
 
                     <h5 className="detail-subsection">modelfile</h5>
-                    <MonoBlock text={show.modelfile} />
+                    <MonoBlock text={show.modelfile} emptyLabel={unavailable} />
                   </>
                 )}
               </Section>
 
               <Section
-                title="Konfigurace serve (OLLAMA_* / LLAMA_*)"
-                sourceNote="Aktuální konfigurace OllamaStudio — není důkaz runtime hodnot runneru"
+                title={t('details.serveTitle')}
+                sourceNote={t('details.serveNote')}
               >
                 {!env ? (
-                  <p className="detail-unavailable">Konfigurace nedostupná</p>
+                  <p className="detail-unavailable">{t('details.configUnavailable')}</p>
                 ) : (
                   <KvGrid>
                     {(Object.keys(env) as Array<keyof typeof env>).map((key) => (
                       <DetailRow
                         key={key}
                         label={key}
-                        value={env[key] !== '' ? env[key] : '(prázdné / výchozí Ollama)'}
+                        value={env[key] !== '' ? env[key] : t('details.emptyDefault')}
                         unavailable={env[key] === ''}
                       />
                     ))}
@@ -350,18 +346,20 @@ export default function LoadedModelDetailsDialog({
               </Section>
 
               <Section
-                title="Volby při načtení (OllamaStudio)"
-                sourceNote="Přesné options odeslané při modelLoad v této relaci aplikace"
+                title={t('details.loadOptsTitle')}
+                sourceNote={t('details.loadOptsNote')}
               >
                 {!recorded ? (
                   <p className="detail-unavailable">
-                    Nedostupné — model nebyl načten přes OllamaStudio v této relaci, nebo byl serve
-                    restartován / aplikace restartována.
+                    {t('details.loadOptsMissing')}
                   </p>
                 ) : (
                   <>
                     <p className="detail-meta mono">
-                      zaznamenáno: {formatRecordedAt(recorded.recordedAt)} · {recorded.modelName}
+                      {t('details.recordedAt', {
+                        time: formatDateTime(recorded.recordedAt),
+                        name: recorded.modelName
+                      })}
                     </p>
                     <KvGrid>
                       {LOAD_OPTION_LABELS.map(({ key, label }) => (
@@ -385,12 +383,16 @@ export default function LoadedModelDetailsDialog({
             className="btn"
             onClick={() => void copyToJson()}
             disabled={loading || !!error}
-            title="Zkopírovat všechny parametry jako JSON"
+            title={t('details.copyJsonTitle')}
           >
-            {copyState === 'ok' ? 'Zkopírováno' : copyState === 'err' ? 'Kopírování selhalo' : 'Copy to JSON'}
+            {copyState === 'ok'
+              ? t('details.copyOk')
+              : copyState === 'err'
+                ? t('details.copyErr')
+                : t('details.copyJson')}
           </button>
           <button type="button" className="btn" onClick={onClose}>
-            Zavřít
+            {t('common.close')}
           </button>
         </div>
       </div>

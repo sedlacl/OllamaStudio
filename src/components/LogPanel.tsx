@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n/I18nProvider'
 import { api, type LogEntry } from '../types/api'
 
 type FilterCategory = 'all' | 'error' | 'load' | 'unload' | 'request'
-
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('cs-CZ')
-}
 
 export interface LogPanelProps {
   compact?: boolean
@@ -24,6 +21,7 @@ export default function LogPanel({
   initialLimit = 1000,
   title
 }: LogPanelProps): JSX.Element {
+  const { t, formatTime } = useI18n()
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [textFilter, setTextFilter] = useState('')
   const [category, setCategory] = useState<FilterCategory>('all')
@@ -57,19 +55,15 @@ export default function LogPanel({
   })
 
   const categories: { id: FilterCategory; label: string }[] = [
-    { id: 'all', label: 'Vše' },
-    { id: 'error', label: 'Chyby' },
-    { id: 'load', label: 'Load' },
-    { id: 'unload', label: 'Unload' },
-    { id: 'request', label: 'Požadavky' }
+    { id: 'all', label: t('logPanel.all') },
+    { id: 'error', label: t('logPanel.errors') },
+    { id: 'load', label: t('logPanel.load') },
+    { id: 'unload', label: t('logPanel.unload') },
+    { id: 'request', label: t('logPanel.requests') }
   ]
 
   const panelHeight = fill ? undefined : maxHeight ?? (compact ? 220 : 420)
-  const wrapClass = [
-    'log-panel-wrap',
-    compact ? 'compact' : '',
-    fill ? 'fill' : ''
-  ]
+  const wrapClass = ['log-panel-wrap', compact ? 'compact' : '', fill ? 'fill' : '']
     .filter(Boolean)
     .join(' ')
 
@@ -84,7 +78,7 @@ export default function LogPanel({
       <div className={`log-toolbar${compact ? ' log-toolbar-compact' : ''}`}>
         <input
           type="text"
-          placeholder="Filtrovat text…"
+          placeholder={t('logPanel.filterPlaceholder')}
           value={textFilter}
           onChange={(e) => setTextFilter(e.target.value)}
         />
@@ -98,11 +92,11 @@ export default function LogPanel({
           </button>
         ))}
         <button className={`filter-chip${paused ? ' active' : ''}`} onClick={() => setPaused((p) => !p)}>
-          {paused ? 'Pozastaveno' : 'Autoscroll'}
+          {paused ? t('logPanel.paused') : t('logPanel.autoscroll')}
         </button>
         {showClear && (
           <button className="btn" onClick={() => api().clearLogs().then(() => setEntries([]))}>
-            Vymazat
+            {t('logPanel.clear')}
           </button>
         )}
       </div>
@@ -113,7 +107,9 @@ export default function LogPanel({
         style={!fill && panelHeight ? { height: panelHeight } : undefined}
       >
         {filtered.length === 0 ? (
-          <div className="empty-state">Žádné logy{entries.length > 0 ? ' (filtr)' : ''}</div>
+          <div className="empty-state">
+            {entries.length > 0 ? t('logPanel.emptyFiltered') : t('logPanel.empty')}
+          </div>
         ) : (
           filtered.map((e) => (
             <div

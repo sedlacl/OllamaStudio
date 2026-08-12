@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import type { OllamaEnvConfig } from './config'
+import { getMainLocale, tMain } from '../i18n'
+import { localeTag } from '../i18n/types'
 
 export type PresetKind = 'load' | 'serve'
 
@@ -87,7 +89,10 @@ function writeStore<K extends PresetKind>(kind: K, store: PresetStoreFile<K>): v
 export function listPresets<K extends PresetKind>(kind: K): Array<Preset<K>> {
   return readStore(kind)
     .presets.slice()
-    .sort((a, b) => a.name.localeCompare(b.name, 'cs') || b.updatedAt - a.updatedAt)
+    .sort(
+      (a, b) =>
+        a.name.localeCompare(b.name, localeTag(getMainLocale())) || b.updatedAt - a.updatedAt
+    )
 }
 
 export function getPreset<K extends PresetKind>(kind: K, id: string): Preset<K> | null {
@@ -101,7 +106,7 @@ export function savePreset<K extends PresetKind>(
   id?: string
 ): Preset<K> {
   const trimmed = name.trim()
-  if (!trimmed) throw new Error('Název presetu nesmí být prázdný')
+  if (!trimmed) throw new Error(tMain('errors.presetNameEmpty'))
 
   const store = readStore(kind)
   const now = Date.now()
@@ -146,27 +151,31 @@ export function importPresetJson<K extends PresetKind>(
   try {
     parsed = JSON.parse(raw)
   } catch {
-    throw new Error('Neplatný JSON')
+    throw new Error(tMain('errors.invalidJson'))
   }
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error('JSON musí být objekt')
+    throw new Error(tMain('errors.jsonMustBeObject'))
   }
 
   const obj = parsed as Record<string, unknown>
   if (obj.kind != null && obj.kind !== kind) {
-    throw new Error(`Preset je typu „${String(obj.kind)}“, očekáváno „${kind}“`)
+    throw new Error(
+      tMain('errors.presetKindMismatch', { kind: String(obj.kind), expected: kind })
+    )
   }
 
   const data = (obj.data ?? obj) as PresetDataMap[K]
   if (!data || typeof data !== 'object') {
-    throw new Error('Chybí pole data')
+    throw new Error(tMain('errors.missingData'))
   }
 
   const name =
     typeof obj.name === 'string' && obj.name.trim()
       ? obj.name.trim()
-      : `Import ${new Date().toLocaleString('cs-CZ')}`
+      : tMain('errors.importName', {
+          when: new Date().toLocaleString(localeTag(getMainLocale()))
+        })
 
   return savePreset(kind, name, data)
 }

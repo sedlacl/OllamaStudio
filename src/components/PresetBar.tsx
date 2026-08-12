@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
   type Preset,
@@ -8,9 +9,7 @@ import {
 
 export interface PresetBarProps<K extends PresetKind> {
   kind: K
-  /** Aktuální hodnoty formuláře / konfigurace k uložení a kopírování */
   getCurrentData: () => PresetDataMap[K]
-  /** Aplikovat data presetu do formuláře */
   applyData: (data: PresetDataMap[K]) => void
   disabled?: boolean
 }
@@ -23,6 +22,7 @@ export default function PresetBar<K extends PresetKind>({
   applyData,
   disabled = false
 }: PresetBarProps<K>): JSX.Element {
+  const { t } = useI18n()
   const [presets, setPresets] = useState<Array<Preset<K>>>([])
   const [selectedId, setSelectedId] = useState('')
   const [status, setStatus] = useState<Status>(null)
@@ -51,17 +51,17 @@ export default function PresetBar<K extends PresetKind>({
 
   const handleLoad = (): void => {
     if (!selected) {
-      flash('err', 'Vyberte preset')
+      flash('err', t('presets.selectRequired'))
       return
     }
     applyData(selected.data)
-    flash('ok', `Načteno: ${selected.name}`)
+    flash('ok', t('presets.loaded', { name: selected.name }))
   }
 
   const handleSave = async (): Promise<void> => {
     const name = saveName.trim() || selected?.name || ''
     if (!name) {
-      flash('err', 'Zadejte název presetu')
+      flash('err', t('presets.nameRequired'))
       return
     }
     setBusy(true)
@@ -74,9 +74,9 @@ export default function PresetBar<K extends PresetKind>({
       if (!list.some((p) => p.id === saved.id)) setSelectedId(saved.id)
       setSaveOpen(false)
       setSaveName('')
-      flash('ok', `Uloženo: ${saved.name}`)
+      flash('ok', t('presets.saved', { name: saved.name }))
     } catch (e) {
-      flash('err', e instanceof Error ? e.message : 'Uložení selhalo')
+      flash('err', e instanceof Error ? e.message : t('presets.saveFailed'))
     } finally {
       setBusy(false)
     }
@@ -91,15 +91,15 @@ export default function PresetBar<K extends PresetKind>({
     }
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
-      flash('ok', 'Zkopírováno do schránky')
+      flash('ok', t('presets.copied'))
     } catch {
-      flash('err', 'Kopírování selhalo')
+      flash('err', t('presets.copyFailed'))
     }
   }
 
   const handleImport = async (): Promise<void> => {
     if (!importText.trim()) {
-      flash('err', 'Vložte JSON')
+      flash('err', t('presets.pasteJson'))
       return
     }
     setBusy(true)
@@ -110,9 +110,9 @@ export default function PresetBar<K extends PresetKind>({
       applyData(imported.data)
       setImportOpen(false)
       setImportText('')
-      flash('ok', `Importováno: ${imported.name}`)
+      flash('ok', t('presets.imported', { name: imported.name }))
     } catch (e) {
-      flash('err', e instanceof Error ? e.message : 'Import selhal')
+      flash('err', e instanceof Error ? e.message : t('presets.importFailed'))
     } finally {
       setBusy(false)
     }
@@ -120,18 +120,18 @@ export default function PresetBar<K extends PresetKind>({
 
   const handleDelete = async (): Promise<void> => {
     if (!selected) {
-      flash('err', 'Vyberte preset')
+      flash('err', t('presets.selectRequired'))
       return
     }
-    if (!window.confirm(`Smazat preset „${selected.name}“?`)) return
+    if (!window.confirm(t('presets.deleteConfirm', { name: selected.name }))) return
     setBusy(true)
     try {
       await api().deletePreset(kind, selected.id)
       setSelectedId('')
       await refresh()
-      flash('ok', 'Preset smazán')
+      flash('ok', t('presets.deleted'))
     } catch (e) {
-      flash('err', e instanceof Error ? e.message : 'Smazání selhalo')
+      flash('err', e instanceof Error ? e.message : t('presets.deleteFailed'))
     } finally {
       setBusy(false)
     }
@@ -146,7 +146,7 @@ export default function PresetBar<K extends PresetKind>({
     <div className="preset-bar">
       <div className="preset-bar-row">
         <label className="preset-bar-label" htmlFor={`preset-select-${kind}`}>
-          Preset
+          {t('presets.label')}
         </label>
         <select
           id={`preset-select-${kind}`}
@@ -155,7 +155,7 @@ export default function PresetBar<K extends PresetKind>({
           disabled={disabled || busy}
           onChange={(e) => setSelectedId(e.target.value)}
         >
-          <option value="">— vyberte —</option>
+          <option value="">{t('presets.select')}</option>
           {presets.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -168,45 +168,45 @@ export default function PresetBar<K extends PresetKind>({
             className="btn"
             disabled={disabled || busy || !selectedId}
             onClick={handleLoad}
-            title="Načíst vybraný preset do formuláře"
+            title={t('presets.loadTitle')}
           >
-            Load
+            {t('presets.load')}
           </button>
           <button
             type="button"
             className="btn"
             disabled={disabled || busy}
             onClick={openSave}
-            title="Uložit aktuální hodnoty jako preset (JSON)"
+            title={t('presets.saveTitle')}
           >
-            Save
+            {t('presets.save')}
           </button>
           <button
             type="button"
             className="btn"
             disabled={disabled || busy}
             onClick={() => void handleCopy()}
-            title="Zkopírovat aktuální hodnoty jako JSON"
+            title={t('presets.copyTitle')}
           >
-            Copy
+            {t('presets.copy')}
           </button>
           <button
             type="button"
             className="btn"
             disabled={disabled || busy}
             onClick={() => setImportOpen(true)}
-            title="Importovat preset z JSON"
+            title={t('presets.importTitle')}
           >
-            Import
+            {t('presets.import')}
           </button>
           <button
             type="button"
             className="btn"
             disabled={disabled || busy || !selectedId}
             onClick={() => void handleDelete()}
-            title="Smazat vybraný preset"
+            title={t('presets.deleteTitle')}
           >
-            Delete
+            {t('presets.delete')}
           </button>
         </div>
       </div>
@@ -219,13 +219,13 @@ export default function PresetBar<K extends PresetKind>({
 
       {saveOpen && (
         <div className="preset-inline-panel">
-          <label htmlFor={`preset-save-name-${kind}`}>Název presetu</label>
+          <label htmlFor={`preset-save-name-${kind}`}>{t('presets.nameLabel')}</label>
           <div className="preset-inline-row">
             <input
               id={`preset-save-name-${kind}`}
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
-              placeholder="např. 128k-full-gpu"
+              placeholder={t('presets.namePlaceholder')}
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void handleSave()
@@ -233,10 +233,10 @@ export default function PresetBar<K extends PresetKind>({
               }}
             />
             <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void handleSave()}>
-              Uložit
+              {t('presets.saveAction')}
             </button>
             <button type="button" className="btn" disabled={busy} onClick={() => setSaveOpen(false)}>
-              Zrušit
+              {t('presets.cancel')}
             </button>
           </div>
         </div>
@@ -244,7 +244,7 @@ export default function PresetBar<K extends PresetKind>({
 
       {importOpen && (
         <div className="preset-inline-panel">
-          <label htmlFor={`preset-import-${kind}`}>JSON presetu</label>
+          <label htmlFor={`preset-import-${kind}`}>{t('presets.jsonLabel')}</label>
           <textarea
             id={`preset-import-${kind}`}
             className="mono"
@@ -256,7 +256,7 @@ export default function PresetBar<K extends PresetKind>({
           />
           <div className="preset-inline-row">
             <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void handleImport()}>
-              Importovat
+              {t('presets.importAction')}
             </button>
             <button
               type="button"
@@ -267,7 +267,7 @@ export default function PresetBar<K extends PresetKind>({
                 setImportText('')
               }}
             >
-              Zrušit
+              {t('presets.cancel')}
             </button>
           </div>
         </div>

@@ -15,9 +15,13 @@ export interface OllamaEnvConfig {
   OLLAMA_MODELS: string
 }
 
+export type AppLanguage = 'cs' | 'en'
+
 export interface AppConfig {
   ollamaEnv: OllamaEnvConfig
   autoStartServe: boolean
+  /** UI + tray jazyk; chybí ve starších configech → cs. */
+  language?: AppLanguage
   configVersion?: number
 }
 
@@ -313,6 +317,8 @@ export interface Api {
   upsertContinueModel: (modelName: string) => Promise<ContinueModelEntry>
   removeContinueModel: (modelName: string) => Promise<boolean>
   killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
+  getAppLanguage: () => Promise<AppLanguage>
+  setAppLanguage: (language: AppLanguage) => Promise<AppLanguage>
 }
 
 declare global {

@@ -6,6 +6,12 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-08-12
+
+### Added
+
+- Přepínač jazyka **CZ / EN** v hlavičce (čeština výchozí), lokalizace UI i tray menu; jazyk se ukládá do localStorage a AppConfig
+
 ## [1.1.0] — 2026-08-12
 
 ### Added

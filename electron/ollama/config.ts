@@ -17,9 +17,13 @@ export interface OllamaEnvConfig {
   OLLAMA_MODELS: string
 }
 
+export type AppLanguage = 'cs' | 'en'
+
 export interface AppConfig {
   ollamaEnv: OllamaEnvConfig
   autoStartServe: boolean
+  /** UI + tray jazyk; chybí ve starších configech → cs. */
+  language?: AppLanguage
   configVersion?: number
 }
 
@@ -40,7 +44,8 @@ const DEFAULT_CONFIG: AppConfig = {
     LLAMA_ARG_CTX_CHECKPOINTS: '0',
     OLLAMA_MODELS: ''
   },
-  autoStartServe: true
+  autoStartServe: true,
+  language: 'cs'
 }
 
 function configPath(): string {
@@ -56,9 +61,14 @@ export function loadConfig(): AppConfig {
   try {
     const raw = readFileSync(path, 'utf-8')
     const parsed = JSON.parse(raw) as Partial<AppConfig>
+    const language =
+      parsed.language === 'en' || parsed.language === 'cs'
+        ? parsed.language
+        : DEFAULT_CONFIG.language
     const config: AppConfig = {
       ...DEFAULT_CONFIG,
       ...parsed,
+      language,
       ollamaEnv: { ...DEFAULT_CONFIG.ollamaEnv, ...parsed.ollamaEnv }
     }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import PresetBar from '../components/PresetBar'
+import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
   type AppConfig,
@@ -29,15 +30,20 @@ function configToPreset(config: AppConfig): ServePresetData {
   }
 }
 
-function applyServePreset(data: ServePresetData): AppConfig {
+function applyServePreset(data: ServePresetData, current: AppConfig): AppConfig {
   return {
+    ...current,
     ollamaEnv: { ...EMPTY_ENV, ...data.ollamaEnv },
     autoStartServe: data.autoStartServe ?? true
   }
 }
 
 export default function Server(): JSX.Element {
-  const [config, setConfig] = useState<AppConfig>({ ollamaEnv: { ...EMPTY_ENV }, autoStartServe: true })
+  const { t } = useI18n()
+  const [config, setConfig] = useState<AppConfig>({
+    ollamaEnv: { ...EMPTY_ENV },
+    autoStartServe: true
+  })
   const [serve, setServe] = useState<ServeState | null>(null)
   const [binary, setBinary] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -66,27 +72,26 @@ export default function Server(): JSX.Element {
 
   return (
     <div>
-      <h1 className="page-title">Server</h1>
+      <h1 className="page-title">{t('server.title')}</h1>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="metric-label">Ollama binary</div>
-        <div className="mono">{binary ?? 'Nenalezeno — nainstalujte Ollama CLI'}</div>
-        {serve?.pid && <div className="metric-label" style={{ marginTop: 8 }}>PID serve: {serve.pid}</div>}
+        <div className="metric-label">{t('server.binaryLabel')}</div>
+        <div className="mono">{binary ?? t('server.binaryMissing')}</div>
+        {serve?.pid && (
+          <div className="metric-label" style={{ marginTop: 8 }}>
+            {t('server.pidServe', { pid: serve.pid })}
+          </div>
+        )}
       </div>
 
-      <div className="alert alert-info">
-        Parametry se ukládají do konfigurace aplikace a při každém spawnu se předají child procesu{' '}
-        <code>ollama serve</code>. Nejsou to systémové proměnné prostředí. Presety se ukládají zvlášť
-        do JSON v userData. Na Linuxu / WSL při prázdném <code>OLLAMA_MODELS</code> aplikace
-        automaticky zkusí Windows adresář modelů pod <code>/mnt/*/Users/*/.ollama/models</code>.
-      </div>
+      <div className="alert alert-info">{t('server.info')}</div>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <PresetBar
           kind="serve"
           disabled={saving}
           getCurrentData={() => configToPreset(config)}
-          applyData={(data) => setConfig(applyServePreset(data))}
+          applyData={(data) => setConfig((current) => applyServePreset(data, current))}
         />
       </div>
 
@@ -105,7 +110,7 @@ export default function Server(): JSX.Element {
           <input
             value={config.ollamaEnv.OLLAMA_MODELS}
             onChange={(e) => updateEnv('OLLAMA_MODELS', e.target.value)}
-            placeholder="prázdné = výchozí / WSL autodetekce Windows modelů"
+            placeholder={t('server.modelsPlaceholder')}
           />
         </div>
 
@@ -114,7 +119,7 @@ export default function Server(): JSX.Element {
           <input
             value={config.ollamaEnv.OLLAMA_CONTEXT_LENGTH}
             onChange={(e) => updateEnv('OLLAMA_CONTEXT_LENGTH', e.target.value)}
-            placeholder="prázdné = výchozí Ollama"
+            placeholder={t('server.contextPlaceholder')}
           />
         </div>
 
@@ -123,7 +128,7 @@ export default function Server(): JSX.Element {
           <input
             value={config.ollamaEnv.OLLAMA_KEEP_ALIVE}
             onChange={(e) => updateEnv('OLLAMA_KEEP_ALIVE', e.target.value)}
-            placeholder="např. 5m"
+            placeholder={t('server.keepAlivePlaceholder')}
           />
         </div>
 
@@ -149,9 +154,9 @@ export default function Server(): JSX.Element {
             value={config.ollamaEnv.OLLAMA_FLASH_ATTENTION}
             onChange={(e) => updateEnv('OLLAMA_FLASH_ATTENTION', e.target.value)}
           >
-            <option value="">— výchozí —</option>
-            <option value="0">0 (vypnuto)</option>
-            <option value="1">1 (zapnuto)</option>
+            <option value="">{t('common.defaultOption')}</option>
+            <option value="0">{t('server.flashOff')}</option>
+            <option value="1">{t('server.flashOn')}</option>
           </select>
         </div>
 
@@ -161,14 +166,14 @@ export default function Server(): JSX.Element {
             value={config.ollamaEnv.OLLAMA_KV_CACHE_TYPE}
             onChange={(e) => updateEnv('OLLAMA_KV_CACHE_TYPE', e.target.value)}
           >
-            <option value="">— výchozí —</option>
+            <option value="">{t('common.defaultOption')}</option>
             <option value="f16">f16</option>
             <option value="q8_0">q8_0</option>
             <option value="q4_0">q4_0</option>
           </select>
         </div>
 
-        <div className="form-section-title">Diagnostika</div>
+        <div className="form-section-title">{t('server.diagnostics')}</div>
 
         <div className="form-field">
           <label>OLLAMA_DEBUG</label>
@@ -176,9 +181,9 @@ export default function Server(): JSX.Element {
             value={config.ollamaEnv.OLLAMA_DEBUG}
             onChange={(e) => updateEnv('OLLAMA_DEBUG', e.target.value)}
           >
-            <option value="1">1 (zapnuto)</option>
-            <option value="0">0 (vypnuto)</option>
-            <option value="">— výchozí —</option>
+            <option value="1">{t('server.flashOn')}</option>
+            <option value="0">{t('server.flashOff')}</option>
+            <option value="">{t('common.defaultOption')}</option>
           </select>
         </div>
 
@@ -188,9 +193,9 @@ export default function Server(): JSX.Element {
             value={config.ollamaEnv.OLLAMA_DEBUG_LOG_REQUESTS}
             onChange={(e) => updateEnv('OLLAMA_DEBUG_LOG_REQUESTS', e.target.value)}
           >
-            <option value="1">1 (zapnuto)</option>
-            <option value="0">0 (vypnuto)</option>
-            <option value="">— výchozí —</option>
+            <option value="1">{t('server.flashOn')}</option>
+            <option value="0">{t('server.flashOff')}</option>
+            <option value="">{t('common.defaultOption')}</option>
           </select>
         </div>
 
@@ -200,9 +205,9 @@ export default function Server(): JSX.Element {
             value={config.ollamaEnv.LLAMA_ARG_CTX_CHECKPOINTS}
             onChange={(e) => updateEnv('LLAMA_ARG_CTX_CHECKPOINTS', e.target.value)}
           >
-            <option value="0">0 (vypnuto)</option>
-            <option value="1">1 (zapnuto)</option>
-            <option value="">— výchozí —</option>
+            <option value="0">{t('server.flashOff')}</option>
+            <option value="1">{t('server.flashOn')}</option>
+            <option value="">{t('common.defaultOption')}</option>
           </select>
         </div>
 
@@ -214,40 +219,37 @@ export default function Server(): JSX.Element {
               onChange={(e) => setConfig((c) => ({ ...c, autoStartServe: e.target.checked }))}
               style={{ marginRight: 8 }}
             />
-            Automaticky spustit serve při startu aplikace
+            {t('server.autoStart')}
           </label>
         </div>
       </div>
 
       <div className="btn-row" style={{ marginTop: 16 }}>
         <button className="btn btn-primary" onClick={() => setConfirmRestart(true)} disabled={saving}>
-          Uložit a restartovat serve
+          {t('server.saveRestart')}
         </button>
         <button className="btn" onClick={() => api().startServer().then(setServe)}>
-          Spustit
+          {t('server.start')}
         </button>
         <button className="btn" onClick={() => api().stopServer().then(setServe)}>
-          Zastavit
+          {t('server.stop')}
         </button>
         <button className="btn" onClick={() => api().restartServer().then(setServe)}>
-          Restartovat
+          {t('server.restart')}
         </button>
       </div>
 
       {confirmRestart && (
         <div className="modal-backdrop">
           <div className="modal">
-            <h3>Restartovat serve?</h3>
-            <p>
-              Uloží se nová konfigurace a proces <code>ollama serve</code> se restartuje. Probíhající inference
-              budou přerušeny.
-            </p>
+            <h3>{t('server.confirmTitle')}</h3>
+            <p>{t('server.confirmBody')}</p>
             <div className="modal-actions">
               <button className="btn" onClick={() => setConfirmRestart(false)}>
-                Zrušit
+                {t('common.cancel')}
               </button>
               <button className="btn btn-primary" onClick={handleSaveAndRestart} disabled={saving}>
-                {saving ? 'Ukládám…' : 'Potvrdit'}
+                {saving ? t('server.saving') : t('common.confirm')}
               </button>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { tMain } from '../i18n'
 import { isOllamaRelatedName } from './metrics'
 
 const execFileAsync = promisify(execFile)
@@ -65,10 +66,10 @@ export async function killOllamaRelatedProcess(
   }
 ): Promise<KillProcessResult> {
   if (!Number.isInteger(pid) || pid <= 0) {
-    return { ok: false, error: 'Neplatné PID' }
+    return { ok: false, error: tMain('errors.invalidPid') }
   }
   if (pid === process.pid) {
-    return { ok: false, error: 'Nelze ukončit vlastní proces aplikace' }
+    return { ok: false, error: tMain('errors.cannotKillSelf') }
   }
 
   if (options.servePid != null && pid === options.servePid) {
@@ -78,19 +79,19 @@ export async function killOllamaRelatedProcess(
     } catch (e) {
       return {
         ok: false,
-        error: e instanceof Error ? e.message : 'Ukončení serve selhalo'
+        error: e instanceof Error ? e.message : tMain('errors.stopServeFailed')
       }
     }
   }
 
   const name = await getProcessName(pid)
   if (!name) {
-    return { ok: false, error: `Proces ${pid} už neběží` }
+    return { ok: false, error: tMain('errors.processGone', { pid }) }
   }
   if (!isOllamaRelatedName(name)) {
     return {
       ok: false,
-      error: `PID ${pid} (${name}) není Ollama / llama runner — ukončení odmítnuto`
+      error: tMain('errors.notOllamaProcess', { pid, name })
     }
   }
 
@@ -100,7 +101,7 @@ export async function killOllamaRelatedProcess(
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : `Ukončení PID ${pid} selhalo`
+      error: e instanceof Error ? e.message : tMain('errors.killPidFailed', { pid })
     }
   }
 }

@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useEffect, useState } from 'react'
+import { useI18n } from '../i18n/I18nProvider'
 import { api, type ServeState } from '../types/api'
 
 function statusClass(status: string): string {
@@ -9,18 +10,8 @@ function statusClass(status: string): string {
   return ''
 }
 
-function statusLabel(status: string): string {
-  const map: Record<string, string> = {
-    running: 'Běží',
-    starting: 'Spouští se',
-    stopping: 'Zastavuje se',
-    stopped: 'Zastaveno',
-    error: 'Chyba'
-  }
-  return map[status] ?? status
-}
-
 export default function Layout(): JSX.Element {
+  const { t, locale, setLocale } = useI18n()
   const [serve, setServe] = useState<ServeState | null>(null)
   const [version, setVersion] = useState<string | null>(null)
 
@@ -37,6 +28,17 @@ export default function Layout(): JSX.Element {
     return () => clearInterval(id)
   }, [])
 
+  const statusLabel = (status: string): string => {
+    const map: Record<string, string> = {
+      running: t('status.running'),
+      starting: t('status.starting'),
+      stopping: t('status.stopping'),
+      stopped: t('status.stopped'),
+      error: t('status.error')
+    }
+    return map[status] ?? status
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -50,23 +52,37 @@ export default function Layout(): JSX.Element {
             </span>
           )}
         </div>
-        <nav className="app-nav">
-          <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-            Přehled
-          </NavLink>
-          <NavLink to="/models" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-            Modely
-          </NavLink>
-          <NavLink to="/resources" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-            GPU a paměť
-          </NavLink>
-          <NavLink to="/server" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-            Server
-          </NavLink>
-          <NavLink to="/logs" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
-            Logy
-          </NavLink>
-        </nav>
+        <div className="app-header-right">
+          <nav className="app-nav">
+            <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              {t('nav.overview')}
+            </NavLink>
+            <NavLink to="/models" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              {t('nav.models')}
+            </NavLink>
+            <NavLink
+              to="/resources"
+              className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+            >
+              {t('nav.resources')}
+            </NavLink>
+            <NavLink to="/server" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              {t('nav.server')}
+            </NavLink>
+            <NavLink to="/logs" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+              {t('nav.logs')}
+            </NavLink>
+          </nav>
+          <select
+            className="lang-select"
+            aria-label={t('lang.switchAria')}
+            value={locale}
+            onChange={(e) => setLocale(e.target.value as typeof locale)}
+          >
+            <option value="cs">{t('lang.cs')}</option>
+            <option value="en">{t('lang.en')}</option>
+          </select>
+        </div>
       </header>
       <main className="app-main">
         {serve?.error && (
@@ -78,7 +94,7 @@ export default function Layout(): JSX.Element {
                   className="btn btn-primary"
                   onClick={() => api().startServer(true).then(setServe)}
                 >
-                  Ukončit konfliktní procesy a spustit
+                  {t('layout.killConflict')}
                 </button>
               </div>
             )}

@@ -13,7 +13,7 @@ import {
   type ModelLoadOptions,
   type ServeConnectionStatus
 } from '../ollama/client'
-import { loadConfig, type AppConfig } from '../ollama/config'
+import { loadConfig, saveConfig, type AppConfig } from '../ollama/config'
 import {
   clearAllLoadOptions,
   getLoadOptions,
@@ -41,10 +41,18 @@ import {
   type PresetKind
 } from '../ollama/presets'
 import { serveManager } from '../ollama/serve-manager'
+import { isLocale, setMainLocale, tMain, type Locale } from '../i18n'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let loadedModelCount = 0
+
+function syncLocaleFromConfig(config?: AppConfig): Locale {
+  const cfg = config ?? loadConfig()
+  const language: Locale = cfg.language === 'en' ? 'en' : 'cs'
+  setMainLocale(language)
+  return language
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -124,7 +132,6 @@ function createTray(): void {
   const icon = resolveTrayIcon()
   tray = new Tray(icon)
   updateTrayMenu()
-  tray.setToolTip('OllamaStudio — zastaveno')
   tray.on('double-click', () => showMainWindow())
 }
 
@@ -139,13 +146,15 @@ function updateTrayMenu(): void {
   if (!tray) return
   const state = serveManager.getState()
   const statusLabel = statusText(state.status)
-  tray.setToolTip(`OllamaStudio — ${statusLabel} | načteno: ${loadedModelCount}`)
+  tray.setToolTip(
+    tMain('tray.tooltip', { status: statusLabel, count: loadedModelCount })
+  )
 
   const menu = Menu.buildFromTemplate([
-    { label: 'Zobrazit OllamaStudio', click: () => showMainWindow() },
+    { label: tMain('tray.show'), click: () => showMainWindow() },
     { type: 'separator' },
     {
-      label: state.status === 'running' ? 'Zastavit serve' : 'Spustit serve',
+      label: state.status === 'running' ? tMain('tray.stopServe') : tMain('tray.startServe'),
       enabled: state.status !== 'starting' && state.status !== 'stopping',
       click: async () => {
         if (state.status === 'running') await serveManager.stop()
@@ -154,7 +163,7 @@ function updateTrayMenu(): void {
       }
     },
     {
-      label: 'Restartovat serve',
+      label: tMain('tray.restartServe'),
       enabled: state.status === 'running',
       click: async () => {
         await serveManager.restart()
@@ -163,7 +172,7 @@ function updateTrayMenu(): void {
     },
     { type: 'separator' },
     {
-      label: 'Ukončit OllamaStudio',
+      label: tMain('tray.quit'),
       click: () => {
         app.isQuitting = true
         app.quit()
@@ -185,15 +194,15 @@ function deriveConnectionStatus(
 function statusText(status: string): string {
   switch (status) {
     case 'running':
-      return 'běží'
+      return tMain('tray.statusRunning')
     case 'starting':
-      return 'spouští se'
+      return tMain('tray.statusStarting')
     case 'stopping':
-      return 'zastavuje se'
+      return tMain('tray.statusStopping')
     case 'error':
-      return 'chyba'
+      return tMain('tray.statusError')
     default:
-      return 'zastaveno'
+      return tMain('tray.statusStopped')
   }
 }
 
@@ -267,9 +276,30 @@ function registerIpc(): void {
 
   ipcMain.handle('get-server-config', () => loadConfig())
   ipcMain.handle('save-server-config-and-restart', async (_e, config: AppConfig) => {
+    const existing = loadConfig()
+    const merged: AppConfig = {
+      ...config,
+      language:
+        config.language === 'en' || config.language === 'cs'
+          ? config.language
+          : existing.language ?? 'cs'
+    }
+    syncLocaleFromConfig(merged)
     clearAllLoadOptions()
-    await serveManager.saveConfigAndRestart(config)
+    await serveManager.saveConfigAndRestart(merged)
+    updateTrayMenu()
     return serveManager.getState()
+  })
+
+  ipcMain.handle('get-app-language', () => syncLocaleFromConfig())
+  ipcMain.handle('set-app-language', (_e, language: unknown) => {
+    const next: Locale = isLocale(language) ? language : 'cs'
+    const config = loadConfig()
+    config.language = next
+    saveConfig(config)
+    setMainLocale(next)
+    updateTrayMenu()
+    return next
   })
 
   ipcMain.handle('start-server', async (_e, forceKillConflict?: boolean) => {
@@ -314,6 +344,7 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+  syncLocaleFromConfig()
   createWindow()
   initModelLoadManager(() => mainWindow)
   createTray()

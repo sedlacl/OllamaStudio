@@ -35,6 +35,8 @@ export interface Api {
   upsertContinueModel: (modelName: string) => Promise<unknown>
   removeContinueModel: (modelName: string) => Promise<boolean>
   killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
+  getAppLanguage: () => Promise<'cs' | 'en'>
+  setAppLanguage: (language: 'cs' | 'en') => Promise<'cs' | 'en'>
 }
 
 const api: Api = {
@@ -87,7 +89,9 @@ const api: Api = {
   getContinueStatus: () => ipcRenderer.invoke('continue-status'),
   upsertContinueModel: (modelName) => ipcRenderer.invoke('continue-upsert-model', modelName),
   removeContinueModel: (modelName) => ipcRenderer.invoke('continue-remove-model', modelName),
-  killOllamaProcess: (pid) => ipcRenderer.invoke('kill-ollama-process', pid)
+  killOllamaProcess: (pid) => ipcRenderer.invoke('kill-ollama-process', pid),
+  getAppLanguage: () => ipcRenderer.invoke('get-app-language'),
+  setAppLanguage: (language) => ipcRenderer.invoke('set-app-language', language)
 }
 
 contextBridge.exposeInMainWorld('ollamaStudio', api)

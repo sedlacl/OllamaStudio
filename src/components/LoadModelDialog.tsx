@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useI18n } from '../i18n/I18nProvider'
 import type { AppConfig, LoadPresetData, ModelLoadOptions, ModelShow, ModelTag } from '../types/api'
 import PresetBar from './PresetBar'
 
@@ -100,6 +101,7 @@ export default function LoadModelDialog({
   onCancel,
   onLoad
 }: LoadModelDialogProps): JSX.Element {
+  const { t, formatNumber } = useI18n()
   const [form, setForm] = useState<LoadForm>(() => initialForm(modelInfo, serverConfig))
   const [validationError, setValidationError] = useState<string | null>(null)
   const maxContext = contextLimit(modelInfo)
@@ -125,7 +127,7 @@ export default function LoadModelDialog({
 
   const submit = (): void => {
     if (!form.keepInMemory && !form.ttl.trim()) {
-      setValidationError('Zadejte TTL, nebo zapněte „Keep model in memory“.')
+      setValidationError(t('loadDialog.errTtl'))
       return
     }
 
@@ -137,31 +139,31 @@ export default function LoadModelDialog({
     const ropeScale = optionalNumber(form.ropeScale)
 
     if (form.numCtx.trim() && (numCtx === undefined || numCtx <= 0)) {
-      setValidationError('Context Length musí být kladné číslo.')
+      setValidationError(t('loadDialog.errContext'))
       return
     }
     if (maxContext !== null && numCtx !== undefined && numCtx > maxContext) {
-      setValidationError(`Model podporuje nejvýše ${maxContext.toLocaleString('cs-CZ')} tokenů.`)
+      setValidationError(t('loadDialog.errContextMax', { max: formatNumber(maxContext) }))
       return
     }
     if (form.numBatch.trim() && (numBatch === undefined || numBatch <= 0)) {
-      setValidationError('Evaluation Batch Size musí být kladné číslo.')
+      setValidationError(t('loadDialog.errBatch'))
       return
     }
     if (form.numGpu.trim() && (numGpu === undefined || numGpu < -1)) {
-      setValidationError('GPU Offload musí být -1 nebo nezáporné číslo.')
+      setValidationError(t('loadDialog.errGpu'))
       return
     }
     if (form.numThread.trim() && (numThread === undefined || numThread < 0)) {
-      setValidationError('CPU Thread Pool Size musí být nezáporné číslo.')
+      setValidationError(t('loadDialog.errThreads'))
       return
     }
     if (form.ropeBase.trim() && (ropeBase === undefined || ropeBase <= 0)) {
-      setValidationError('RoPE Frequency Base musí být kladné číslo.')
+      setValidationError(t('loadDialog.errRopeBase'))
       return
     }
     if (form.ropeScale.trim() && (ropeScale === undefined || ropeScale <= 0)) {
-      setValidationError('RoPE Frequency Scale musí být kladné číslo.')
+      setValidationError(t('loadDialog.errRopeScale'))
       return
     }
 
@@ -189,10 +191,10 @@ export default function LoadModelDialog({
       >
         <div className="load-dialog-header">
           <div>
-            <h3 id="load-model-title">Načíst model</h3>
-            <p className="load-dialog-subtitle">Pokročilé parametry procesu Ollama</p>
+            <h3 id="load-model-title">{t('loadDialog.title')}</h3>
+            <p className="load-dialog-subtitle">{t('loadDialog.subtitle')}</p>
           </div>
-          <button className="dialog-close" onClick={onCancel} aria-label="Zavřít">
+          <button className="dialog-close" onClick={onCancel} aria-label={t('loadDialog.closeAria')}>
             ×
           </button>
         </div>
@@ -210,15 +212,15 @@ export default function LoadModelDialog({
 
           <div className="load-memory-estimate">
             <div>
-              <span className="load-section-label">Odhad paměti</span>
-              <span className="experimental-badge">Beta</span>
+              <span className="load-section-label">{t('loadDialog.memoryEstimate')}</span>
+              <span className="experimental-badge">{t('loadDialog.beta')}</span>
             </div>
-            <strong>Ollama spočítá skutečnou alokaci při načtení</strong>
-            <span>VRAM a paměť procesu ověříte po načtení na Přehledu.</span>
+            <strong>{t('loadDialog.memoryCalc')}</strong>
+            <span>{t('loadDialog.memoryHint')}</span>
           </div>
 
           <div className="load-model-file">
-            <span className="load-section-label">Model file</span>
+            <span className="load-section-label">{t('loadDialog.modelFile')}</span>
             <div className="load-model-pill">
               <strong>{model.name}</strong>
               {modelMeta && <span>{modelMeta}</span>}
@@ -226,20 +228,19 @@ export default function LoadModelDialog({
           </div>
 
           <div className="form-field">
-            <label htmlFor="model-api-identifier">API Identifier</label>
+            <label htmlFor="model-api-identifier">{t('loadDialog.apiIdentifier')}</label>
             <input id="model-api-identifier" value={model.name} readOnly />
-            <span className="field-help">Identifikátor používaný v API požadavcích.</span>
+            <span className="field-help">{t('loadDialog.apiIdentifierHelp')}</span>
           </div>
 
           <div className="load-section">
-            <div className="load-section-heading">Načtení modelu</div>
+            <div className="load-section-heading">{t('loadDialog.sectionLoad')}</div>
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-auto-unload">Auto Unload if Idle (TTL)</label>
+                <label htmlFor="model-auto-unload">{t('loadDialog.autoUnload')}</label>
                 <span className="field-help">
-                  Ollama parametr <code>keep_alive</code> — TTL jako duration (např. <code>30m</code>),
-                  jinak číslo (sekundy).
+                  {t('loadDialog.autoUnloadHelp')}
                 </span>
               </div>
               <input
@@ -251,23 +252,23 @@ export default function LoadModelDialog({
             </div>
 
             <div className="load-setting-row">
-              <label htmlFor="model-ttl">TTL</label>
+              <label htmlFor="model-ttl">{t('loadDialog.ttl')}</label>
               <input
                 id="model-ttl"
                 value={form.ttl}
                 disabled={form.keepInMemory}
                 onChange={(event) => update('ttl', event.target.value)}
-                placeholder="např. 30m"
+                placeholder={t('loadDialog.ttlPlaceholder')}
               />
             </div>
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-context">Context Length</label>
+                <label htmlFor="model-context">{t('loadDialog.contextLength')}</label>
                 <span className="field-help">
                   {maxContext !== null
-                    ? `Maximum modelu: ${maxContext.toLocaleString('cs-CZ')} tokenů`
-                    : 'Ollama option num_ctx'}
+                    ? t('loadDialog.contextMax', { max: formatNumber(maxContext) })
+                    : t('loadDialog.contextHelp')}
                 </span>
               </div>
               <input
@@ -281,8 +282,8 @@ export default function LoadModelDialog({
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-gpu">GPU Offload</label>
-                <span className="field-help">Počet vrstev; -1 = automaticky, 0 = CPU.</span>
+                <label htmlFor="model-gpu">{t('loadDialog.gpuOffload')}</label>
+                <span className="field-help">{t('loadDialog.gpuOffloadHelp')}</span>
               </div>
               <input
                 id="model-gpu"
@@ -295,8 +296,8 @@ export default function LoadModelDialog({
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-threads">CPU Thread Pool Size</label>
-                <span className="field-help">Prázdné = rozhodne runtime.</span>
+                <label htmlFor="model-threads">{t('loadDialog.cpuThreads')}</label>
+                <span className="field-help">{t('loadDialog.cpuThreadsHelp')}</span>
               </div>
               <input
                 id="model-threads"
@@ -304,14 +305,14 @@ export default function LoadModelDialog({
                 min="0"
                 value={form.numThread}
                 onChange={(event) => update('numThread', event.target.value)}
-                placeholder="Auto"
+                placeholder={t('common.auto')}
               />
             </div>
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-batch">Evaluation Batch Size</label>
-                <span className="field-help">Ollama option num_batch.</span>
+                <label htmlFor="model-batch">{t('loadDialog.batchSize')}</label>
+                <span className="field-help">{t('loadDialog.batchHelp')}</span>
               </div>
               <input
                 id="model-batch"
@@ -319,35 +320,35 @@ export default function LoadModelDialog({
                 min="1"
                 value={form.numBatch}
                 onChange={(event) => update('numBatch', event.target.value)}
-                placeholder="Výchozí Ollama"
+                placeholder={t('loadDialog.batchPlaceholder')}
               />
             </div>
 
             <div className="load-setting-row">
               <div>
-                <label>Physical Batch Size</label>
-                <span className="field-help">Ollama používá stejný parametr num_batch.</span>
+                <label>{t('loadDialog.physicalBatch')}</label>
+                <span className="field-help">{t('loadDialog.physicalBatchHelp')}</span>
               </div>
-              <span className="setting-readonly">Stejné jako Evaluation Batch Size</span>
+              <span className="setting-readonly">{t('loadDialog.physicalBatchSame')}</span>
             </div>
           </div>
 
           <div className="load-section">
-            <div className="load-section-heading">Serverová nastavení</div>
-            <SettingStatus label="Max Concurrent Predictions" value={serverEnv?.OLLAMA_NUM_PARALLEL} />
-            <SettingStatus label="Unified KV Cache" value={serverEnv?.OLLAMA_KV_CACHE_TYPE} />
-            <SettingStatus label="Context Checkpoints" value={serverEnv?.LLAMA_ARG_CTX_CHECKPOINTS} />
-            <SettingStatus label="Flash Attention" value={serverEnv?.OLLAMA_FLASH_ATTENTION} />
-            <p className="field-help load-section-note">Tyto parametry se nastavují na stránce Server a platí pro celý serve proces.</p>
+            <div className="load-section-heading">{t('loadDialog.serverSettings')}</div>
+            <SettingStatus label={t('loadDialog.maxConcurrent')} value={serverEnv?.OLLAMA_NUM_PARALLEL} />
+            <SettingStatus label={t('loadDialog.unifiedKv')} value={serverEnv?.OLLAMA_KV_CACHE_TYPE} />
+            <SettingStatus label={t('loadDialog.contextCheckpoints')} value={serverEnv?.LLAMA_ARG_CTX_CHECKPOINTS} />
+            <SettingStatus label={t('loadDialog.flashAttention')} value={serverEnv?.OLLAMA_FLASH_ATTENTION} />
+            <p className="field-help load-section-note">{t('loadDialog.serverNote')}</p>
           </div>
 
           <div className="load-section">
-            <div className="load-section-heading">Pokročilé runner options</div>
+            <div className="load-section-heading">{t('loadDialog.advanced')}</div>
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-mmap">Try mmap</label>
-                <span className="field-help">Ollama option use_mmap.</span>
+                <label htmlFor="model-mmap">{t('loadDialog.tryMmap')}</label>
+                <span className="field-help">{t('loadDialog.tryMmapHelp')}</span>
               </div>
               <input
                 id="model-mmap"
@@ -359,8 +360,8 @@ export default function LoadModelDialog({
 
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-mlock">Use mlock</label>
-                <span className="field-help">Ollama option use_mlock.</span>
+                <label htmlFor="model-mlock">{t('loadDialog.useMlock')}</label>
+                <span className="field-help">{t('loadDialog.useMlockHelp')}</span>
               </div>
               <input
                 id="model-mlock"
@@ -371,19 +372,19 @@ export default function LoadModelDialog({
             </div>
 
             <div className="load-setting-row">
-              <label htmlFor="model-rope-base">RoPE Frequency Base</label>
+              <label htmlFor="model-rope-base">{t('loadDialog.ropeBase')}</label>
               <input
                 id="model-rope-base"
                 type="number"
                 min="0"
                 value={form.ropeBase}
                 onChange={(event) => update('ropeBase', event.target.value)}
-                placeholder="Auto"
+                placeholder={t('common.auto')}
               />
             </div>
 
             <div className="load-setting-row">
-              <label htmlFor="model-rope-scale">RoPE Frequency Scale</label>
+              <label htmlFor="model-rope-scale">{t('loadDialog.ropeScale')}</label>
               <input
                 id="model-rope-scale"
                 type="number"
@@ -391,21 +392,21 @@ export default function LoadModelDialog({
                 step="0.01"
                 value={form.ropeScale}
                 onChange={(event) => update('ropeScale', event.target.value)}
-                placeholder="Auto"
+                placeholder={t('common.auto')}
               />
             </div>
 
-            <SettingStatus label="Offload KV Cache to GPU Memory" value="Řídí Ollama / backend" />
-            <SettingStatus label="Seed" value="Platí až pro generování" />
-            <SettingStatus label="Speculative Decoding" value="Model/API specific" />
-            <SettingStatus label="Chat Template" value="Modelfile TEMPLATE" />
+            <SettingStatus label={t('loadDialog.offloadKv')} value={t('loadDialog.offloadKvValue')} />
+            <SettingStatus label={t('loadDialog.seed')} value={t('loadDialog.seedValue')} />
+            <SettingStatus label={t('loadDialog.speculative')} value={t('loadDialog.speculativeValue')} />
+            <SettingStatus label={t('loadDialog.chatTemplate')} value={t('loadDialog.chatTemplateValue')} />
           </div>
 
           <div className="load-setting-row load-keep-row">
             <div>
-              <label htmlFor="model-keep-memory">Keep Model in Memory</label>
+              <label htmlFor="model-keep-memory">{t('loadDialog.keepInMemory')}</label>
               <span className="field-help">
-                Při zapnutí se pošle <code>keep_alive</code> jako číslo <code>-1</code> (navždy).
+                {t('loadDialog.keepInMemoryHelp')}
               </span>
             </div>
             <input
@@ -421,10 +422,10 @@ export default function LoadModelDialog({
 
         <div className="modal-actions">
           <button className="btn" onClick={onCancel} disabled={loading}>
-            Zrušit
+            {t('common.cancel')}
           </button>
           <button className="btn btn-primary" onClick={submit} disabled={loading}>
-            Načíst model
+            {t('loadDialog.loadAction')}
           </button>
         </div>
       </div>
@@ -433,10 +434,11 @@ export default function LoadModelDialog({
 }
 
 function SettingStatus({ label, value }: { label: string; value?: string }): JSX.Element {
+  const { t } = useI18n()
   return (
     <div className="load-setting-row">
       <label>{label}</label>
-      <span className="setting-readonly">{value || 'Výchozí Ollama'}</span>
+      <span className="setting-readonly">{value || t('common.defaultOllama')}</span>
     </div>
   )
 }

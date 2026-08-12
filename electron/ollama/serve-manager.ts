@@ -4,6 +4,7 @@ import { join } from 'path'
 import net from 'net'
 import { promisify } from 'util'
 import { app } from 'electron'
+import { tMain } from '../i18n'
 import {
   buildSpawnEnv,
   loadConfig,
@@ -116,7 +117,7 @@ export class ServeManager {
     if (!binary) {
       this.setState({
         status: 'error',
-        error: 'Ollama CLI nebylo nalezeno. Nainstalujte Ollama a přidejte do PATH.',
+        error: tMain('errors.ollamaMissing'),
         binaryPath: null
       })
       return
@@ -126,8 +127,7 @@ export class ServeManager {
     if (portBusy && !forceKillConflict) {
       this.setState({
         status: 'error',
-        error:
-          'Port 11434 je obsazený. Ukončete systémovou Ollamu (tray → Quit) nebo potvrďte ukončení konfliktních procesů.',
+        error: tMain('errors.portBusy'),
         portConflict: true,
         binaryPath: binary
       })
@@ -182,9 +182,9 @@ export class ServeManager {
         if (this.state.status !== 'stopping') {
           const msg =
             code !== null && code !== 0
-              ? `Proces skončil s kódem ${code}`
+              ? tMain('errors.processExitedCode', { code })
               : signal
-                ? `Proces ukončen signálem ${signal}`
+                ? tMain('errors.processExitedSignal', { signal })
                 : null
           this.setState({
             status: msg ? 'error' : 'stopped',
@@ -247,7 +247,7 @@ export class ServeManager {
       if (await ollamaClient.ping()) return
       await sleep(500)
     }
-    throw new Error('Server neodpovídá v časovém limitu')
+    throw new Error(tMain('errors.serverTimeout'))
   }
 
   private async killProcess(): Promise<void> {

@@ -2,6 +2,7 @@ import { homedir } from 'os'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { parseDocument, YAMLMap, YAMLSeq, isMap, isSeq } from 'yaml'
+import { tMain } from '../i18n'
 import { loadConfig } from './config'
 import { getLoadOptions } from './load-options-registry'
 
@@ -182,7 +183,7 @@ function writeDocument(path: string, doc: ReturnType<typeof parseDocument>): voi
  */
 export function upsertContinueModel(ollamaModel: string): ContinueModelEntry {
   const trimmed = ollamaModel.trim()
-  if (!trimmed) throw new Error('Název modelu nesmí být prázdný')
+  if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
   const settings = buildContinueSettingsFor(trimmed)
   const { path, doc } = loadDocument()
@@ -245,7 +246,7 @@ export function upsertContinueModel(ollamaModel: string): ContinueModelEntry {
 /** Odebere ollama záznam odpovídající danému modelu. */
 export function removeContinueModel(ollamaModel: string): boolean {
   const trimmed = ollamaModel.trim()
-  if (!trimmed) throw new Error('Název modelu nesmí být prázdný')
+  if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
   const { path, exists, doc } = loadDocument()
   if (!exists) return false

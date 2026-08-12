@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import type { OllamaClient, ModelLoadOptions } from './client'
 import { recordLoadOptions } from './load-options-registry'
+import { tMain } from '../i18n'
 
 export type ModelLoadStatus = 'loading' | 'success' | 'error'
 
@@ -33,7 +34,7 @@ export function startModelLoad(
 ): { ok: boolean; error?: string } {
   const existing = activeLoads.get(name)
   if (existing?.status === 'loading') {
-    return { ok: false, error: `Model „${name}" se už načítá` }
+    return { ok: false, error: tMain('errors.modelAlreadyLoading', { name }) }
   }
 
   const loadOptions = options ?? { keepAlive: '-1' }
