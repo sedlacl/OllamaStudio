@@ -336,7 +336,7 @@ function basenameProcess(pathOrName: string): string {
   return base.trim() || pathOrName
 }
 
-function isOllamaRelatedName(name: string): boolean {
+export function isOllamaRelatedName(name: string): boolean {
   const base = basenameProcess(name).toLowerCase()
   return (
     base.includes('ollama') ||

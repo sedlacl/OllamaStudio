@@ -123,9 +123,12 @@ export type ActiveRequestPhase =
 
 export type RequestHistoryResult = 'done' | 'stale'
 
+export type RequestKind = 'chat' | 'generate' | 'embed'
+
 export interface ActiveRequest {
   taskId: number
   slotId: number | null
+  kind: RequestKind | null
   phase: ActiveRequestPhase
   progressPercent: number | null
   nTokens: number | null
@@ -144,6 +147,7 @@ export interface ActiveRequest {
 export interface RequestHistoryItem {
   taskId: number
   slotId: number | null
+  kind: RequestKind | null
   phase: ActiveRequestPhase | null
   result: RequestHistoryResult
   completionReason: string | null
@@ -305,6 +309,7 @@ export interface Api {
   getContinueStatus: () => Promise<ContinueConfigStatus>
   upsertContinueModel: (modelName: string) => Promise<ContinueModelEntry>
   removeContinueModel: (modelName: string) => Promise<boolean>
+  killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
 }
 
 declare global {

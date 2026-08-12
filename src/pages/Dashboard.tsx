@@ -9,7 +9,8 @@ import {
   type DashboardData,
   type ModelLoadState,
   type RequestHistoryItem,
-  type RequestHistoryResult
+  type RequestHistoryResult,
+  type RequestKind
 } from '../types/api'
 function formatMb(mb: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
@@ -45,6 +46,16 @@ function phaseLabel(phase: ActiveRequestPhase): string {
     unknown: 'Neznámá fáze'
   }
   return map[phase]
+}
+
+function kindLabel(kind: RequestKind | null): string {
+  if (kind == null) return '—'
+  const map: Record<RequestKind, string> = {
+    chat: 'Chat',
+    generate: 'Generate',
+    embed: 'Embed'
+  }
+  return map[kind]
 }
 
 function formatElapsed(seconds: number | null): string {
@@ -92,7 +103,10 @@ function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
           <span className="mono">task {req.taskId}</span>
           {req.slotId != null && <span className="mono">slot {req.slotId}</span>}
         </div>
-        <span className="active-req-phase">{phaseLabel(req.phase)}</span>
+        <div className="active-req-ids">
+          {req.kind && <span className="history-kind">{kindLabel(req.kind)}</span>}
+          <span className="active-req-phase">{phaseLabel(req.phase)}</span>
+        </div>
       </div>
 
       {showBar && (
@@ -177,6 +191,13 @@ function HistoryRow({ item }: { item: RequestHistoryItem }): JSX.Element {
     <tr>
       <td className="mono">{item.taskId}</td>
       <td className="mono">{item.slotId != null ? item.slotId : '—'}</td>
+      <td>
+        {item.kind ? (
+          <span className="history-kind">{kindLabel(item.kind)}</span>
+        ) : (
+          '—'
+        )}
+      </td>
       <td>
         <span className={resultClass}>{resultLabel(item.result)}</span>
         {reason && <div className="history-reason">{reason}</div>}
@@ -402,6 +423,7 @@ export default function Dashboard(): JSX.Element {
                   <tr>
                     <th>Task</th>
                     <th>Slot</th>
+                    <th>Typ</th>
                     <th>Výsledek</th>
                     <th>Progress</th>
                     <th>Tokeny (p/g)</th>

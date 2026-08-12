@@ -33,6 +33,7 @@ export interface Api {
   getContinueStatus: () => Promise<unknown>
   upsertContinueModel: (modelName: string) => Promise<unknown>
   removeContinueModel: (modelName: string) => Promise<boolean>
+  killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
 }
 
 const api: Api = {
@@ -83,7 +84,8 @@ const api: Api = {
   importPreset: (kind, json) => ipcRenderer.invoke('presets-import', kind, json),
   getContinueStatus: () => ipcRenderer.invoke('continue-status'),
   upsertContinueModel: (modelName) => ipcRenderer.invoke('continue-upsert-model', modelName),
-  removeContinueModel: (modelName) => ipcRenderer.invoke('continue-remove-model', modelName)
+  removeContinueModel: (modelName) => ipcRenderer.invoke('continue-remove-model', modelName),
+  killOllamaProcess: (pid) => ipcRenderer.invoke('kill-ollama-process', pid)
 }
 
 contextBridge.exposeInMainWorld('ollamaStudio', api)

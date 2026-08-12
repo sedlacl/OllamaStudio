@@ -12,6 +12,9 @@ export type ActiveRequestPhase =
 /** Outcome retained in request history (never invent success for stale tasks). */
 export type RequestHistoryResult = 'done' | 'stale'
 
+/** Which API surface produced the task, when the runner logged it. */
+export type RequestKind = 'chat' | 'generate' | 'embed'
+
 export interface ParsedLogEvent {
   durationMs?: number
   promptTokensPerSec?: number
@@ -32,11 +35,17 @@ export interface ParsedLogEvent {
   isSlotActivity?: boolean
   isTaskComplete?: boolean
   completionReason?: string
+  /** Runner request line preceding the slot launch; carries no task id yet. */
+  requestKind?: RequestKind
+  /** API route line logged after the response finished. */
+  routeKind?: RequestKind
 }
 
 export interface ActiveRequest {
   taskId: number
   slotId: number | null
+  /** chat/generate/embed when the runner logged it before the task launched. */
+  kind: RequestKind | null
   phase: ActiveRequestPhase
   /** 0–100 when known from logs; null when absent (do not invent). */
   progressPercent: number | null
@@ -57,6 +66,7 @@ export interface ActiveRequest {
 export interface RequestHistoryItem {
   taskId: number
   slotId: number | null
+  kind: RequestKind | null
   phase: ActiveRequestPhase | null
   result: RequestHistoryResult
   completionReason: string | null
@@ -76,6 +86,8 @@ const MAX_HISTORY = 10
 const COMPLETED_RETENTION_MS = 8_000
 /** Drop tasks with no log updates (stale/aborted). */
 const STALE_ACTIVE_MS = 90_000
+/** Runner logs the request kind just before launching the slot; ignore older hints. */
+const REQUEST_KIND_MAX_AGE_MS = 60_000
 
 const LOAD_RE = /load(?:ing|ed)?\s+(?:model|weights)?/i
 const UNLOAD_RE = /unload(?:ing|ed)?/i
@@ -109,6 +121,17 @@ const SLOT_SUMMARY_TOKENS_RE = /\/\s*(\d+)\s+tokens\b/i
  */
 const SLOT_DONE_RE =
   /\bslot\s+release\b|\bstop(?:ped)?\s+processing\b|\bdone processing\b/i
+/** `msg="llama-server chat request"`, `… completion request`, `… embedding request` */
+const REQUEST_KIND_RE = /llama-server\s+(chat|completion|embedding|embed)\s+request/i
+/** llama-server logs this for chat requests even when Ollama DEBUG is off. */
+const CHAT_FORMAT_RE = /\bchat\s+format\s*:/i
+/**
+ * Route line `POST "/api/chat"` is logged after the response finishes, so it can
+ * only backfill a task whose kind was never seen (e.g. Ollama DEBUG disabled).
+ */
+const REQUEST_ROUTE_RE = /POST\s+"?\/api\/(chat|generate|embed(?:dings)?)\b/i
+/** Route hint applies only to a task that just finished. */
+const ROUTE_HINT_MAX_AGE_MS = 10_000
 
 export interface LogEntry {
   id: number
@@ -135,6 +158,8 @@ export class LogBuffer {
   private activeRequestEstimate = 0
   private activeRequests = new Map<number, ActiveRequest>()
   private requestHistory: RequestHistoryItem[] = []
+  /** Last runner request kind seen, waiting for the slot launch that follows it. */
+  private pendingRequestKind: { kind: RequestKind; at: number } | null = null
   private readonly nowFn: () => number
   private readonly maxHistory: number
 
@@ -216,6 +241,7 @@ export class LogBuffer {
     this.activeRequestEstimate = 0
     this.activeRequests.clear()
     this.requestHistory = []
+    this.pendingRequestKind = null
   }
 
   private createEntry(stream: 'stdout' | 'stderr', line: string): LogEntry {
@@ -283,10 +309,19 @@ export class LogBuffer {
   private syncActiveRequestsFromEntries(now = this.now()): void {
     const previous = new Map(this.activeRequests)
     this.activeRequests.clear()
+    this.pendingRequestKind = null
     const cutoff = now - STALE_ACTIVE_MS
     for (const entry of this.entries) {
       if (entry.timestamp < cutoff) continue
       this.updateActiveRequests(entry, now)
+    }
+
+    // Replay window may no longer contain the line that revealed the kind.
+    for (const [taskId, prev] of previous) {
+      const current = this.activeRequests.get(taskId)
+      if (current && current.kind == null && prev.kind != null) {
+        current.kind = prev.kind
+      }
     }
 
     // Active tasks that fell out of the replay window were never completed → stale.
@@ -301,13 +336,22 @@ export class LogBuffer {
 
   private updateActiveRequests(entry: LogEntry, pruneNow?: number): void {
     const p = entry.parsed
-    if (!p?.isSlotActivity || p.taskId == null || p.taskId < 0) return
+
+    if (p?.requestKind && !p.isSlotActivity) {
+      this.pendingRequestKind = { kind: p.requestKind, at: entry.timestamp }
+    }
+
+    if (!p?.isSlotActivity || p.taskId == null || p.taskId < 0) {
+      if (p?.routeKind) this.backfillRouteKind(p.routeKind, entry.timestamp)
+      return
+    }
 
     const now = entry.timestamp
     const existing = this.activeRequests.get(p.taskId)
     const req: ActiveRequest = existing ?? {
       taskId: p.taskId,
       slotId: p.slotId ?? null,
+      kind: this.takePendingRequestKind(now),
       phase: p.phase ?? 'unknown',
       progressPercent: null,
       nTokens: null,
@@ -324,6 +368,7 @@ export class LogBuffer {
     }
 
     if (p.slotId != null) req.slotId = p.slotId
+    if (req.kind == null) req.kind = this.takePendingRequestKind(now)
     if (p.phase) {
       // Prefer inference phases over transient cache/kv operator lines.
       const preferKeep =
@@ -350,17 +395,16 @@ export class LogBuffer {
     }
     if (p.completionReason) req.completionReason = p.completionReason
 
-    // Snapshot observed progress before live UI forces a full bar on completion.
-    const observedProgress = req.progressPercent
-
     if (p.isTaskComplete || p.phase === 'done') {
       req.status = 'completed'
       req.phase = 'done'
+      // `slot release` proves the task ran to the end; the last logged prefill
+      // progress line stops short of 1.00, so reporting it would understate.
       req.progressPercent = 100
       this.activeRequests.set(p.taskId, req)
       // Archive only on live append — sync replay must not re-insert evicted history rows.
       if (pruneNow == null) {
-        this.archiveRequest(req, 'done', now, req.completionReason, observedProgress)
+        this.archiveRequest(req, 'done', now, req.completionReason)
       }
     } else {
       req.status = 'active'
@@ -369,6 +413,30 @@ export class LogBuffer {
 
     req.updatedAt = now
     if (pruneNow == null) this.pruneActiveRequests(now)
+  }
+
+  private takePendingRequestKind(taskStartedAt: number): RequestKind | null {
+    const pending = this.pendingRequestKind
+    if (!pending) return null
+    if (taskStartedAt - pending.at > REQUEST_KIND_MAX_AGE_MS) return null
+    this.pendingRequestKind = null
+    return pending.kind
+  }
+
+  /**
+   * Route lines are logged after the response, so they can only label a task
+   * whose kind stayed unknown — never overwrite what the runner reported.
+   */
+  private backfillRouteKind(kind: RequestKind, at: number): void {
+    for (const req of this.activeRequests.values()) {
+      if (req.status === 'completed' && req.kind == null && at - req.updatedAt <= ROUTE_HINT_MAX_AGE_MS) {
+        req.kind = kind
+      }
+    }
+    const newest = this.requestHistory.find(
+      (h) => h.kind == null && at - h.completedAt <= ROUTE_HINT_MAX_AGE_MS
+    )
+    if (newest) newest.kind = kind
   }
 
   private pruneActiveRequests(now = this.now()): void {
@@ -400,6 +468,7 @@ export class LogBuffer {
     const item: RequestHistoryItem = {
       taskId: req.taskId,
       slotId: req.slotId,
+      kind: req.kind,
       phase: result === 'done' ? 'done' : req.phase === 'done' ? null : req.phase,
       result,
       completionReason,
@@ -468,6 +537,7 @@ function mergeHistoryItem(prev: RequestHistoryItem, next: RequestHistoryItem): R
   return {
     taskId: next.taskId,
     slotId: next.slotId ?? prev.slotId,
+    kind: next.kind ?? prev.kind,
     phase: next.phase ?? prev.phase,
     result: next.result === 'done' || prev.result === 'done' ? 'done' : next.result,
     completionReason: next.completionReason ?? prev.completionReason,
@@ -527,6 +597,31 @@ function detectPhase(line: string): ActiveRequestPhase | undefined {
   return undefined
 }
 
+function detectRequestKind(line: string): RequestKind | undefined {
+  const match = line.match(REQUEST_KIND_RE)
+  if (match) {
+    switch (match[1].toLowerCase()) {
+      case 'chat':
+        return 'chat'
+      case 'completion':
+        return 'generate'
+      default:
+        return 'embed'
+    }
+  }
+  if (CHAT_FORMAT_RE.test(line)) return 'chat'
+  return undefined
+}
+
+function detectRouteKind(line: string): RequestKind | undefined {
+  const match = line.match(REQUEST_ROUTE_RE)
+  if (!match) return undefined
+  const route = match[1].toLowerCase()
+  if (route === 'chat') return 'chat'
+  if (route === 'generate') return 'generate'
+  return 'embed'
+}
+
 function parseLine(line: string): ParsedLogEvent {
   const parsed: ParsedLogEvent = {
     isLoad: LOAD_RE.test(line),
@@ -534,6 +629,11 @@ function parseLine(line: string): ParsedLogEvent {
     isError: ERROR_RE.test(line),
     isRequest: REQUEST_RE.test(line)
   }
+
+  const requestKind = detectRequestKind(line)
+  if (requestKind) parsed.requestKind = requestKind
+  const routeKind = detectRouteKind(line)
+  if (routeKind) parsed.routeKind = routeKind
 
   const dur = line.match(DURATION_RE)
   if (dur) {

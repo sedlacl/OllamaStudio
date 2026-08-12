@@ -54,12 +54,18 @@ function formatPercent(value: number | null): string {
 function ProcessTable({
   rows,
   emptyLabel,
-  scaleMb
+  scaleMb,
+  servePid,
+  killingPid,
+  onKill
 }: {
   rows: GpuProcessInfo[]
   emptyLabel: string
   /** základ pro sloupec podílu — celková VRAM GPU, případně součet procesů */
   scaleMb: number | null
+  servePid?: number | null
+  killingPid?: number | null
+  onKill?: (pid: number, processName: string) => void
 }): JSX.Element {
   if (rows.length === 0) {
     return (
@@ -68,6 +74,8 @@ function ProcessTable({
       </p>
     )
   }
+
+  const canKill = typeof onKill === 'function'
 
   return (
     <table className="table">
@@ -78,6 +86,7 @@ function ProcessTable({
           <th>VRAM</th>
           <th style={{ width: '30%' }}>Podíl</th>
           <th>Zdroj</th>
+          {canKill && <th aria-label="Akce" />}
         </tr>
       </thead>
       <tbody>
@@ -86,9 +95,17 @@ function ProcessTable({
             scaleMb && scaleMb > 0 && p.gpuMemoryMb != null
               ? (p.gpuMemoryMb / scaleMb) * 100
               : null
+          const isServe = servePid != null && p.pid === servePid
           return (
             <tr key={p.pid}>
-              <td className="mono">{p.pid}</td>
+              <td className="mono">
+                {p.pid}
+                {isServe && (
+                  <span className="metric-label" style={{ margin: '0 0 0 6px' }}>
+                    serve
+                  </span>
+                )}
+              </td>
               <td className="mono">{p.processName}</td>
               <td>{formatGpuMemory(p.gpuMemoryMb)}</td>
               <td>
@@ -113,6 +130,23 @@ function ProcessTable({
               <td className="metric-label" style={{ margin: 0 }}>
                 {sourceLabel(p.source)}
               </td>
+              {canKill && (
+                <td className="table-actions">
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={killingPid === p.pid}
+                    title={
+                      isServe
+                        ? 'Ukončit ollama serve (spravovaný OllamaStudio)'
+                        : 'Ukončit proces'
+                    }
+                    onClick={() => onKill?.(p.pid, p.processName)}
+                  >
+                    {killingPid === p.pid ? '…' : 'Ukončit'}
+                  </button>
+                </td>
+              )}
             </tr>
           )
         })}
@@ -125,6 +159,9 @@ export default function ResourceUsage(): JSX.Element {
   const [data, setData] = useState<ResourceUsageData | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailsModel, setDetailsModel] = useState<string | null>(null)
+  const [killingPid, setKillingPid] = useState<number | null>(null)
+  const [killError, setKillError] = useState<string | null>(null)
+  const [killNotice, setKillNotice] = useState<string | null>(null)
 
   useEffect(() => {
     // Čtení výkonnostních čítačů trvá ~2 s, takže dotazy nesmí běžet přes sebe
@@ -152,6 +189,44 @@ export default function ResourceUsage(): JSX.Element {
       clearInterval(pollId)
     }
   }, [])
+
+  const refreshNow = async (): Promise<void> => {
+    try {
+      const d = await api().getResourceUsage()
+      setData(d)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const handleKill = async (pid: number, processName: string): Promise<void> => {
+    const isServe = data?.serveMemory.pid === pid
+    const label = isServe
+      ? `Ukončit ollama serve (PID ${pid})? Serve spravovaný OllamaStudio se zastaví.`
+      : `Ukončit proces „${processName}" (PID ${pid})?`
+    if (!confirm(label)) return
+
+    setKillingPid(pid)
+    setKillError(null)
+    setKillNotice(null)
+    try {
+      const result = await api().killOllamaProcess(pid)
+      if (!result.ok) {
+        setKillError(result.error ?? 'Ukončení selhalo')
+      } else {
+        setKillNotice(
+          isServe
+            ? `Serve (PID ${pid}) byl ukončen.`
+            : `Proces ${processName} (PID ${pid}) byl ukončen.`
+        )
+        await refreshNow()
+      }
+    } catch (e) {
+      setKillError(e instanceof Error ? e.message : 'Ukončení selhalo')
+    } finally {
+      setKillingPid(null)
+    }
+  }
 
   if (loading && !data) {
     return <p className="empty-state">Načítání využití zdrojů…</p>
@@ -183,6 +258,9 @@ export default function ResourceUsage(): JSX.Element {
         Kdo a co využívá GPU VRAM a systémovou paměť — včetně aplikací mimo Ollama. Obnovuje se
         každých {REFRESH_MS / 1000} s.
       </p>
+
+      {killNotice && <div className="alert alert-info">{killNotice}</div>}
+      {killError && <div className="alert alert-error">{killError}</div>}
 
       {!data?.gpuAvailable && (
         <div className="alert alert-info" style={{ marginBottom: 16 }}>
@@ -329,6 +407,9 @@ export default function ResourceUsage(): JSX.Element {
           rows={ollamaGpuProcs}
           emptyLabel="Žádný proces Ollama / runner (serve neběží, nebo nebyl nalezen)"
           scaleMb={shareScaleMb}
+          servePid={servePid}
+          killingPid={killingPid}
+          onKill={(pid, name) => void handleKill(pid, name)}
         />
         {!perProcessOk && ollamaGpuProcs.length > 0 && (
           <p className="metric-label" style={{ marginTop: 8 }}>

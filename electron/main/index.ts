@@ -32,6 +32,7 @@ import {
   removeContinueModel,
   upsertContinueModel
 } from '../ollama/continue-config'
+import { killOllamaRelatedProcess } from '../ollama/kill-process'
 import {
   deletePreset,
   importPresetJson,
@@ -191,6 +192,13 @@ function registerIpc(): void {
   ipcMain.handle('get-resource-usage', async () => {
     const state = serveManager.getState()
     return collectResourceUsage(ollamaClient, serveManager.getPid(), state.status)
+  })
+
+  ipcMain.handle('kill-ollama-process', async (_e, pid: number) => {
+    return killOllamaRelatedProcess(pid, {
+      servePid: serveManager.getPid(),
+      stopServe: () => serveManager.stop()
+    })
   })
 
   ipcMain.handle('get-model-load-status', () => getActiveModelLoads())
