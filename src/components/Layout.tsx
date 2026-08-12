@@ -22,6 +22,11 @@ function statusLabel(status: string): string {
 
 export default function Layout(): JSX.Element {
   const [serve, setServe] = useState<ServeState | null>(null)
+  const [version, setVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    api().getAppVersion().then(setVersion).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const refresh = (): void => {
@@ -37,6 +42,7 @@ export default function Layout(): JSX.Element {
       <header className="app-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <span className="app-title">OllamaStudio</span>
+          {version && <span className="app-version">v{version}</span>}
           {serve && (
             <span className={`status-badge ${statusClass(serve.status)}`}>
               <span className="status-dot" />

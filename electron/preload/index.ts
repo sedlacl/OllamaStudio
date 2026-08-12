@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 export interface Api {
   getServeStatus: () => Promise<unknown>
+  getAppVersion: () => Promise<string>
   getDashboard: () => Promise<unknown>
   getResourceUsage: () => Promise<unknown>
   getModelsTags: () => Promise<unknown>
@@ -38,6 +39,7 @@ export interface Api {
 
 const api: Api = {
   getServeStatus: () => ipcRenderer.invoke('get-serve-status'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getDashboard: () => ipcRenderer.invoke('get-dashboard'),
   getResourceUsage: () => ipcRenderer.invoke('get-resource-usage'),
   getModelsTags: () => ipcRenderer.invoke('get-models-tags'),

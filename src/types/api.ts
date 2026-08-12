@@ -273,6 +273,7 @@ export interface ContinueConfigStatus {
 
 export interface Api {
   getServeStatus: () => Promise<ServeState>
+  getAppVersion: () => Promise<string>
   getDashboard: () => Promise<DashboardData>
   getResourceUsage: () => Promise<ResourceUsageData>
   getModelsTags: () => Promise<ModelTag[]>

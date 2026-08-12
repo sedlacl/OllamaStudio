@@ -1,6 +1,6 @@
 {
   "name": "ollamastudio",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "OllamaStudio — desktopový hostitel ollama serve",
   "main": "./out/main/index.js",
   "author": "OllamaStudio",
@@ -10,6 +10,7 @@
     "build": "node ./scripts/electron-vite.mjs build",
     "preview": "node ./scripts/electron-vite.mjs preview",
     "postinstall": "electron-builder install-app-deps",
+    "icons": "node ./scripts/make-icons.mjs build/icon-source.png --fit --transparent",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder"
   },
@@ -37,7 +38,8 @@
     },
     "files": [
       "out/**/*",
-      "build/icon.*"
+      "build/icon.ico",
+      "build/icon-256.png"
     ],
     "win": {
       "target": [

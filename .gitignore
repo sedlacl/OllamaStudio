@@ -6,6 +6,9 @@ out/
 release/
 dist/
 
+# generated electron runners (scripts/*.mjs wrappers)
+scripts/_*-main.mjs
+
 # logs
 *.log
 

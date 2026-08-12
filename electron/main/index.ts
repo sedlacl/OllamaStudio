@@ -56,13 +56,16 @@ if (!gotLock) {
 }
 
 function createWindow(): void {
+  const windowTitle = `OllamaStudio ${app.getVersion()}`
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
     minWidth: 900,
     minHeight: 600,
     show: false,
-    title: 'OllamaStudio',
+    title: windowTitle,
+    icon: resolveTrayIcon(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -71,7 +74,15 @@ function createWindow(): void {
     }
   })
 
+  // Bez preventDefault by <title> z rendereru přepsal titulek s verzí.
+  mainWindow.on('page-title-updated', (event) => {
+    event.preventDefault()
+    mainWindow?.setTitle(windowTitle)
+  })
+
   mainWindow.on('ready-to-show', () => {
+    // Screenshoty (scripts/capture-screenshots.mjs) potřebují plnou šířku layoutu.
+    if (process.env.OLLAMASTUDIO_START_MAXIMIZED === '1') mainWindow?.maximize()
     mainWindow?.show()
   })
 
@@ -188,6 +199,8 @@ function statusText(status: string): string {
 
 function registerIpc(): void {
   ipcMain.handle('get-serve-status', () => serveManager.getState())
+
+  ipcMain.handle('get-app-version', () => app.getVersion())
 
   ipcMain.handle('get-resource-usage', async () => {
     const state = serveManager.getState()

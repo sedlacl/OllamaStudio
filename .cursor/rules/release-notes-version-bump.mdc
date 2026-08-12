@@ -1,0 +1,47 @@
+---
+description: Povinný CHANGELOG (release notes) a bump version při releasu / uživatelsky viditelných změnách
+alwaysApply: true
+---
+
+# Release notes a version bump
+
+## Kdy platí
+
+Před dokončením práce, která je **uživatelsky viditelná** nebo jde do releasu (`pack` / `dist` / tag / instalátor):
+
+- nová funkce, UI změna, IPC API, breaking change
+- bugfix, který mění chování aplikace
+- závislost s dopadem na runtime
+
+**Nevyžaduje bump** (stačí zmínka v `[Unreleased]`, pokud vůbec): čistě interní refaktor bez změny chování, formátování, comment-only, dočasné debug skripty.
+
+## Povinné kroky (v tomto pořadí)
+
+1. **Bump `version` v `package.json`** (SemVer):
+   - `patch` — opravy, drobné úpravy
+   - `minor` — nová zpětně kompatibilní funkce
+   - `major` — breaking change
+2. **Aktualizuj `CHANGELOG.md`**:
+   - přesuň položky z `[Unreleased]` pod novou sekci `## [X.Y.Z] — YYYY-MM-DD`
+   - kategorie: `Added` / `Changed` / `Fixed` / `Removed` / `Security`
+   - piš česky, stručně, z pohledu uživatele (ne výčet souborů)
+3. **Nenech prázdný release** — každá bumpnutá verze musí mít aspoň jednu položku v changelogu.
+4. Při commit/PR zmín verzi v message (např. `release: 1.0.2 — GPU kill + Continue`).
+
+## Zakázáno
+
+- Vydat `pack`/`dist` nebo navrhnout tag **bez** bumpnuté `package.json` version a záznamu v `CHANGELOG.md`
+- „Zapomenout“ changelog s odkazem, že se doplní později
+- Bumpnout verzi bez odpovídající sekce v changelogu
+
+## Příklad záznamu
+
+```markdown
+## [1.0.2] — 2026-08-13
+
+### Added
+- Ukončení Ollama procesů na stránce GPU
+
+### Fixed
+- Progress v historii requestů je po dokončení 100 %
+```

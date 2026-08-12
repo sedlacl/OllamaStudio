@@ -274,10 +274,15 @@ export async function collectResourceUsage(
  * Vytížení CPU napříč jádry z rozdílu os.cpus() časů přes krátký vzorek.
  * os.loadavg() je na Windows vždy 0, proto počítáme z idle/total delty.
  */
-async function getCpuInfo(sampleMs = 250): Promise<CpuInfo> {
+async function getCpuInfo(sampleMs = 500): Promise<CpuInfo> {
   const cpus = os.cpus()
   const model = cpus[0]?.model?.trim() || 'CPU'
   const cores = cpus.length
+
+  if (process.platform === 'win32') {
+    const perf = await getWindowsCpuUsage()
+    if (perf !== null) return { model, cores, usagePercent: perf }
+  }
 
   const sum = (list: os.CpuInfo[]): { idle: number; total: number } => {
     let idle = 0
@@ -301,6 +306,33 @@ async function getCpuInfo(sampleMs = 250): Promise<CpuInfo> {
     return { model, cores, usagePercent }
   } catch {
     return { model, cores, usagePercent: null }
+  }
+}
+
+/**
+ * Vytížení CPU na Windows přes CIM (Win32_PerfFormattedData_PerfOS_Processor).
+ * Názvy třídy/vlastnosti jsou jazykově neutrální (na rozdíl od cest Get-Counter),
+ * hodnota `_Total` je předpočtená a odpovídá Správci úloh. null → fallback na os.cpus().
+ */
+async function getWindowsCpuUsage(): Promise<number | null> {
+  try {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      "$t = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor | Where-Object { $_.Name -eq '_Total' }",
+      'if ($t) { [int]$t.PercentProcessorTime }'
+    ].join('\n')
+
+    const { stdout } = await execFileAsync(
+      'powershell',
+      ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { timeout: 8000, windowsHide: true }
+    )
+
+    const n = parseFloat(stdout.trim())
+    if (!Number.isFinite(n)) return null
+    return Math.max(0, Math.min(100, n))
+  } catch {
+    return null
   }
 }
 
