@@ -27,6 +27,18 @@ import {
   startModelLoad
 } from '../ollama/model-load-manager'
 import { collectMetrics, collectResourceUsage } from '../ollama/metrics'
+import {
+  getContinueConfigStatus,
+  removeContinueModel,
+  upsertContinueModel
+} from '../ollama/continue-config'
+import {
+  deletePreset,
+  importPresetJson,
+  listPresets,
+  savePreset,
+  type PresetKind
+} from '../ollama/presets'
 import { serveManager } from '../ollama/serve-manager'
 
 let mainWindow: BrowserWindow | null = null
@@ -263,6 +275,21 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('detect-ollama-binary', () => serveManager.detectBinary())
+
+  ipcMain.handle('presets-list', (_e, kind: PresetKind) => listPresets(kind))
+  ipcMain.handle(
+    'presets-save',
+    (_e, kind: PresetKind, name: string, data: unknown, id?: string) =>
+      savePreset(kind, name, data as never, id)
+  )
+  ipcMain.handle('presets-delete', (_e, kind: PresetKind, id: string) => deletePreset(kind, id))
+  ipcMain.handle('presets-import', (_e, kind: PresetKind, json: string) =>
+    importPresetJson(kind, json)
+  )
+
+  ipcMain.handle('continue-status', () => getContinueConfigStatus())
+  ipcMain.handle('continue-upsert-model', (_e, modelName: string) => upsertContinueModel(modelName))
+  ipcMain.handle('continue-remove-model', (_e, modelName: string) => removeContinueModel(modelName))
 }
 
 app.whenReady().then(async () => {

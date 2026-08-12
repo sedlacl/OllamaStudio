@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react'
-import { api, type AppConfig, type OllamaEnvConfig, type ServeState } from '../types/api'
+import PresetBar from '../components/PresetBar'
+import {
+  api,
+  type AppConfig,
+  type OllamaEnvConfig,
+  type ServePresetData,
+  type ServeState
+} from '../types/api'
 
 const EMPTY_ENV: OllamaEnvConfig = {
   OLLAMA_HOST: '127.0.0.1:11434',
@@ -12,6 +19,20 @@ const EMPTY_ENV: OllamaEnvConfig = {
   OLLAMA_DEBUG: '1',
   OLLAMA_DEBUG_LOG_REQUESTS: '1',
   LLAMA_ARG_CTX_CHECKPOINTS: '0'
+}
+
+function configToPreset(config: AppConfig): ServePresetData {
+  return {
+    ollamaEnv: { ...config.ollamaEnv },
+    autoStartServe: config.autoStartServe
+  }
+}
+
+function applyServePreset(data: ServePresetData): AppConfig {
+  return {
+    ollamaEnv: { ...EMPTY_ENV, ...data.ollamaEnv },
+    autoStartServe: data.autoStartServe ?? true
+  }
 }
 
 export default function Server(): JSX.Element {
@@ -54,7 +75,17 @@ export default function Server(): JSX.Element {
 
       <div className="alert alert-info">
         Parametry se ukládají do konfigurace aplikace a při každém spawnu se předají child procesu{' '}
-        <code>ollama serve</code>. Nejsou to systémové proměnné Windows.
+        <code>ollama serve</code>. Nejsou to systémové proměnné Windows. Presety se ukládají zvlášť
+        do JSON v userData.
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <PresetBar
+          kind="serve"
+          disabled={saving}
+          getCurrentData={() => configToPreset(config)}
+          applyData={(data) => setConfig(applyServePreset(data))}
+        />
       </div>
 
       <div className="card form-grid">

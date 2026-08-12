@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
+import ModelSplitTable from '../components/ModelSplitTable'
 import {
   api,
   type GpuMemorySource,
@@ -42,6 +43,12 @@ function sourceLabel(source: GpuMemorySource | null): string {
     'process-list': 'seznam procesů'
   }
   return source ? map[source] : 'nedostupné'
+}
+
+function formatPercent(value: number | null): string {
+  if (value == null) return '—'
+  if (value > 0 && value < 0.1) return '<0,1 %'
+  return `${value.toFixed(value < 10 ? 1 : 0)} %`
 }
 
 function ProcessTable({
@@ -232,13 +239,41 @@ export default function ResourceUsage(): JSX.Element {
               : '—'}
           </div>
           {gpu && (
-            <div className="metric-label">
-              {gpu.name}
-              {gpu.utilizationPercent != null ? ` · vytížení ${gpu.utilizationPercent} %` : ''}
-            </div>
+            <>
+              {gpu.utilizationPercent != null && (
+                <div className="progress-bar" style={{ marginTop: 8 }}>
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${Math.min(100, gpu.utilizationPercent)}%` }}
+                  />
+                </div>
+              )}
+              <div className="metric-label" style={{ marginTop: 6 }}>
+                {gpu.name}
+                {gpu.utilizationPercent != null ? ` · vytížení ${gpu.utilizationPercent} %` : ''}
+              </div>
+            </>
           )}
           {!gpu && vramUsed != null && (
             <div className="metric-label">Odhad z /api/ps (nvidia-smi nedostupné)</div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="metric-label">CPU zátěž</div>
+          <div className="metric-value">{formatPercent(data?.cpu.usagePercent ?? null)}</div>
+          {data?.cpu && (
+            <>
+              <div className="progress-bar" style={{ marginTop: 8 }}>
+                <div
+                  className="progress-fill"
+                  style={{ width: `${Math.min(100, data.cpu.usagePercent ?? 0)}%` }}
+                />
+              </div>
+              <div className="metric-label" style={{ marginTop: 6 }}>
+                {data.cpu.model} · {data.cpu.cores} jader
+              </div>
+            </>
           )}
         </div>
 
@@ -319,39 +354,14 @@ export default function ResourceUsage(): JSX.Element {
       {data && data.loadedModels.length > 0 && (
         <div className="card">
           <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
-            Načtené modely
-            {!perProcessOk ? ' — VRAM z /api/ps' : ''}
+            Načtené modely — rozložení CPU / GPU
           </h2>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>VRAM</th>
-                <th>Velikost na disku</th>
-                <th aria-label="Akce" />
-              </tr>
-            </thead>
-            <tbody>
-              {data.loadedModels.map((m) => (
-                <tr key={m.name}>
-                  <td className="mono">{m.name}</td>
-                  <td>{m.sizeVram ? formatBytes(m.sizeVram) : '—'}</td>
-                  <td>{m.size ? formatBytes(m.size) : '—'}</td>
-                  <td className="table-actions">
-                    <button
-                      type="button"
-                      className="btn btn-icon"
-                      title="Zobrazit všechny parametry"
-                      aria-label={`Parametry modelu ${m.name}`}
-                      onClick={() => setDetailsModel(m.name)}
-                    >
-                      …
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <p className="metric-label" style={{ margin: '0 0 12px' }}>
+            Zdroj Ollama <code>/api/ps</code>: <code>size</code> je celková paměť modelu (RAM+VRAM),{' '}
+            <code>size_vram</code> část na GPU. Zbytek běží na CPU — proto se „na GPU“ a „celkem“
+            liší.
+          </p>
+          <ModelSplitTable models={data.loadedModels} onDetails={setDetailsModel} />
         </div>
       )}
 

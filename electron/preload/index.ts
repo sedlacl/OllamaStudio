@@ -26,6 +26,13 @@ export interface Api {
   subscribeLogs: (cb: (entry: unknown) => void) => () => void
   subscribeDashboardRequests: (cb: () => void) => () => void
   detectOllamaBinary: () => Promise<string | null>
+  listPresets: (kind: string) => Promise<unknown>
+  savePreset: (kind: string, name: string, data: unknown, id?: string) => Promise<unknown>
+  deletePreset: (kind: string, id: string) => Promise<boolean>
+  importPreset: (kind: string, json: string) => Promise<unknown>
+  getContinueStatus: () => Promise<unknown>
+  upsertContinueModel: (modelName: string) => Promise<unknown>
+  removeContinueModel: (modelName: string) => Promise<boolean>
 }
 
 const api: Api = {
@@ -69,7 +76,14 @@ const api: Api = {
     ipcRenderer.on('dashboard-requests-changed', handler)
     return () => ipcRenderer.removeListener('dashboard-requests-changed', handler)
   },
-  detectOllamaBinary: () => ipcRenderer.invoke('detect-ollama-binary')
+  detectOllamaBinary: () => ipcRenderer.invoke('detect-ollama-binary'),
+  listPresets: (kind) => ipcRenderer.invoke('presets-list', kind),
+  savePreset: (kind, name, data, id) => ipcRenderer.invoke('presets-save', kind, name, data, id),
+  deletePreset: (kind, id) => ipcRenderer.invoke('presets-delete', kind, id),
+  importPreset: (kind, json) => ipcRenderer.invoke('presets-import', kind, json),
+  getContinueStatus: () => ipcRenderer.invoke('continue-status'),
+  upsertContinueModel: (modelName) => ipcRenderer.invoke('continue-upsert-model', modelName),
+  removeContinueModel: (modelName) => ipcRenderer.invoke('continue-remove-model', modelName)
 }
 
 contextBridge.exposeInMainWorld('ollamaStudio', api)

@@ -165,7 +165,7 @@ export interface DashboardData {
     utilizationPercent: number | null
   } | null
   vramFallbackMb: number | null
-  loadedModels: Array<{ name: string; sizeVram: number }>
+  loadedModels: Array<{ name: string; sizeVram: number; size: number }>
   memory: { workingSetMb: number; pid: number | null }
   activeRequests: number | null
   activeRequestDetails: ActiveRequest[]
@@ -201,6 +201,7 @@ export interface ResourceUsageData {
   loadedModels: Array<{ name: string; sizeVram: number; size: number }>
   serveMemory: { workingSetMb: number; pid: number | null }
   systemMemory: { totalMb: number; freeMb: number; usedMb: number }
+  cpu: { model: string; cores: number; usagePercent: number | null }
   serveStatus: string
 }
 
@@ -216,6 +217,54 @@ export interface ModelLoadState {
 export interface ModelLoadResult {
   ok: boolean
   error?: string
+}
+
+export type PresetKind = 'load' | 'serve'
+
+export interface LoadPresetData {
+  keepInMemory: boolean
+  ttl: string
+  numCtx: string
+  numBatch: string
+  numGpu: string
+  numThread: string
+  useMmap: boolean
+  useMlock: boolean
+  ropeBase: string
+  ropeScale: string
+}
+
+export interface ServePresetData {
+  ollamaEnv: OllamaEnvConfig
+  autoStartServe: boolean
+}
+
+export type PresetDataMap = {
+  load: LoadPresetData
+  serve: ServePresetData
+}
+
+export interface Preset<K extends PresetKind = PresetKind> {
+  id: string
+  name: string
+  kind: K
+  updatedAt: number
+  data: PresetDataMap[K]
+}
+
+export interface ContinueModelEntry {
+  name: string
+  model: string
+  provider: string
+  apiBase?: string
+  contextLength?: number
+  roles?: string[]
+}
+
+export interface ContinueConfigStatus {
+  path: string
+  exists: boolean
+  models: ContinueModelEntry[]
 }
 
 export interface Api {
@@ -244,6 +293,18 @@ export interface Api {
   subscribeLogs: (cb: (entry: LogEntry) => void) => () => void
   subscribeDashboardRequests: (cb: () => void) => () => void
   detectOllamaBinary: () => Promise<string | null>
+  listPresets: <K extends PresetKind>(kind: K) => Promise<Array<Preset<K>>>
+  savePreset: <K extends PresetKind>(
+    kind: K,
+    name: string,
+    data: PresetDataMap[K],
+    id?: string
+  ) => Promise<Preset<K>>
+  deletePreset: (kind: PresetKind, id: string) => Promise<boolean>
+  importPreset: <K extends PresetKind>(kind: K, json: string) => Promise<Preset<K>>
+  getContinueStatus: () => Promise<ContinueConfigStatus>
+  upsertContinueModel: (modelName: string) => Promise<ContinueModelEntry>
+  removeContinueModel: (modelName: string) => Promise<boolean>
 }
 
 declare global {

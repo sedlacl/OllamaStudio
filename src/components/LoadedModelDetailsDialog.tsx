@@ -162,6 +162,7 @@ export default function LoadedModelDetailsDialog({
   const [show, setShow] = useState<ModelShow | null>(null)
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [recorded, setRecorded] = useState<RecordedLoadOptions | null>(null)
+  const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle')
 
   useEffect(() => {
     let cancelled = false
@@ -196,6 +197,24 @@ export default function LoadedModelDetailsDialog({
 
   const details = running?.details
   const env = config?.ollamaEnv
+
+  const copyToJson = async (): Promise<void> => {
+    const payload = {
+      modelName,
+      exportedAt: new Date().toISOString(),
+      runtime: running,
+      model: show,
+      serveConfig: env ?? null,
+      loadOptions: recorded
+    }
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2))
+      setCopyState('ok')
+    } catch {
+      setCopyState('err')
+    }
+    window.setTimeout(() => setCopyState('idle'), 2000)
+  }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -361,7 +380,16 @@ export default function LoadedModelDetailsDialog({
         </div>
 
         <div className="modal-actions">
-          <button className="btn" onClick={onClose}>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => void copyToJson()}
+            disabled={loading || !!error}
+            title="Zkopírovat všechny parametry jako JSON"
+          >
+            {copyState === 'ok' ? 'Zkopírováno' : copyState === 'err' ? 'Kopírování selhalo' : 'Copy to JSON'}
+          </button>
+          <button type="button" className="btn" onClick={onClose}>
             Zavřít
           </button>
         </div>

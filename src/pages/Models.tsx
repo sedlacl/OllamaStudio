@@ -4,6 +4,7 @@ import LoadModelDialog from '../components/LoadModelDialog'
 import {
   api,
   type AppConfig,
+  type ContinueModelEntry,
   type ModelLoadOptions,
   type ModelLoadState,
   type ModelShow,
@@ -16,6 +17,23 @@ function formatSize(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
   return `${bytes} B`
+}
+
+function normalizeOllamaModelId(name: string): string {
+  return name.trim().toLowerCase().replace(/:latest$/, '')
+}
+
+function findContinueEntry(
+  entries: ContinueModelEntry[],
+  ollamaModel: string
+): ContinueModelEntry | null {
+  return (
+    entries.find(
+      (e) =>
+        e.provider === 'ollama' &&
+        normalizeOllamaModelId(e.model) === normalizeOllamaModelId(ollamaModel)
+    ) ?? null
+  )
 }
 
 export default function Models(): JSX.Element {
@@ -38,6 +56,19 @@ export default function Models(): JSX.Element {
   const [detailsModel, setDetailsModel] = useState<string | null>(null)
   const [modelLoads, setModelLoads] = useState<ModelLoadState[]>([])
   const [loadNotice, setLoadNotice] = useState<string | null>(null)
+  const [continueModels, setContinueModels] = useState<ContinueModelEntry[]>([])
+  const [continuePath, setContinuePath] = useState<string | null>(null)
+  const [continueBusy, setContinueBusy] = useState<string | null>(null)
+
+  const refreshContinue = useCallback(async () => {
+    try {
+      const status = await api().getContinueStatus()
+      setContinueModels(status.models)
+      setContinuePath(status.path)
+    } catch {
+      setContinueModels([])
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -54,9 +85,13 @@ export default function Models(): JSX.Element {
 
   useEffect(() => {
     refresh()
-    const id = setInterval(refresh, 8000)
+    void refreshContinue()
+    const id = setInterval(() => {
+      void refresh()
+      void refreshContinue()
+    }, 8000)
     return () => clearInterval(id)
-  }, [refresh])
+  }, [refresh, refreshContinue])
 
   useEffect(() => {
     api().getModelLoadStatus().then(setModelLoads).catch(() => {})
@@ -184,6 +219,42 @@ export default function Models(): JSX.Element {
     }
   }
 
+  const handleContinueUpsert = async (name: string): Promise<void> => {
+    const wasPresent = findContinueEntry(continueModels, name) != null
+    setContinueBusy(name)
+    setError(null)
+    try {
+      const entry = await api().upsertContinueModel(name)
+      setLoadNotice(
+        `Continue: model „${entry.name}" (${entry.model}) byl ${
+          wasPresent ? 'aktualizován' : 'nahrán'
+        } podle aktuálních settings.`
+      )
+      await refreshContinue()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Zápis do Continue selhal')
+    } finally {
+      setContinueBusy(null)
+    }
+  }
+
+  const handleContinueRemove = async (name: string): Promise<void> => {
+    const entry = findContinueEntry(continueModels, name)
+    if (!entry) return
+    if (!confirm(`Odebrat „${entry.name}" z Continue konfigurace?`)) return
+    setContinueBusy(name)
+    setError(null)
+    try {
+      await api().removeContinueModel(name)
+      setLoadNotice(`Continue: model „${entry.name}" byl odebrán.`)
+      await refreshContinue()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Odebrání z Continue selhalo')
+    } finally {
+      setContinueBusy(null)
+    }
+  }
+
   const pullPercent =
     pullProgress?.total && pullProgress.completed
       ? Math.round((pullProgress.completed / pullProgress.total) * 100)
@@ -281,6 +352,11 @@ export default function Models(): JSX.Element {
 
       <div className="card">
         <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Lokální modely</h2>
+        {continuePath && (
+          <p className="metric-label" style={{ margin: '0 0 12px' }}>
+            Continue: <span className="mono">{continuePath}</span>
+          </p>
+        )}
         {loading ? (
           <p className="empty-state">Načítání…</p>
         ) : tags.length === 0 ? (
@@ -292,56 +368,127 @@ export default function Models(): JSX.Element {
                 <th>Název</th>
                 <th>Velikost</th>
                 <th>Stav</th>
+                <th>Continue</th>
                 <th>Akce</th>
               </tr>
             </thead>
             <tbody>
-              {tags.map((m) => (
-                <tr key={m.digest}>
-                  <td className="mono">{m.name}</td>
-                  <td>{formatSize(m.size)}</td>
-                  <td>
-                    {isLoading(m.name)
-                      ? 'Načítá se…'
-                      : running.some((r) => r.name === m.name || r.model === m.name)
-                        ? 'Načteno'
-                        : '—'}
-                  </td>
-                  <td>
-                    <div className="btn-row">
-                      {!running.some((r) => r.name === m.name || r.model === m.name) && (
+              {tags.map((m) => {
+                const continueEntry = findContinueEntry(continueModels, m.name)
+                const continueBusyHere = continueBusy === m.name
+                return (
+                  <tr key={m.digest}>
+                    <td className="mono">{m.name}</td>
+                    <td>{formatSize(m.size)}</td>
+                    <td>
+                      {isLoading(m.name)
+                        ? 'Načítá se…'
+                        : running.some((r) => r.name === m.name || r.model === m.name)
+                          ? 'Načteno'
+                          : '—'}
+                    </td>
+                    <td>
+                      {continueEntry ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <span
+                            className="status-badge status-running"
+                            title={[
+                              continueEntry.name,
+                              continueEntry.apiBase,
+                              continueEntry.contextLength
+                                ? `ctx ${continueEntry.contextLength}`
+                                : null
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          >
+                            <span className="status-dot" />
+                            V Continue
+                          </span>
+                          <span className="metric-label" style={{ margin: 0 }}>
+                            {continueEntry.name}
+                            {continueEntry.contextLength
+                              ? ` · ctx ${continueEntry.contextLength}`
+                              : ''}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="status-badge">
+                          <span className="status-dot" />
+                          Není
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <div className="btn-row">
+                        {!running.some((r) => r.name === m.name || r.model === m.name) && (
+                          <button
+                            className="btn btn-primary"
+                            disabled={busy === m.name || isLoading(m.name)}
+                            onClick={() => void openLoadDialog(m)}
+                          >
+                            {isLoading(m.name) ? 'Načítá se…' : 'Načíst'}
+                          </button>
+                        )}
+                        {running.some((r) => r.name === m.name || r.model === m.name) && (
+                          <button
+                            className="btn"
+                            disabled={busy === m.name}
+                            onClick={() => handleUnload(m.name)}
+                          >
+                            Uvolnit
+                          </button>
+                        )}
                         <button
-                          className="btn btn-primary"
-                          disabled={busy === m.name || isLoading(m.name)}
-                          onClick={() => void openLoadDialog(m)}
+                          className="btn"
+                          disabled={continueBusyHere}
+                          title={
+                            continueEntry
+                              ? 'Aktualizovat Continue záznam podle aktuálních settings (host, context)'
+                              : 'Nahrát model do Continue podle aktuálních settings'
+                          }
+                          onClick={() => void handleContinueUpsert(m.name)}
                         >
-                          {isLoading(m.name) ? 'Načítá se…' : 'Načíst'}
+                          {continueBusyHere
+                            ? '…'
+                            : continueEntry
+                              ? 'Aktualizovat Continue'
+                              : 'Do Continue'}
                         </button>
-                      )}
-                      {running.some((r) => r.name === m.name || r.model === m.name) && (
-                        <button className="btn" disabled={busy === m.name} onClick={() => handleUnload(m.name)}>
-                          Uvolnit
+                        {continueEntry && (
+                          <button
+                            className="btn btn-danger"
+                            disabled={continueBusyHere}
+                            title="Odebrat z Continue konfigurace"
+                            onClick={() => void handleContinueRemove(m.name)}
+                          >
+                            Odebrat z Continue
+                          </button>
+                        )}
+                        <button className="btn" onClick={() => handleShow(m.name)}>
+                          Detail
                         </button>
-                      )}
-                      <button className="btn" onClick={() => handleShow(m.name)}>
-                        Detail
-                      </button>
-                      <button
-                        className="btn"
-                        onClick={() => {
-                          setCloneModal(m.name)
-                          setCloneDest(`${m.name}-copy`)
-                        }}
-                      >
-                        Klonovat
-                      </button>
-                      <button className="btn btn-danger" disabled={busy === m.name} onClick={() => handleDelete(m.name)}>
-                        Smazat
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        <button
+                          className="btn"
+                          onClick={() => {
+                            setCloneModal(m.name)
+                            setCloneDest(`${m.name}-copy`)
+                          }}
+                        >
+                          Klonovat
+                        </button>
+                        <button
+                          className="btn btn-danger"
+                          disabled={busy === m.name}
+                          onClick={() => handleDelete(m.name)}
+                        >
+                          Smazat
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         )}

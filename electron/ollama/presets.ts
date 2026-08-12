@@ -1,0 +1,185 @@
+import { app } from 'electron'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { randomUUID } from 'crypto'
+import type { OllamaEnvConfig } from './config'
+
+export type PresetKind = 'load' | 'serve'
+
+/** Formulář dialogu Načíst model — stringová pole jako ve UI. */
+export interface LoadPresetData {
+  keepInMemory: boolean
+  ttl: string
+  numCtx: string
+  numBatch: string
+  numGpu: string
+  numThread: string
+  useMmap: boolean
+  useMlock: boolean
+  ropeBase: string
+  ropeScale: string
+}
+
+export interface ServePresetData {
+  ollamaEnv: OllamaEnvConfig
+  autoStartServe: boolean
+}
+
+export type PresetDataMap = {
+  load: LoadPresetData
+  serve: ServePresetData
+}
+
+export interface Preset<K extends PresetKind = PresetKind> {
+  id: string
+  name: string
+  kind: K
+  updatedAt: number
+  data: PresetDataMap[K]
+}
+
+interface PresetStoreFile<K extends PresetKind> {
+  version: 1
+  presets: Array<Preset<K>>
+}
+
+function presetsDir(): string {
+  return join(app.getPath('userData'), 'presets')
+}
+
+function storePath(kind: PresetKind): string {
+  return join(presetsDir(), `${kind}.json`)
+}
+
+function emptyStore<K extends PresetKind>(): PresetStoreFile<K> {
+  return { version: 1, presets: [] }
+}
+
+function readStore<K extends PresetKind>(kind: K): PresetStoreFile<K> {
+  const path = storePath(kind)
+  if (!existsSync(path)) return emptyStore()
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf-8')) as Partial<PresetStoreFile<K>>
+    const presets = Array.isArray(raw.presets) ? raw.presets : []
+    return {
+      version: 1,
+      presets: presets.filter(
+        (p): p is Preset<K> =>
+          !!p &&
+          typeof p === 'object' &&
+          typeof p.id === 'string' &&
+          typeof p.name === 'string' &&
+          p.kind === kind &&
+          p.data != null
+      )
+    }
+  } catch {
+    return emptyStore()
+  }
+}
+
+function writeStore<K extends PresetKind>(kind: K, store: PresetStoreFile<K>): void {
+  const dir = presetsDir()
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(storePath(kind), JSON.stringify(store, null, 2), 'utf-8')
+}
+
+export function listPresets<K extends PresetKind>(kind: K): Array<Preset<K>> {
+  return readStore(kind)
+    .presets.slice()
+    .sort((a, b) => a.name.localeCompare(b.name, 'cs') || b.updatedAt - a.updatedAt)
+}
+
+export function getPreset<K extends PresetKind>(kind: K, id: string): Preset<K> | null {
+  return readStore(kind).presets.find((p) => p.id === id) ?? null
+}
+
+export function savePreset<K extends PresetKind>(
+  kind: K,
+  name: string,
+  data: PresetDataMap[K],
+  id?: string
+): Preset<K> {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error('Název presetu nesmí být prázdný')
+
+  const store = readStore(kind)
+  const now = Date.now()
+  const existingIdx = id
+    ? store.presets.findIndex((p) => p.id === id)
+    : store.presets.findIndex((p) => p.name.toLowerCase() === trimmed.toLowerCase())
+
+  let preset: Preset<K>
+  if (existingIdx >= 0) {
+    const prev = store.presets[existingIdx]
+    preset = { ...prev, name: trimmed, updatedAt: now, data }
+    store.presets[existingIdx] = preset
+  } else {
+    preset = {
+      id: randomUUID(),
+      name: trimmed,
+      kind,
+      updatedAt: now,
+      data
+    }
+    store.presets.push(preset)
+  }
+
+  writeStore(kind, store)
+  return preset
+}
+
+export function deletePreset(kind: PresetKind, id: string): boolean {
+  const store = readStore(kind)
+  const next = store.presets.filter((p) => p.id !== id)
+  if (next.length === store.presets.length) return false
+  writeStore(kind, { version: 1, presets: next })
+  return true
+}
+
+/** Import z JSON — přijímá celý Preset, nebo jen { name?, data }. */
+export function importPresetJson<K extends PresetKind>(
+  kind: K,
+  raw: string
+): Preset<K> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('Neplatný JSON')
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('JSON musí být objekt')
+  }
+
+  const obj = parsed as Record<string, unknown>
+  if (obj.kind != null && obj.kind !== kind) {
+    throw new Error(`Preset je typu „${String(obj.kind)}“, očekáváno „${kind}“`)
+  }
+
+  const data = (obj.data ?? obj) as PresetDataMap[K]
+  if (!data || typeof data !== 'object') {
+    throw new Error('Chybí pole data')
+  }
+
+  const name =
+    typeof obj.name === 'string' && obj.name.trim()
+      ? obj.name.trim()
+      : `Import ${new Date().toLocaleString('cs-CZ')}`
+
+  return savePreset(kind, name, data)
+}
+
+export function exportPresetJson(preset: Preset): string {
+  return JSON.stringify(
+    {
+      kind: preset.kind,
+      name: preset.name,
+      updatedAt: preset.updatedAt,
+      data: preset.data
+    },
+    null,
+    2
+  )
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AppConfig, ModelLoadOptions, ModelShow, ModelTag } from '../types/api'
+import type { AppConfig, LoadPresetData, ModelLoadOptions, ModelShow, ModelTag } from '../types/api'
+import PresetBar from './PresetBar'
 
 export interface LoadModelDialogProps {
   model: ModelTag
@@ -22,6 +23,25 @@ interface LoadForm {
   useMlock: boolean
   ropeBase: string
   ropeScale: string
+}
+
+function formToPreset(form: LoadForm): LoadPresetData {
+  return { ...form }
+}
+
+function presetToForm(data: LoadPresetData): LoadForm {
+  return {
+    keepInMemory: !!data.keepInMemory,
+    ttl: data.ttl ?? '30m',
+    numCtx: data.numCtx ?? '',
+    numBatch: data.numBatch ?? '',
+    numGpu: data.numGpu ?? '-1',
+    numThread: data.numThread ?? '',
+    useMmap: data.useMmap !== false,
+    useMlock: !!data.useMlock,
+    ropeBase: data.ropeBase ?? '',
+    ropeScale: data.ropeScale ?? ''
+  }
 }
 
 function numericValue(value: unknown): number | null {
@@ -178,6 +198,16 @@ export default function LoadModelDialog({
         </div>
 
         <div className="load-dialog-body">
+          <PresetBar
+            kind="load"
+            disabled={loading}
+            getCurrentData={() => formToPreset(form)}
+            applyData={(data) => {
+              setForm(presetToForm(data))
+              setValidationError(null)
+            }}
+          />
+
           <div className="load-memory-estimate">
             <div>
               <span className="load-section-label">Odhad paměti</span>

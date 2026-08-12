@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LogPanel from '../components/LogPanel'
+import ModelSplitTable from '../components/ModelSplitTable'
 import {
   api,
   type ActiveRequest,
@@ -124,6 +125,43 @@ function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Rezervace místa pro aktivní požadavek — stejná výška jako ActiveRequestCard. */
+function ActiveRequestPlaceholder(): JSX.Element {
+  return (
+    <div className="active-req active-req-idle" aria-live="polite">
+      <div className="active-req-header">
+        <div className="active-req-ids">
+          <span className="mono">task —</span>
+          <span className="mono">slot —</span>
+        </div>
+        <span className="active-req-phase active-req-phase-idle">Čeká</span>
+      </div>
+      <div className="progress-bar active-req-bar">
+        <div className="progress-fill" style={{ width: '0%' }} />
+      </div>
+      <div className="active-req-metrics">
+        <div>
+          <div className="metric-label">Progress</div>
+          <div className="active-req-value">—</div>
+        </div>
+        <div>
+          <div className="metric-label">Tokeny</div>
+          <div className="active-req-value">—</div>
+        </div>
+        <div>
+          <div className="metric-label">Čas</div>
+          <div className="active-req-value">—</div>
+        </div>
+        <div>
+          <div className="metric-label">Tokeny/s</div>
+          <div className="active-req-value">—</div>
+        </div>
+      </div>
+      <p className="active-req-idle-label">Žádný aktivní požadavek</p>
     </div>
   )
 }
@@ -323,58 +361,12 @@ export default function Dashboard(): JSX.Element {
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="active-req-section-header">
-          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Aktivní požadavky (live)</h2>
-          <span className="metric-label" style={{ margin: 0 }}>
-            Parsováno z Ollama / llama runner logů (slot · task)
-          </span>
-        </div>
-
-        {details.length === 0 ? (
-          <p className="empty-state" style={{ padding: '16px 0 4px' }}>
-            Žádný aktivní požadavek v logách
-          </p>
-        ) : (
-          <div className="active-req-list">
-            {details.map((req) => (
-              <ActiveRequestCard key={req.taskId} req={req} />
-            ))}
-          </div>
-        )}
-      </div>
-
       {data && data.loadedModels.length > 0 && (
         <div className="card">
-          <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Načtené modely</h2>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Název</th>
-                <th>VRAM</th>
-                <th aria-label="Akce" />
-              </tr>
-            </thead>
-            <tbody>
-              {data.loadedModels.map((m) => (
-                <tr key={m.name}>
-                  <td className="mono">{m.name}</td>
-                  <td>{m.sizeVram ? formatMb(m.sizeVram / (1024 * 1024)) : '—'}</td>
-                  <td className="table-actions">
-                    <button
-                      type="button"
-                      className="btn btn-icon"
-                      title="Zobrazit všechny parametry"
-                      aria-label={`Parametry modelu ${m.name}`}
-                      onClick={() => setDetailsModel(m.name)}
-                    >
-                      …
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
+            Načtené modely — rozložení CPU / GPU
+          </h2>
+          <ModelSplitTable models={data.loadedModels} onDetails={setDetailsModel} />
         </div>
       )}
 
@@ -383,14 +375,23 @@ export default function Dashboard(): JSX.Element {
       )}
       </div>
 
-      <div className="card dashboard-history-section">
+      <div className="card dashboard-activity-section">
         <div className="active-req-section-header">
-          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Poslední požadavky</h2>
+          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Aktivita</h2>
           <span className="metric-label" style={{ margin: 0 }}>
-            Max. 10 · nejnovější nahoře
+            Live požadavky · historie max. 10
           </span>
         </div>
 
+        <div className="active-req-list">
+          {details.length === 0 ? (
+            <ActiveRequestPlaceholder />
+          ) : (
+            details.map((req) => <ActiveRequestCard key={req.taskId} req={req} />)
+          )}
+        </div>
+
+        <h3 className="activity-history-title">Historie</h3>
         <div className="dashboard-history-body">
           {history.length === 0 ? (
             <p className="history-empty">Zatím žádná historie požadavků</p>

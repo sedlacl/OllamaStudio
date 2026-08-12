@@ -21,7 +21,7 @@ export interface ProcessMemory {
 export interface DashboardMetrics {
   gpu: GpuMetrics | null
   vramFallbackMb: number | null
-  loadedModels: Array<{ name: string; sizeVram: number }>
+  loadedModels: Array<{ name: string; sizeVram: number; size: number }>
   memory: ProcessMemory
   activeRequests: number | null
   activeRequestDetails: ActiveRequest[]
@@ -52,7 +52,8 @@ export async function collectMetrics(
 
   const loadedModels = ps.map((p) => ({
     name: p.name,
-    sizeVram: p.size_vram ?? 0
+    sizeVram: p.size_vram ?? 0,
+    size: p.size ?? 0
   }))
 
   const vramFallbackMb =
@@ -161,6 +162,13 @@ export interface SystemMemory {
   usedMb: number
 }
 
+export interface CpuInfo {
+  model: string
+  cores: number
+  /** průměrné vytížení všech jader za krátký vzorek, 0–100 */
+  usagePercent: number | null
+}
+
 export interface ResourceUsageData {
   gpu: GpuMetrics | null
   gpuAvailable: boolean
@@ -176,6 +184,7 @@ export interface ResourceUsageData {
   loadedModels: Array<{ name: string; sizeVram: number; size: number }>
   serveMemory: ProcessMemory
   systemMemory: SystemMemory
+  cpu: CpuInfo
   serveStatus: string
 }
 
@@ -184,13 +193,14 @@ export async function collectResourceUsage(
   servePid: number | null,
   serveStatus: string
 ): Promise<ResourceUsageData> {
-  const [gpu, smiProcesses, perfProcesses, ollamaProcs, ps, serveMemory] = await Promise.all([
+  const [gpu, smiProcesses, perfProcesses, ollamaProcs, ps, serveMemory, cpu] = await Promise.all([
     getGpuMetrics(),
     getGpuProcessesFromSmi(),
     getGpuProcessesFromPerfCounters(),
     getOllamaRelatedProcesses(servePid),
     client.getPs().catch(() => []),
-    getProcessMemory(servePid)
+    getProcessMemory(servePid),
+    getCpuInfo()
   ])
 
   const loadedModels = ps.map((p) => ({
@@ -255,7 +265,42 @@ export async function collectResourceUsage(
       freeMb: freeBytes / (1024 * 1024),
       usedMb: (totalBytes - freeBytes) / (1024 * 1024)
     },
+    cpu,
     serveStatus
+  }
+}
+
+/**
+ * Vytížení CPU napříč jádry z rozdílu os.cpus() časů přes krátký vzorek.
+ * os.loadavg() je na Windows vždy 0, proto počítáme z idle/total delty.
+ */
+async function getCpuInfo(sampleMs = 250): Promise<CpuInfo> {
+  const cpus = os.cpus()
+  const model = cpus[0]?.model?.trim() || 'CPU'
+  const cores = cpus.length
+
+  const sum = (list: os.CpuInfo[]): { idle: number; total: number } => {
+    let idle = 0
+    let total = 0
+    for (const c of list) {
+      const t = c.times
+      idle += t.idle
+      total += t.user + t.nice + t.sys + t.idle + t.irq
+    }
+    return { idle, total }
+  }
+
+  try {
+    const a = sum(cpus)
+    await new Promise((resolve) => setTimeout(resolve, sampleMs))
+    const b = sum(os.cpus())
+    const idleDelta = b.idle - a.idle
+    const totalDelta = b.total - a.total
+    const usagePercent =
+      totalDelta > 0 ? Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100)) : null
+    return { model, cores, usagePercent }
+  } catch {
+    return { model, cores, usagePercent: null }
   }
 }
 

@@ -133,12 +133,21 @@ button {
   flex-shrink: 0;
 }
 
-.dashboard-history-section {
+.dashboard-activity-section {
   flex-shrink: 0;
 }
 
 .dashboard-history-body {
   min-height: 140px;
+}
+
+.activity-history-title {
+  margin: 16px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .dashboard-logs-section {
@@ -493,6 +502,34 @@ button {
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--input-bg);
+  position: relative;
+}
+
+.active-req-idle {
+  min-height: 118px;
+}
+
+.active-req-idle .active-req-metrics,
+.active-req-idle .active-req-bar,
+.active-req-idle .active-req-header {
+  opacity: 0.35;
+}
+
+.active-req-idle-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.active-req-phase-idle {
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .active-req-done {
@@ -957,4 +994,79 @@ button {
     grid-template-columns: 1fr;
     gap: 2px;
   }
+}
+
+.preset-bar {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.preset-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-bar-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.preset-select {
+  min-width: 160px;
+  flex: 1 1 180px;
+}
+
+.preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preset-status {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.preset-status-ok {
+  color: var(--success, #4ade80);
+}
+
+.preset-status-err {
+  color: var(--error);
+}
+
+.preset-inline-panel {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.preset-inline-panel > label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.preset-inline-panel textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 100px;
+}
+
+.preset-inline-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.preset-inline-row > input {
+  flex: 1 1 180px;
 }
