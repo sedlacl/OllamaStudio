@@ -544,23 +544,55 @@ async function getOllamaRelatedProcesses(servePid: number | null): Promise<GpuPr
       )
     }
 
+    // Linux: serve PID + procesy se jménem ollama / llama-server (+ potomci serve).
     const { stdout } = await execFileAsync(
       'ps',
-      ['-eo', 'pid=,comm=', '--no-headers'],
+      ['-eo', 'pid=,ppid=,comm=', '--no-headers'],
       { timeout: 5000 }
     )
-    const all = parsePidNameLines(
-      stdout
-        .split('\n')
-        .map((line) => {
-          const m = line.trim().match(/^(\d+)\s+(.+)$/)
-          return m ? `${m[1]}|${m[2]}` : ''
-        })
-        .join('\n')
-    )
-    return all.filter(
-      (p) => p.pid === servePid || isOllamaRelatedName(p.processName)
-    )
+    const rows: Array<{ pid: number; ppid: number; name: string }> = []
+    const children = new Map<number, number[]>()
+    for (const line of stdout.split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)
+      if (!m) continue
+      const pid = parseInt(m[1], 10)
+      const ppid = parseInt(m[2], 10)
+      const name = m[3].trim()
+      if (!Number.isFinite(pid) || !Number.isFinite(ppid) || !name) continue
+      rows.push({ pid, ppid, name })
+      const list = children.get(ppid) ?? []
+      list.push(pid)
+      children.set(ppid, list)
+    }
+
+    const relatedPids = new Set<number>()
+    for (const row of rows) {
+      if (isOllamaRelatedName(row.name)) relatedPids.add(row.pid)
+    }
+    if (servePid != null) {
+      relatedPids.add(servePid)
+      // BFS potomků serve (runner často není přímé dítě); seen brání zacyklení
+      const stack = [servePid]
+      const seen = new Set<number>()
+      while (stack.length > 0) {
+        const current = stack.pop()!
+        if (seen.has(current)) continue
+        seen.add(current)
+        for (const child of children.get(current) ?? []) {
+          relatedPids.add(child)
+          stack.push(child)
+        }
+      }
+    }
+
+    return rows
+      .filter((row) => relatedPids.has(row.pid) && (row.pid === servePid || isOllamaRelatedName(row.name)))
+      .map((row) => ({
+        pid: row.pid,
+        processName: basenameProcess(row.name),
+        gpuMemoryMb: null,
+        source: 'process-list' as const
+      }))
   } catch {
     if (servePid != null) {
       return [

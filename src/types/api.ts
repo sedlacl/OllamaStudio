@@ -11,6 +11,8 @@ export interface OllamaEnvConfig {
   OLLAMA_DEBUG: string
   OLLAMA_DEBUG_LOG_REQUESTS: string
   LLAMA_ARG_CTX_CHECKPOINTS: string
+  /** Adresář modelů (blobs/manifests); prázdné = výchozí Ollama / WSL autodetekce. */
+  OLLAMA_MODELS: string
 }
 
 export interface AppConfig {

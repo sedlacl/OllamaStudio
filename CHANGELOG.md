@@ -6,6 +6,22 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-08-12
+
+### Added
+
+- Podpora **Linuxu / WSL** vedle Windows (detekce Ollama CLI, ukončení procesů, metrika paměti)
+- Konfigurace **OLLAMA_MODELS** na stránce Server (adresář modelů pro `ollama serve`)
+- Na Linuxu/WSL automatická detekce Windows modelů pod `/mnt/*/Users/*/.ollama/models`, pokud je pole prázdné
+
+### Changed
+
+- README popisuje Windows i Linux (WSL), cesty konfigurace a sdílení modelů přes `OLLAMA_MODELS`
+
+### Fixed
+
+- Prázdné hodnoty v konfiguraci už nepřebíjejí smysluplný `OLLAMA_MODELS` z prostředí / WSL fallbacku
+
 ## [1.0.2] — 2026-08-12
 
 ### Added

@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 export interface OllamaEnvConfig {
@@ -13,6 +13,8 @@ export interface OllamaEnvConfig {
   OLLAMA_DEBUG: string
   OLLAMA_DEBUG_LOG_REQUESTS: string
   LLAMA_ARG_CTX_CHECKPOINTS: string
+  /** Adresář s blobs/manifests; prázdné = výchozí Ollama (~/.ollama/models). */
+  OLLAMA_MODELS: string
 }
 
 export interface AppConfig {
@@ -35,7 +37,8 @@ const DEFAULT_CONFIG: AppConfig = {
     OLLAMA_KV_CACHE_TYPE: 'q8_0',
     OLLAMA_DEBUG: '1',
     OLLAMA_DEBUG_LOG_REQUESTS: '1',
-    LLAMA_ARG_CTX_CHECKPOINTS: '0'
+    LLAMA_ARG_CTX_CHECKPOINTS: '0',
+    OLLAMA_MODELS: ''
   },
   autoStartServe: true
 }
@@ -86,11 +89,59 @@ export function saveConfig(config: AppConfig): void {
 export function buildSpawnEnv(config: AppConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const [key, value] of Object.entries(config.ollamaEnv)) {
+    // Prázdné hodnoty nepřepisují process.env ani WSL fallback níže.
     if (value !== undefined && value !== '') {
       env[key] = value
     }
   }
+
+  // WSL: znovu použít Windows modely bez ručního nastavení OLLAMA_MODELS.
+  if (
+    process.platform !== 'win32' &&
+    !(env.OLLAMA_MODELS && env.OLLAMA_MODELS.trim()) &&
+    !(config.ollamaEnv.OLLAMA_MODELS && config.ollamaEnv.OLLAMA_MODELS.trim())
+  ) {
+    const detected = detectWslWindowsOllamaModelsDir()
+    if (detected) env.OLLAMA_MODELS = detected
+  }
+
   return env
+}
+
+/**
+ * Ve WSL bývají Windows uživatelské disky pod /mnt/<písmeno>/Users/...
+ * Pokud existuje .ollama/models (manifests + blobs), použijeme ho jako OLLAMA_MODELS,
+ * aby se nemusely stahovat znovu na Linuxovou stranu.
+ */
+export function detectWslWindowsOllamaModelsDir(): string | null {
+  if (process.platform === 'win32') return null
+  const mntRoot = '/mnt'
+  if (!existsSync(mntRoot)) return null
+
+  try {
+    for (const drive of readdirSync(mntRoot)) {
+      const usersDir = join(mntRoot, drive, 'Users')
+      if (!existsSync(usersDir)) continue
+      let users: string[]
+      try {
+        users = readdirSync(usersDir)
+      } catch {
+        continue
+      }
+      for (const user of users) {
+        const modelsDir = join(usersDir, user, '.ollama', 'models')
+        if (
+          existsSync(join(modelsDir, 'manifests')) &&
+          existsSync(join(modelsDir, 'blobs'))
+        ) {
+          return modelsDir
+        }
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+  return null
 }
 
 export function parseHostPort(host: string): { host: string; port: number } {

@@ -68,15 +68,10 @@ export class ServeManager {
   }
 
   async detectBinary(): Promise<string | null> {
-    const localAppData = process.env.LOCALAPPDATA
-    const candidates: string[] = []
-    if (localAppData) {
-      candidates.push(join(localAppData, 'Programs', 'Ollama', 'ollama.exe'))
-    }
-    candidates.push('ollama')
+    const candidates = defaultOllamaBinaryCandidates()
 
     for (const candidate of candidates) {
-      if (candidate !== 'ollama' && existsSync(candidate)) {
+      if (existsSync(candidate)) {
         return candidate
       }
     }
@@ -87,8 +82,12 @@ export class ServeManager {
         windowsHide: true,
         timeout: 5000
       })
-      const path = stdout.trim().split('\n')[0]
-      if (path) return path
+      const found = stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line.length > 0)
+      if (found) return found
     } catch {
       /* not in PATH */
     }
@@ -267,13 +266,21 @@ export class ServeManager {
       } catch {
         proc.kill('SIGTERM')
       }
+    } else if (pid) {
+      await killUnixProcessTree(pid)
     } else {
       proc.kill('SIGTERM')
     }
 
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
-        if (!proc.killed) proc.kill('SIGKILL')
+        if (!proc.killed) {
+          try {
+            proc.kill('SIGKILL')
+          } catch {
+            /* already gone */
+          }
+        }
         resolve()
       }, 5000)
       proc.once('exit', () => {
@@ -286,17 +293,30 @@ export class ServeManager {
   }
 
   private async tryKillConflictingProcesses(): Promise<void> {
-    if (process.platform !== 'win32') return
     try {
-      await execFileAsync(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          "Get-Process -Name ollama -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*OllamaStudio*' } | Stop-Process -Force"
-        ],
-        { windowsHide: true, timeout: 10000 }
-      )
+      if (process.platform === 'win32') {
+        await execFileAsync(
+          'powershell',
+          [
+            '-NoProfile',
+            '-Command',
+            "Get-Process -Name ollama -ErrorAction SilentlyContinue | Where-Object { $_.Path -notlike '*OllamaStudio*' } | Stop-Process -Force"
+          ],
+          { windowsHide: true, timeout: 10000 }
+        )
+      } else {
+        // Ukončí cizí ollama serve/runner; vlastní Electron proces necháme.
+        await execFileAsync(
+          'pkill',
+          ['-x', 'ollama'],
+          { timeout: 5000 }
+        ).catch(() => undefined)
+        await execFileAsync(
+          'pkill',
+          ['-f', 'ollama serve'],
+          { timeout: 5000 }
+        ).catch(() => undefined)
+      }
       await sleep(1000)
     } catch {
       /* best effort */
@@ -327,6 +347,72 @@ export class ServeManager {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Typické instalace Ollama CLI na Windows / Linux / macOS (bez PATH lookup). */
+function defaultOllamaBinaryCandidates(): string[] {
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA
+    return localAppData
+      ? [join(localAppData, 'Programs', 'Ollama', 'ollama.exe')]
+      : []
+  }
+
+  const candidates = ['/usr/local/bin/ollama', '/usr/bin/ollama']
+  const home = process.env.HOME
+  if (home) candidates.push(join(home, '.local/bin/ollama'))
+  if (process.platform === 'darwin') {
+    candidates.push('/Applications/Ollama.app/Contents/Resources/ollama')
+  }
+  return candidates
+}
+
+/**
+ * Ukončí PID a jeho potomky (ollama runner / llama-server), obdobně jako taskkill /T.
+ */
+async function killUnixProcessTree(pid: number): Promise<void> {
+  try {
+    const { stdout } = await execFileAsync('ps', ['-eo', 'pid=,ppid=', '--no-headers'], {
+      timeout: 5000
+    })
+    const children = new Map<number, number[]>()
+    for (const line of stdout.split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)$/)
+      if (!m) continue
+      const child = parseInt(m[1], 10)
+      const parent = parseInt(m[2], 10)
+      if (!Number.isFinite(child) || !Number.isFinite(parent)) continue
+      const list = children.get(parent) ?? []
+      list.push(child)
+      children.set(parent, list)
+    }
+
+    const toKill: number[] = []
+    const stack = [pid]
+    const seen = new Set<number>()
+    while (stack.length > 0) {
+      const current = stack.pop()!
+      if (seen.has(current)) continue
+      seen.add(current)
+      toKill.push(current)
+      for (const child of children.get(current) ?? []) stack.push(child)
+    }
+
+    // Nejdřív potomci, pak root
+    for (const target of toKill.reverse()) {
+      try {
+        process.kill(target, 'SIGTERM')
+      } catch {
+        /* already gone */
+      }
+    }
+  } catch {
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      /* already gone */
+    }
+  }
 }
 
 export const serveManager = new ServeManager()

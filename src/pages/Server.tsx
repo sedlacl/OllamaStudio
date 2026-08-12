@@ -18,7 +18,8 @@ const EMPTY_ENV: OllamaEnvConfig = {
   OLLAMA_KV_CACHE_TYPE: 'q8_0',
   OLLAMA_DEBUG: '1',
   OLLAMA_DEBUG_LOG_REQUESTS: '1',
-  LLAMA_ARG_CTX_CHECKPOINTS: '0'
+  LLAMA_ARG_CTX_CHECKPOINTS: '0',
+  OLLAMA_MODELS: ''
 }
 
 function configToPreset(config: AppConfig): ServePresetData {
@@ -75,8 +76,9 @@ export default function Server(): JSX.Element {
 
       <div className="alert alert-info">
         Parametry se ukládají do konfigurace aplikace a při každém spawnu se předají child procesu{' '}
-        <code>ollama serve</code>. Nejsou to systémové proměnné Windows. Presety se ukládají zvlášť
-        do JSON v userData.
+        <code>ollama serve</code>. Nejsou to systémové proměnné prostředí. Presety se ukládají zvlášť
+        do JSON v userData. Na Linuxu / WSL při prázdném <code>OLLAMA_MODELS</code> aplikace
+        automaticky zkusí Windows adresář modelů pod <code>/mnt/*/Users/*/.ollama/models</code>.
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -95,6 +97,15 @@ export default function Server(): JSX.Element {
             value={config.ollamaEnv.OLLAMA_HOST}
             onChange={(e) => updateEnv('OLLAMA_HOST', e.target.value)}
             placeholder="127.0.0.1:11434"
+          />
+        </div>
+
+        <div className="form-field">
+          <label>OLLAMA_MODELS</label>
+          <input
+            value={config.ollamaEnv.OLLAMA_MODELS}
+            onChange={(e) => updateEnv('OLLAMA_MODELS', e.target.value)}
+            placeholder="prázdné = výchozí / WSL autodetekce Windows modelů"
           />
         </div>
 

@@ -4,9 +4,9 @@
 
 # OllamaStudio
 
-Desktop Windows app for managing a local **Ollama server**. OllamaStudio launches
-`ollama serve` as its own child process, monitors metrics (GPU/CPU/RAM), manages models
-and shows live logs.
+Desktop app for **Windows** and **Linux** (including WSL) that manages a local **Ollama server**.
+OllamaStudio launches `ollama serve` as its own child process, monitors metrics (GPU/CPU/RAM),
+manages models and shows live logs.
 
 </div>
 
@@ -14,19 +14,42 @@ and shows live logs.
 
 ## Requirements
 
-- **Node.js** 18+ and npm
-- **Ollama CLI installed** ([ollama.com](https://ollama.com)) — the app does not bundle `ollama.exe`
-- For GPU metrics: an NVIDIA GPU and `nvidia-smi` in PATH (per-process VRAM on Windows also uses performance counters)
+- **Node.js** 18+ and npm (on WSL/Linux prefer the Linux Node binary, e.g. `/usr/bin/node`)
+- **Ollama CLI installed** ([ollama.com](https://ollama.com)) — the app does not bundle the CLI
+- For GPU metrics: an NVIDIA GPU and `nvidia-smi` in PATH (per-process VRAM via Windows performance counters is Windows-only; Linux uses nvidia-smi process list when available)
 
 ## Important — port 11434
 
-OllamaStudio **hosts** the server itself. The system Ollama tray app (autostart) must not hold port **11434**.
+OllamaStudio **hosts** the server itself. Nothing else must hold port **11434**.
+
+### Windows
 
 1. Click the Ollama icon in the system tray → **Quit**
 2. Disable Ollama in **Startup apps** (Windows Settings → Apps → Startup)
 3. Only then start OllamaStudio
 
+### Linux / WSL
+
+```bash
+sudo systemctl stop ollama
+sudo systemctl disable ollama   # optional — prevent autostart
+```
+
 On a port conflict the app shows a message and offers to terminate the conflicting processes.
+
+## Reusing Windows models in WSL
+
+Set **OLLAMA_MODELS** to the Windows model directory (or leave it empty and let the app auto-detect
+`/mnt/*/Users/*/.ollama/models`):
+
+```bash
+export OLLAMA_MODELS=/mnt/c/Users/<You>/.ollama/models
+```
+
+In the app: **Server** → `OLLAMA_MODELS`. Empty means Ollama’s default (`~/.ollama/models`), except on
+Linux/WSL where a Windows `.ollama/models` under `/mnt` is used as a fallback when found.
+
+Reading blobs from `/mnt/c` works but is slower than a native Linux disk.
 
 ## Screenshots
 
@@ -56,20 +79,24 @@ npm install
 npm run dev
 ```
 
+On WSL, if the project lives on a Windows mount (`/mnt/…`), prefer a copy on the native Linux
+filesystem (e.g. `~/OllamaStudio`) for `npm install` / Electron — `node_modules` and file watching
+are much more reliable there.
+
 ### Build / installer
 
 ```bash
 npm run build      # compiles main/preload/renderer
-npm run pack       # unpacked app into release/win-unpacked/
-npm run dist       # Windows installer (electron-builder, no code signing)
+npm run pack       # unpacked app (platform-dependent)
+npm run dist       # installer via electron-builder (currently NSIS for Windows)
 ```
 
 Output: the `release/` folder.
 
-`npm run dist` produces an **unsigned** installer — `package.json` sets
+`npm run dist` produces an **unsigned** Windows installer — `package.json` sets
 `win.signAndEditExecutable: false` so the build does not require symlink permissions for winCodeSign.
 
-After `pack`, run it directly:
+After `pack` on Windows:
 
 ```text
 release\win-unpacked\OllamaStudio.exe
@@ -82,7 +109,7 @@ release\win-unpacked\OllamaStudio.exe
 | **Dashboard** | API status, GPU/VRAM, loaded models, activity + request history, live logs |
 | **Models** | Pull / load / unload / delete / clone, Continue config (add / update / remove) |
 | **GPU & memory** | Per-process VRAM, CPU, system RAM, kill Ollama/runner processes |
-| **Server** | OLLAMA_* env + preset configuration (stored in the app config, not in Windows env) |
+| **Server** | OLLAMA_* env (incl. `OLLAMA_MODELS`) + presets (stored in app config, not system env) |
 | **Logs** | Live stdout/stderr from `ollama serve` |
 
 ## System tray
@@ -93,30 +120,19 @@ release\win-unpacked\OllamaStudio.exe
 
 ## Configuration
 
-Stored in `%APPDATA%/ollamastudio/config.json` (Electron userData).
+Electron **userData** paths:
 
-Load/serve presets: `%APPDATA%/ollamastudio/presets/`.
+| Platform | Path |
+|----------|------|
+| Windows | `%APPDATA%/ollamastudio/` |
+| Linux | `~/.config/ollamastudio/` |
 
-Serve logs: `%APPDATA%/ollamastudio/logs/ollama-serve.log`.
+- Config: `config.json`
+- Load/serve presets: `presets/`
+- Serve logs: `logs/ollama-serve.log`
 
-The Continue integration reads/writes `%USERPROFILE%\.continue\config.yaml`.
-
-## Icon
-
-The source is `build/icon-source.png` (a Ψ symbol merged with a llama silhouette). After
-replacing it, regenerate the derived formats with `npm run icons` — this produces
-`build/icon.ico` (16–256 px) for the window, tray and installer, plus `build/icon-256.png`.
-
-The script never repaints the source, it only transforms it geometrically:
-
-- `--fit` (default 96 %) scales the artwork up so it fills the icon area
-- `--transparent` removes the dark plate around the artwork, giving the icon a transparent background
-
-So `icon-source.png` may keep artwork with a large margin and a background plate.
-
-Check small-size legibility with
-`node ./scripts/make-icons.mjs build/icon-source.png --fit --transparent --preview`,
-which writes zoomed 16/32/48 px previews into TEMP.
+The Continue integration reads/writes `~/.continue/config.yaml` (on Windows:
+`%USERPROFILE%\.continue\config.yaml`).
 
 ## Changelog & versions
 
