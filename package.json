@@ -6,9 +6,9 @@
   "author": "OllamaStudio",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
+    "dev": "node ./scripts/electron-vite.mjs dev",
+    "build": "node ./scripts/electron-vite.mjs build",
+    "preview": "node ./scripts/electron-vite.mjs preview",
     "postinstall": "electron-builder install-app-deps",
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder"
