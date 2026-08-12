@@ -5,6 +5,7 @@ import {
   api,
   type AppConfig,
   type ModelLoadOptions,
+  type ModelLoadState,
   type ModelShow,
   type ModelTag,
   type PullProgress,
@@ -35,6 +36,8 @@ export default function Models(): JSX.Element {
   const [loadLoading, setLoadLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [detailsModel, setDetailsModel] = useState<string | null>(null)
+  const [modelLoads, setModelLoads] = useState<ModelLoadState[]>([])
+  const [loadNotice, setLoadNotice] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -56,12 +59,30 @@ export default function Models(): JSX.Element {
   }, [refresh])
 
   useEffect(() => {
+    api().getModelLoadStatus().then(setModelLoads).catch(() => {})
+    const unsub = api().onModelLoadStatus((state) => {
+      setModelLoads((prev) => {
+        const next = prev.filter((s) => s.name !== state.name)
+        return [...next, state]
+      })
+      if (state.status === 'success') {
+        setLoadNotice(`Model „${state.name}" byl úspěšně načten.`)
+        void refresh()
+      } else if (state.status === 'error') {
+        setError(`Načtení modelu „${state.name}" selhalo: ${state.error ?? 'neznámá chyba'}`)
+      }
+    })
+    return unsub
+  }, [refresh])
+
+  useEffect(() => {
     if (!pulling) return
     const unsub = api().onPullProgress(({ progress }) => setPullProgress(progress))
     return unsub
   }, [pulling])
 
-  const isLoaded = (name: string): boolean => running.some((r) => r.name === name || r.model === name)
+  const isLoading = (name: string): boolean =>
+    modelLoads.some((s) => s.name === name && s.status === 'loading')
 
   const openLoadDialog = async (model: ModelTag): Promise<void> => {
     setLoadModel(model)
@@ -81,30 +102,21 @@ export default function Models(): JSX.Element {
   }
 
   const handleLoad = async (name: string, options?: ModelLoadOptions): Promise<void> => {
-    setBusy(name)
-    try {
-      await api().modelLoad(name, options)
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Načtení selhalo')
-      throw e
-    } finally {
-      setBusy(null)
+    const result = await api().modelLoad(name, options)
+    if (!result.ok) {
+      setError(result.error ?? 'Načtení se nepodařilo spustit')
+      throw new Error(result.error ?? 'Načtení se nepodařilo spustit')
     }
   }
 
-  const handleDialogLoad = async (options: ModelLoadOptions): Promise<void> => {
+  const handleDialogLoad = (options: ModelLoadOptions): void => {
     if (!loadModel) return
-    setLoadLoading(true)
+    const modelName = loadModel.name
+    setLoadModel(null)
     setLoadError(null)
-    try {
-      await handleLoad(loadModel.name, options)
-      setLoadModel(null)
-    } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Načtení selhalo')
-    } finally {
-      setLoadLoading(false)
-    }
+    setLoadNotice(null)
+    setError(null)
+    void handleLoad(modelName, options).catch(() => {})
   }
 
   const handleUnload = async (name: string): Promise<void> => {
@@ -181,7 +193,19 @@ export default function Models(): JSX.Element {
     <div>
       <h1 className="page-title">Modely</h1>
 
+      {loadNotice && <div className="alert alert-info">{loadNotice}</div>}
       {error && <div className="alert alert-error">{error}</div>}
+
+      {modelLoads.some((s) => s.status === 'loading') && (
+        <div className="alert alert-info" style={{ marginBottom: 16 }}>
+          Načítání na pozadí:{' '}
+          {modelLoads
+            .filter((s) => s.status === 'loading')
+            .map((s) => s.name)
+            .join(', ')}
+          . Průběh sledujte na Přehledu nebo v Logách.
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="form-field">
@@ -276,19 +300,25 @@ export default function Models(): JSX.Element {
                 <tr key={m.digest}>
                   <td className="mono">{m.name}</td>
                   <td>{formatSize(m.size)}</td>
-                  <td>{isLoaded(m.name) ? 'Načteno' : '—'}</td>
+                  <td>
+                    {isLoading(m.name)
+                      ? 'Načítá se…'
+                      : running.some((r) => r.name === m.name || r.model === m.name)
+                        ? 'Načteno'
+                        : '—'}
+                  </td>
                   <td>
                     <div className="btn-row">
-                      {!isLoaded(m.name) && (
+                      {!running.some((r) => r.name === m.name || r.model === m.name) && (
                         <button
                           className="btn btn-primary"
-                          disabled={busy === m.name}
+                          disabled={busy === m.name || isLoading(m.name)}
                           onClick={() => void openLoadDialog(m)}
                         >
-                          Načíst
+                          {isLoading(m.name) ? 'Načítá se…' : 'Načíst'}
                         </button>
                       )}
-                      {isLoaded(m.name) && (
+                      {running.some((r) => r.name === m.name || r.model === m.name) && (
                         <button className="btn" disabled={busy === m.name} onClick={() => handleUnload(m.name)}>
                           Uvolnit
                         </button>

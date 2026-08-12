@@ -13,11 +13,16 @@ import { loadConfig, type AppConfig } from '../ollama/config'
 import {
   clearAllLoadOptions,
   getLoadOptions,
-  recordLoadOptions,
   removeLoadOptions
 } from '../ollama/load-options-registry'
 import { logBuffer, type LogEntry } from '../ollama/log-buffer'
-import { collectMetrics } from '../ollama/metrics'
+import {
+  clearModelLoadState,
+  getActiveModelLoads,
+  initModelLoadManager,
+  startModelLoad
+} from '../ollama/model-load-manager'
+import { collectMetrics, collectResourceUsage } from '../ollama/metrics'
 import { serveManager } from '../ollama/serve-manager'
 
 let mainWindow: BrowserWindow | null = null
@@ -158,6 +163,13 @@ function statusText(status: string): string {
 function registerIpc(): void {
   ipcMain.handle('get-serve-status', () => serveManager.getState())
 
+  ipcMain.handle('get-resource-usage', async () => {
+    const state = serveManager.getState()
+    return collectResourceUsage(ollamaClient, serveManager.getPid(), state.status)
+  })
+
+  ipcMain.handle('get-model-load-status', () => getActiveModelLoads())
+
   ipcMain.handle('get-dashboard', async () => {
     const state = serveManager.getState()
     const metrics = await collectMetrics(
@@ -179,14 +191,13 @@ function registerIpc(): void {
   ipcMain.handle('get-models-tags', () => ollamaClient.getTags())
   ipcMain.handle('get-models-ps', () => ollamaClient.getPs())
   ipcMain.handle('model-show', (_e, name: string) => ollamaClient.show(name))
-  ipcMain.handle('model-load', async (_e, name: string, options?: ModelLoadOptions) => {
-    const loadOptions = options ?? { keepAlive: '-1' }
-    await ollamaClient.load(name, loadOptions)
-    recordLoadOptions(name, loadOptions)
-  })
+  ipcMain.handle('model-load', (_e, name: string, options?: ModelLoadOptions) =>
+    startModelLoad(ollamaClient, name, options)
+  )
   ipcMain.handle('model-unload', async (_e, name: string) => {
     await ollamaClient.unload(name)
     removeLoadOptions(name)
+    clearModelLoadState(name)
   })
   ipcMain.handle('model-delete', async (_e, name: string) => {
     await ollamaClient.delete(name)
@@ -243,6 +254,7 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   createWindow()
+  initModelLoadManager(() => mainWindow)
   createTray()
   registerIpc()
 
@@ -255,6 +267,9 @@ app.whenReady().then(async () => {
 
   logBuffer.subscribe((entry: LogEntry) => {
     mainWindow?.webContents.send('log-entry', entry)
+    if (entry.category === 'request') {
+      mainWindow?.webContents.send('dashboard-requests-changed')
+    }
   })
 
   const config = loadConfig()

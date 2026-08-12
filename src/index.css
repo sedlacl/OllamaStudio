@@ -114,8 +114,64 @@ button {
 
 .app-main {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dashboard-top {
+  flex-shrink: 0;
+}
+
+.dashboard-history-section {
+  flex-shrink: 0;
+}
+
+.dashboard-history-body {
+  min-height: 140px;
+}
+
+.dashboard-logs-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-top: 0;
+  padding-bottom: 16px;
+}
+
+.logs-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.logs-page-header {
+  flex-shrink: 0;
+}
+
+.logs-page-description {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.logs-panel-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .page-title {
@@ -331,6 +387,42 @@ button {
   align-items: center;
   margin-bottom: 12px;
   flex-wrap: wrap;
+}
+
+.log-panel-wrap.fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.log-panel-wrap.fill .log-panel {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+.log-panel-wrap.compact .log-panel-title-row {
+  margin-bottom: 8px;
+}
+
+.log-panel-title-row {
+  margin-bottom: 12px;
+}
+
+.log-panel-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.log-toolbar-compact {
+  margin-bottom: 8px;
+}
+
+.log-toolbar-compact input[type='text'] {
+  min-width: 120px;
 }
 
 .log-toolbar input[type='text'] {

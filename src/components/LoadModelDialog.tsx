@@ -8,7 +8,7 @@ export interface LoadModelDialogProps {
   loading: boolean
   error: string | null
   onCancel: () => void
-  onLoad: (options: ModelLoadOptions) => Promise<void>
+  onLoad: (options: ModelLoadOptions) => void
 }
 
 interface LoadForm {
@@ -103,7 +103,7 @@ export default function LoadModelDialog({
     setValidationError(null)
   }
 
-  const submit = async (): Promise<void> => {
+  const submit = (): void => {
     if (!form.keepInMemory && !form.ttl.trim()) {
       setValidationError('Zadejte TTL, nebo zapněte „Keep model in memory“.')
       return
@@ -145,7 +145,7 @@ export default function LoadModelDialog({
       return
     }
 
-    await onLoad({
+    onLoad({
       keepAlive: form.keepInMemory ? '-1' : form.ttl.trim(),
       numCtx,
       numBatch,
@@ -393,8 +393,8 @@ export default function LoadModelDialog({
           <button className="btn" onClick={onCancel} disabled={loading}>
             Zrušit
           </button>
-          <button className="btn btn-primary" onClick={() => void submit()} disabled={loading}>
-            {loading ? 'Načítám…' : 'Načíst model'}
+          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+            Načíst model
           </button>
         </div>
       </div>

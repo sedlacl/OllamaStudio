@@ -1,0 +1,139 @@
+import { useEffect, useRef, useState } from 'react'
+import { api, type LogEntry } from '../types/api'
+
+type FilterCategory = 'all' | 'error' | 'load' | 'unload' | 'request'
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString('cs-CZ')
+}
+
+export interface LogPanelProps {
+  compact?: boolean
+  fill?: boolean
+  maxHeight?: number
+  showClear?: boolean
+  initialLimit?: number
+  title?: string
+}
+
+export default function LogPanel({
+  compact = false,
+  fill = false,
+  maxHeight,
+  showClear = true,
+  initialLimit = 1000,
+  title
+}: LogPanelProps): JSX.Element {
+  const [entries, setEntries] = useState<LogEntry[]>([])
+  const [textFilter, setTextFilter] = useState('')
+  const [category, setCategory] = useState<FilterCategory>('all')
+  const [paused, setPaused] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const pausedRef = useRef(paused)
+
+  useEffect(() => {
+    pausedRef.current = paused
+  }, [paused])
+
+  useEffect(() => {
+    api().getLogs(initialLimit).then(setEntries).catch(() => {})
+
+    const unsub = api().subscribeLogs((entry) => {
+      if (pausedRef.current) return
+      setEntries((prev) => [...prev.slice(-4999), entry])
+    })
+    return unsub
+  }, [initialLimit])
+
+  useEffect(() => {
+    if (paused || !panelRef.current) return
+    panelRef.current.scrollTop = panelRef.current.scrollHeight
+  }, [entries, paused])
+
+  const filtered = entries.filter((e) => {
+    if (category !== 'all' && e.category !== category) return false
+    if (textFilter && !e.text.toLowerCase().includes(textFilter.toLowerCase())) return false
+    return true
+  })
+
+  const categories: { id: FilterCategory; label: string }[] = [
+    { id: 'all', label: 'Vše' },
+    { id: 'error', label: 'Chyby' },
+    { id: 'load', label: 'Load' },
+    { id: 'unload', label: 'Unload' },
+    { id: 'request', label: 'Požadavky' }
+  ]
+
+  const panelHeight = fill ? undefined : maxHeight ?? (compact ? 220 : 420)
+  const wrapClass = [
+    'log-panel-wrap',
+    compact ? 'compact' : '',
+    fill ? 'fill' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div className={wrapClass}>
+      {title && (
+        <div className="log-panel-title-row">
+          <h2 className="log-panel-title">{title}</h2>
+        </div>
+      )}
+
+      <div className={`log-toolbar${compact ? ' log-toolbar-compact' : ''}`}>
+        <input
+          type="text"
+          placeholder="Filtrovat text…"
+          value={textFilter}
+          onChange={(e) => setTextFilter(e.target.value)}
+        />
+        {categories.map((c) => (
+          <button
+            key={c.id}
+            className={`filter-chip${category === c.id ? ' active' : ''}`}
+            onClick={() => setCategory(c.id)}
+          >
+            {c.label}
+          </button>
+        ))}
+        <button className={`filter-chip${paused ? ' active' : ''}`} onClick={() => setPaused((p) => !p)}>
+          {paused ? 'Pozastaveno' : 'Autoscroll'}
+        </button>
+        {showClear && (
+          <button className="btn" onClick={() => api().clearLogs().then(() => setEntries([]))}>
+            Vymazat
+          </button>
+        )}
+      </div>
+
+      <div
+        className="log-panel"
+        ref={panelRef}
+        style={!fill && panelHeight ? { height: panelHeight } : undefined}
+      >
+        {filtered.length === 0 ? (
+          <div className="empty-state">Žádné logy{entries.length > 0 ? ' (filtr)' : ''}</div>
+        ) : (
+          filtered.map((e) => (
+            <div
+              key={e.id}
+              className={`log-line${e.level === 'error' ? ' error' : e.level === 'warn' ? ' warn' : e.level === 'debug' ? ' debug' : ''}`}
+            >
+              <span style={{ color: 'var(--text-muted)' }}>[{formatTime(e.timestamp)}]</span>{' '}
+              <span style={{ color: 'var(--text-muted)' }}>[{e.stream}]</span>
+              {e.level === 'debug' && <span className="log-level-badge debug">DEBUG</span>}{' '}
+              {e.text}
+              {e.parsed?.generationTokensPerSec != null && (
+                <span style={{ color: 'var(--accent)' }}>
+                  {' '}
+                  · {e.parsed.generationTokensPerSec.toFixed(1)} tok/s
+                </span>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}

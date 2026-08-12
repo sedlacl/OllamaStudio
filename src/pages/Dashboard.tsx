@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
+import LogPanel from '../components/LogPanel'
 import {
   api,
   type ActiveRequest,
   type ActiveRequestPhase,
   type DashboardData,
+  type ModelLoadState,
   type RequestHistoryItem,
   type RequestHistoryResult
 } from '../types/api'
-
 function formatMb(mb: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
   return `${mb.toFixed(0)} MB`
@@ -162,8 +163,24 @@ export default function Dashboard(): JSX.Element {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [detailsModel, setDetailsModel] = useState<string | null>(null)
+  const [modelLoads, setModelLoads] = useState<ModelLoadState[]>([])
 
   useEffect(() => {
+    api().getModelLoadStatus().then(setModelLoads).catch(() => {})
+    const unsubLoad = api().onModelLoadStatus((state) => {
+      setModelLoads((prev) => {
+        const next = prev.filter((s) => s.name !== state.name)
+        if (state.status === 'loading' || state.status === 'error') {
+          return [...next, state]
+        }
+        return [...next, state]
+      })
+    })
+    return unsubLoad
+  }, [])
+
+  useEffect(() => {    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
     const load = async (): Promise<void> => {
       try {
         const d = await api().getDashboard()
@@ -174,13 +191,32 @@ export default function Dashboard(): JSX.Element {
         setLoading(false)
       }
     }
-    load()
-    const id = setInterval(load, 2000)
-    return () => clearInterval(id)
+
+    const scheduleRefresh = (): void => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void load()
+      }, 150)
+    }
+
+    void load()
+    const pollId = setInterval(load, 2000)
+    const unsubRequests = api().subscribeDashboardRequests(scheduleRefresh)
+
+    return () => {
+      clearInterval(pollId)
+      if (debounceTimer) clearTimeout(debounceTimer)
+      unsubRequests()
+    }
   }, [])
 
   if (loading && !data) {
-    return <p className="empty-state">Načítání metrik…</p>
+    return (
+      <div className="dashboard-page">
+        <p className="empty-state">Načítání metrik…</p>
+      </div>
+    )
   }
 
   const gpu = data?.gpu
@@ -188,13 +224,33 @@ export default function Dashboard(): JSX.Element {
   const vramTotal = gpu?.memoryTotalMb ?? null
   const details = data?.activeRequestDetails ?? []
   const history = data?.requestHistory ?? []
+  const activeModelLoads = modelLoads.filter((s) => s.status === 'loading')
+  const failedModelLoads = modelLoads.filter((s) => s.status === 'error')
 
   return (
-    <div>
+    <div className="dashboard-page">
+      <div className="dashboard-top">
       <h1 className="page-title">Přehled</h1>
 
-      <div className="btn-row" style={{ marginBottom: 16 }}>
-        <button className="btn btn-primary" onClick={() => api().startServer().catch(() => {})}>
+      {activeModelLoads.length > 0 && (
+        <div className="alert alert-info" style={{ marginBottom: 16 }}>
+          Načítání modelů na pozadí:{' '}
+          {activeModelLoads.map((s) => (
+            <span key={s.name} className="mono">
+              {s.name}
+            </span>
+          ))}
+          . Průběh sledujte v logu níže.
+        </div>
+      )}
+
+      {failedModelLoads.map((s) => (
+        <div key={s.name} className="alert alert-error" style={{ marginBottom: 16 }}>
+          Načtení modelu <span className="mono">{s.name}</span> selhalo: {s.error}
+        </div>
+      ))}
+
+      <div className="btn-row" style={{ marginBottom: 16 }}>        <button className="btn btn-primary" onClick={() => api().startServer().catch(() => {})}>
           Spustit serve
         </button>
         <button className="btn" onClick={() => api().stopServer().catch(() => {})}>
@@ -288,42 +344,6 @@ export default function Dashboard(): JSX.Element {
         )}
       </div>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="active-req-section-header">
-          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Poslední požadavky</h2>
-          <span className="metric-label" style={{ margin: 0 }}>
-            Max. 10 · nejnovější nahoře
-          </span>
-        </div>
-
-        {history.length === 0 ? (
-          <p className="history-empty">Zatím žádná historie požadavků</p>
-        ) : (
-          <div className="history-table-wrap">
-            <table className="table history-table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Slot</th>
-                  <th>Výsledek</th>
-                  <th>Progress</th>
-                  <th>Tokeny (p/g)</th>
-                  <th>Čas</th>
-                  <th>tok/s (p/g)</th>
-                  <th>Start</th>
-                  <th>Konec</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((item) => (
-                  <HistoryRow key={`${item.taskId}-${item.startedAt}`} item={item} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
       {data && data.loadedModels.length > 0 && (
         <div className="card">
           <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Načtené modely</h2>
@@ -361,6 +381,49 @@ export default function Dashboard(): JSX.Element {
       {detailsModel && (
         <LoadedModelDetailsDialog modelName={detailsModel} onClose={() => setDetailsModel(null)} />
       )}
+      </div>
+
+      <div className="card dashboard-history-section">
+        <div className="active-req-section-header">
+          <h2 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Poslední požadavky</h2>
+          <span className="metric-label" style={{ margin: 0 }}>
+            Max. 10 · nejnovější nahoře
+          </span>
+        </div>
+
+        <div className="dashboard-history-body">
+          {history.length === 0 ? (
+            <p className="history-empty">Zatím žádná historie požadavků</p>
+          ) : (
+            <div className="history-table-wrap">
+              <table className="table history-table">
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Slot</th>
+                    <th>Výsledek</th>
+                    <th>Progress</th>
+                    <th>Tokeny (p/g)</th>
+                    <th>Čas</th>
+                    <th>tok/s (p/g)</th>
+                    <th>Start</th>
+                    <th>Konec</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((item) => (
+                    <HistoryRow key={`${item.taskId}-${item.startedAt}`} item={item} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card dashboard-logs-section">
+        <LogPanel compact fill title="Logy serve (live)" initialLimit={300} showClear={false} />
+      </div>
     </div>
   )
 }

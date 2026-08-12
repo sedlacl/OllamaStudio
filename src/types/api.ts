@@ -178,18 +178,57 @@ export interface DashboardData {
   connection: string
 }
 
+export interface GpuProcessInfo {
+  pid: number
+  processName: string
+  /** null = hodnota není dostupná (např. WDDM [N/A]) */
+  gpuMemoryMb: number | null
+  source: 'nvidia-smi' | 'process-list'
+}
+
+export interface ResourceUsageData {
+  gpu: DashboardData['gpu']
+  gpuAvailable: boolean
+  /** false když nvidia-smi neumí per-process VRAM (typicky Windows WDDM) */
+  perProcessVramAvailable: boolean
+  gpuProcesses: GpuProcessInfo[]
+  ollamaProcesses: GpuProcessInfo[]
+  vramFallbackMb: number | null
+  loadedModels: Array<{ name: string; sizeVram: number; size: number }>
+  serveMemory: { workingSetMb: number; pid: number | null }
+  systemMemory: { totalMb: number; freeMb: number; usedMb: number }
+  serveStatus: string
+}
+
+export type ModelLoadStatus = 'loading' | 'success' | 'error'
+
+export interface ModelLoadState {
+  name: string
+  status: ModelLoadStatus
+  error?: string
+  startedAt: number
+}
+
+export interface ModelLoadResult {
+  ok: boolean
+  error?: string
+}
+
 export interface Api {
   getServeStatus: () => Promise<ServeState>
   getDashboard: () => Promise<DashboardData>
+  getResourceUsage: () => Promise<ResourceUsageData>
   getModelsTags: () => Promise<ModelTag[]>
   getModelsPs: () => Promise<RunningModel[]>
   modelShow: (name: string) => Promise<ModelShow>
-  modelLoad: (name: string, options?: ModelLoadOptions) => Promise<void>
+  modelLoad: (name: string, options?: ModelLoadOptions) => Promise<ModelLoadResult>
   modelUnload: (name: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
   getModelLoadOptions: (name: string) => Promise<RecordedLoadOptions | null>
+  getModelLoadStatus: () => Promise<ModelLoadState[]>
+  onModelLoadStatus: (cb: (state: ModelLoadState) => void) => () => void
   onPullProgress: (cb: (data: { name: string; progress: PullProgress }) => void) => () => void
   getServerConfig: () => Promise<AppConfig>
   saveServerConfigAndRestart: (config: AppConfig) => Promise<ServeState>
@@ -199,6 +238,7 @@ export interface Api {
   getLogs: (limit?: number) => Promise<LogEntry[]>
   clearLogs: () => Promise<boolean>
   subscribeLogs: (cb: (entry: LogEntry) => void) => () => void
+  subscribeDashboardRequests: (cb: () => void) => () => void
   detectOllamaBinary: () => Promise<string | null>
 }
 

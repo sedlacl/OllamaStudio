@@ -51,6 +51,9 @@ export default function Layout(): JSX.Element {
           <NavLink to="/models" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             Modely
           </NavLink>
+          <NavLink to="/resources" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
+            GPU a paměť
+          </NavLink>
           <NavLink to="/server" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>
             Server
           </NavLink>

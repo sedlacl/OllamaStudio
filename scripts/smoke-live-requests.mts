@@ -241,6 +241,85 @@ function phase9_historyNewestFirstMixed(): void {
   assert(hist[0]?.completionReason === 'done processing', 'done processing reason')
 }
 
+/**
+ * Regression: completed history must survive repeated dashboard polls/syncs,
+ * grace expiry, unrelated log noise, and bursts of operator/cache task ids
+ * that later become stale (previously flooded max-10 and evicted done rows).
+ */
+function phase10_historySurvivesPollsGraceAndStaleNoise(): void {
+  let t = 11_000_000
+  const buf = new LogBuffer({ now: () => t })
+
+  t += 1
+  buf.append('stderr', 'slot launch_slot_: id  0 | task 1000 | processing task, is_child = 0')
+  t += 10
+  buf.append(
+    'stderr',
+    'slot print_timing: id  0 | task 1000 | prompt processing, n_tokens = 100, progress = 0.5, t = 1 s / 50 tokens per second'
+  )
+  t += 10
+  buf.append(
+    'stderr',
+    'slot      release: id  0 | task 1000 | stop processing: n_tokens = 120, truncated = 0'
+  )
+
+  assert(
+    buf.getRequestHistory().some((h) => h.taskId === 1000 && h.result === 'done'),
+    'phase10: done snapshot on completion'
+  )
+
+  // Operator/cache noise with unique task ids (common in runner DEBUG).
+  for (let i = 1; i <= 20; i++) {
+    t += 5
+    buf.append(
+      'stderr',
+      `slot   operator(): id  0 | task ${2000 + i} | cached n_tokens = 100, memory_seq_rm [100, end)`
+    )
+  }
+
+  // Simulate collectMetrics: estimate + active + history, repeatedly.
+  for (let i = 0; i < 8; i++) {
+    t += 2_000
+    buf.getActiveRequestEstimate()
+    buf.getActiveRequests()
+    buf.append('stdout', `time=2026-08-12T00:00:00.000Z level=INFO msg="unrelated heartbeat ${i}"`)
+    const hist = buf.getRequestHistory()
+    assert(
+      hist.some((h) => h.taskId === 1000 && h.result === 'done'),
+      `phase10: done survives poll/sync/unrelated logs #${i}`
+    )
+  }
+
+  // Past completed grace — live map drops it; history must keep it.
+  t += 5_000
+  assert(
+    !buf.getActiveRequests().some((r) => r.taskId === 1000),
+    'phase10: completed pruned from live after grace'
+  )
+  assert(
+    buf.getRequestHistory().some((h) => h.taskId === 1000 && h.result === 'done'),
+    'phase10: done retained after grace prune'
+  )
+
+  // Past stale window — operator tasks age out; must not wipe done history.
+  t += 100_000
+  buf.getActiveRequests()
+  buf.getRequestHistory()
+  const afterStale = buf.getRequestHistory()
+  assert(
+    afterStale.some((h) => h.taskId === 1000 && h.result === 'done'),
+    'phase10: done survives stale prune of operator noise'
+  )
+  assert(
+    !afterStale.some((h) => h.taskId >= 2001 && h.taskId <= 2020),
+    'phase10: cache/operator-only tasks are not archived as stale history'
+  )
+
+  // Explicit clear still wipes history.
+  buf.clear()
+  assert(buf.getRequestHistory().length === 0, 'phase10: clear() still clears history')
+}
+
 phase1_progressFormat()
 phase2_structuredDebug()
 phase3_launchAndGeneration()
@@ -250,6 +329,7 @@ phase6_rehydrateFromEntries()
 phase7_historyLifecycleOrderMaxDedup()
 phase8_activeToHistoryThenStale()
 phase9_historyNewestFirstMixed()
+phase10_historySurvivesPollsGraceAndStaleNoise()
 
 if (failed > 0) {
   console.error(`\n${failed} assertion(s) failed`)

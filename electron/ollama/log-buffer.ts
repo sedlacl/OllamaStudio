@@ -202,9 +202,11 @@ export class LogBuffer {
     })
   }
 
-  /** Newest-first completed/stale snapshots (max 10). Independent of live grace period. */
+  /**
+   * Newest-first completed/stale snapshots (max 10).
+   * Does not run active-map sync/prune — history must not depend on live grace.
+   */
   getRequestHistory(): RequestHistoryItem[] {
-    this.syncActiveRequestsFromEntries()
     return this.requestHistory.slice()
   }
 
@@ -288,8 +290,8 @@ export class LogBuffer {
     }
 
     // Active tasks that fell out of the replay window were never completed → stale.
-    for (const [taskId, req] of previous) {
-      if (req.status === 'active' && !this.activeRequests.has(taskId)) {
+    for (const [, req] of previous) {
+      if (req.status === 'active' && !this.activeRequests.has(req.taskId)) {
         this.archiveRequest(req, 'stale', now, req.completionReason)
       }
     }
@@ -391,6 +393,10 @@ export class LogBuffer {
     /** Observed progress only — do not pass fabricated 100% unless seen in logs. */
     progressPercent: number | null = req.progressPercent
   ): void {
+    // Runner emits many short-lived operator/cache task ids — do not let those
+    // flood history and evict real completions.
+    if (result === 'stale' && !isMeaningfulRequest(req)) return
+
     const item: RequestHistoryItem = {
       taskId: req.taskId,
       slotId: req.slotId,
@@ -420,11 +426,42 @@ export class LogBuffer {
       return
     }
 
+    // Stale must never evict a done row when history is already full of completions.
+    if (result === 'stale' && this.requestHistory.length >= this.maxHistory) {
+      const oldestStaleIdx = this.findOldestStaleIndex()
+      if (oldestStaleIdx < 0) return
+      this.requestHistory.splice(oldestStaleIdx, 1)
+    }
+
     this.requestHistory.unshift(item)
-    if (this.requestHistory.length > this.maxHistory) {
-      this.requestHistory.length = this.maxHistory
+    this.trimHistory()
+  }
+
+  /** Cap at maxHistory while preferring to drop stale noise before done rows. */
+  private trimHistory(): void {
+    while (this.requestHistory.length > this.maxHistory) {
+      const staleIdx = this.findOldestStaleIndex()
+      const dropIdx = staleIdx >= 0 ? staleIdx : this.requestHistory.length - 1
+      this.requestHistory.splice(dropIdx, 1)
     }
   }
+
+  private findOldestStaleIndex(): number {
+    for (let i = this.requestHistory.length - 1; i >= 0; i--) {
+      if (this.requestHistory[i]!.result === 'stale') return i
+    }
+    return -1
+  }
+}
+
+/** True when logs showed real inference work (not cache/operator-only blips). */
+function isMeaningfulRequest(req: ActiveRequest): boolean {
+  if (req.phase === 'prompt_processing' || req.phase === 'generation') return true
+  if (req.progressPercent != null && req.progressPercent > 0) return true
+  if (req.promptTokens != null || req.generationTokens != null) return true
+  if (req.elapsedSeconds != null) return true
+  if (req.promptTokensPerSec != null || req.generationTokensPerSec != null) return true
+  return false
 }
 
 function mergeHistoryItem(prev: RequestHistoryItem, next: RequestHistoryItem): RequestHistoryItem {
