@@ -6,6 +6,12 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-08-18
+
+### Fixed
+
+- Linuxový build v GitHub Release selhával na ikoně (`icon.ico` neměl 256×256); AppImage i `.deb` se nyní sestaví z PNG ikony
+
 ## [1.2.1] — 2026-08-18
 
 ### Added
