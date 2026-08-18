@@ -6,6 +6,10 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+### Changed
+
+- GitHub Actions release workflow používá checkout/setup-node v5, action-gh-release v3 a Node 22 (konec deprecation Node 20)
+
 ## [1.2.3] — 2026-08-18
 
 ### Fixed
