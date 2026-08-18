@@ -6,6 +6,12 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-08-18
+
+### Fixed
+
+- Balíček `.deb` v GitHub Release selhával na chybějícím maintainerovi; Linux release nyní obsahuje AppImage i `.deb`
+
 ## [1.2.2] — 2026-08-18
 
 ### Fixed
