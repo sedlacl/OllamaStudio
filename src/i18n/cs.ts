@@ -168,6 +168,7 @@ export const cs = {
     toolUnknown: '{tool}: stav konfigurace se načítá',
     mismatchApiBase: 'adresa serveru',
     mismatchContext: 'délka kontextu',
+    mismatchOutput: 'max. výstup',
     updateContinue: 'Aktualizovat Continue',
     toContinue: 'Do Continue',
     updateContinueTitle: 'Aktualizovat Continue záznam podle aktuálních settings (host, context)',
@@ -291,10 +292,10 @@ export const cs = {
     barTitle: 'GPU {gpu} % · CPU {cpu} %'
   },
   logPanel: {
+    filtered: 'Filtrované',
     all: 'Vše',
     errors: 'Chyby',
-    load: 'Load',
-    unload: 'Unload',
+    load: 'Load/Unload',
     requests: 'Požadavky',
     filterPlaceholder: 'Filtrovat text…',
     paused: 'Pozastaveno',

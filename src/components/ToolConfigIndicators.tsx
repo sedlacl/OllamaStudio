@@ -13,7 +13,9 @@ const STATE_CLASS: Record<ToolConfigState, string> = {
 }
 
 function mismatchLabel(kind: ToolConfigMismatch, t: (key: MessageKey) => string): string {
-  return kind === 'apiBase' ? t('models.mismatchApiBase') : t('models.mismatchContext')
+  if (kind === 'apiBase') return t('models.mismatchApiBase')
+  if (kind === 'outputLength') return t('models.mismatchOutput')
+  return t('models.mismatchContext')
 }
 
 export function toolConfigTooltip(
@@ -29,7 +31,8 @@ export function toolConfigTooltip(
       const bits = [
         match.displayName,
         match.apiBase,
-        match.contextLength != null ? `ctx ${match.contextLength}` : null
+        match.contextLength != null ? `ctx ${match.contextLength}` : null,
+        match.outputLength != null ? `out ${match.outputLength}` : null
       ].filter(Boolean)
       return t('models.toolCurrent', {
         tool: toolName,

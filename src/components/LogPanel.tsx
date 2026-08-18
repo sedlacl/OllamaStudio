@@ -2,7 +2,52 @@ import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
 import { api, type LogEntry } from '../types/api'
 
-type FilterCategory = 'all' | 'error' | 'load' | 'unload' | 'request'
+type FilterCategory = 'filtered' | 'all' | 'error' | 'load' | 'request'
+
+const FILTER_STORAGE_KEY = 'ollamastudio.logFilter'
+
+/** GIN access-log řádky z pollingu OllamaStudio (`GET "/api/ps"`, `GET "/api/version"`). */
+const STUDIO_POLL_RE = /\bGET\s+"\/api\/(?:ps|version)(?:\?[^"]*)?"/
+
+function isFilterCategory(value: string): value is FilterCategory {
+  return (
+    value === 'filtered' ||
+    value === 'all' ||
+    value === 'error' ||
+    value === 'load' ||
+    value === 'request'
+  )
+}
+
+function readStoredFilter(): FilterCategory {
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY)
+    if (raw === 'unload') return 'load'
+    if (raw && isFilterCategory(raw)) return raw
+  } catch {
+    /* private mode / unavailable storage */
+  }
+  return 'filtered'
+}
+
+function writeStoredFilter(category: FilterCategory): void {
+  try {
+    localStorage.setItem(FILTER_STORAGE_KEY, category)
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function isStudioPollNoise(text: string): boolean {
+  return STUDIO_POLL_RE.test(text)
+}
+
+function matchesCategory(entry: LogEntry, category: FilterCategory): boolean {
+  if (category === 'filtered') return !isStudioPollNoise(entry.text)
+  if (category === 'all') return true
+  if (category === 'load') return entry.category === 'load' || entry.category === 'unload'
+  return entry.category === category
+}
 
 export interface LogPanelProps {
   compact?: boolean
@@ -24,7 +69,7 @@ export default function LogPanel({
   const { t, formatTime } = useI18n()
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [textFilter, setTextFilter] = useState('')
-  const [category, setCategory] = useState<FilterCategory>('all')
+  const [category, setCategory] = useState<FilterCategory>(readStoredFilter)
   const [paused, setPaused] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(paused)
@@ -49,18 +94,23 @@ export default function LogPanel({
   }, [entries, paused])
 
   const filtered = entries.filter((e) => {
-    if (category !== 'all' && e.category !== category) return false
+    if (!matchesCategory(e, category)) return false
     if (textFilter && !e.text.toLowerCase().includes(textFilter.toLowerCase())) return false
     return true
   })
 
   const categories: { id: FilterCategory; label: string }[] = [
+    { id: 'filtered', label: t('logPanel.filtered') },
     { id: 'all', label: t('logPanel.all') },
     { id: 'error', label: t('logPanel.errors') },
     { id: 'load', label: t('logPanel.load') },
-    { id: 'unload', label: t('logPanel.unload') },
     { id: 'request', label: t('logPanel.requests') }
   ]
+
+  const selectCategory = (id: FilterCategory): void => {
+    setCategory(id)
+    writeStoredFilter(id)
+  }
 
   const wrapClass = ['log-panel-wrap', compact ? 'compact' : '', fill ? 'fill' : '']
     .filter(Boolean)
@@ -85,7 +135,7 @@ export default function LogPanel({
           <button
             key={c.id}
             className={`filter-chip${category === c.id ? ' active' : ''}`}
-            onClick={() => setCategory(c.id)}
+            onClick={() => selectCategory(c.id)}
           >
             {c.label}
           </button>

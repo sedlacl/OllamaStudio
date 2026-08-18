@@ -10,20 +10,26 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ### Added
 
+- GitHub Actions workflow pro release Windows NSIS (a Linux AppImage a .deb) při tagu v*
 - Zápis a aktualizace vybraného Ollama modelu do konfigurace OpenCode
 - Indikátor stavu konfigurace Continue a OpenCode u každého modelu (přítomný a aktuální / neaktuální / chybí / nástroj nemá config)
 - Historie požadavků na Přehledu eviduje načtení modelu (start, dokončení i chyba)
 
 ### Changed
 
+- Linux GitHub Release obsahuje kromě AppImage i balíček `.deb`
 - Akce u modelů: primární zůstaly Načíst a Uvolnit, ostatní (Continue, OpenCode, detail, klonování, smazání) jsou v menu dalších akcí
 - Context, Details a export JSON rozlišují runtime, Modelfile a serverové defaulty; velikost v dialogu načtení je označená jako soubor na disku, ne VRAM
 - Výchozí Context Length v dialogu načtení modelu teď odpovídá efektivnímu num_ctx (Modelfile PARAMETER, jinak OLLAMA_CONTEXT_LENGTH, omezeno architekturou)
+- Výchozí filtr live logů je „Filtrované“ — skryje polling OllamaStudio (/api/ps, /api/version); „Vše“ ukáže kompletní výstup
+- Filtry Load a Unload jsou sloučené do jednoho chipu Load/Unload
+- Odstraněný vnější rámeček bloku serverových logů na Přehledu (zůstal jen rámeček logovací plochy)
 
 ### Fixed
 
 - Výchozí výška logu na dashboardu odpovídá cca 12 řádkům; zbytečný scrollbar u krátkého obsahu zmizí
 - Dialog načtení modelu už současně neukazuje TTL 30m i „ponechat v paměti“ — posílá se jen jedna hodnota keep_alive
+- OpenCode po „Update in OpenCode“ padal na chybějícím limit.output — při zápisu se teď vždy doplní (výchozí 32 000 tokenů, ručně nastavená hodnota se zachová)
 
 ## [1.2.0] — 2026-08-12
 

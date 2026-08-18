@@ -22,8 +22,12 @@ export interface OpenCodeModelEntry {
   name: string
   apiBase?: string
   contextLength?: number
+  outputLength?: number
   providerId: string
 }
+
+/** OpenCode schema (`limit`) vyžaduje `context` i `output`. 32k = dokumentovaný default OpenCode. */
+export const DEFAULT_OPENCODE_OUTPUT_LIMIT = 32_000
 
 export interface OpenCodeConfigStatus {
   path: string
@@ -216,11 +220,35 @@ function getModelContext(modelBlock: Record<string, unknown>): number | undefine
   return parseContextLength(limit?.context ?? modelBlock.contextLength)
 }
 
-function setModelContext(modelBlock: Record<string, unknown>, ctx: number | undefined): void {
-  if (ctx == null) return
-  const limit = asRecord(modelBlock.limit) ?? {}
-  limit.context = ctx
+function getModelOutput(modelBlock: Record<string, unknown>): number | undefined {
+  const limit = asRecord(modelBlock.limit)
+  return parseContextLength(limit?.output)
+}
+
+/**
+ * OpenCode JSON schema: pokud existuje `limit`, jsou povinné `context` i `output`.
+ * Existující `output` zachová; chybějící doplní defaultem.
+ */
+function setModelLimit(
+  modelBlock: Record<string, unknown>,
+  opts: { context?: number; output?: number } = {}
+): void {
+  const existing = asRecord(modelBlock.limit) ?? {}
+  const context = opts.context ?? parseContextLength(existing.context ?? modelBlock.contextLength)
+  const output = opts.output ?? parseContextLength(existing.output) ?? DEFAULT_OPENCODE_OUTPUT_LIMIT
+  if (context == null && modelBlock.limit == null) return
+  const limit: Record<string, unknown> = { ...existing }
+  if (context != null) limit.context = context
+  limit.output = output
   modelBlock.limit = limit
+}
+
+function repairProviderModelLimits(models: Record<string, unknown>): void {
+  for (const value of Object.values(models)) {
+    const block = asRecord(value)
+    if (!block || !asRecord(block.limit)) continue
+    setModelLimit(block)
+  }
 }
 
 function isOllamaProvider(id: string, block: Record<string, unknown>): boolean {
@@ -284,6 +312,7 @@ function listModelsFromDoc(doc: Record<string, unknown>): OpenCodeModelEntry[] {
       name,
       apiBase,
       contextLength: getModelContext(block),
+      outputLength: getModelOutput(block),
       providerId: found.id
     })
   }
@@ -348,6 +377,7 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
   name: string
   apiBase: string
   contextLength: number | undefined
+  outputLength: number
 } {
   const config = loadConfig()
   const base = ollamaModel.replace(/:latest$/i, '')
@@ -364,7 +394,8 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
     model: modelId,
     name: existing?.name ?? displayNameFor(modelId),
     apiBase: ensureOpenAiV1Base(config.ollamaEnv.OLLAMA_HOST),
-    contextLength: ctxFromLoad ?? ctxFromServer ?? existing?.contextLength
+    contextLength: ctxFromLoad ?? ctxFromServer ?? existing?.contextLength,
+    outputLength: existing?.outputLength ?? DEFAULT_OPENCODE_OUTPUT_LIMIT
   }
 }
 
@@ -373,7 +404,8 @@ export function matchOpenCodeModel(ollamaModel: string): ToolConfigMatch {
   const status = getOpenCodeConfigStatus()
   const expected = {
     expectedApiBase: settings.apiBase,
-    expectedContextLength: settings.contextLength
+    expectedContextLength: settings.contextLength,
+    expectedOutputLength: settings.outputLength
   }
 
   if (!status.exists) {
@@ -398,6 +430,9 @@ export function matchOpenCodeModel(ollamaModel: string): ToolConfigMatch {
   ) {
     mismatches.push('contextLength')
   }
+  if (entry.outputLength !== settings.outputLength) {
+    mismatches.push('outputLength')
+  }
 
   return toolMatch({
     state: mismatches.length > 0 ? 'stale' : 'current',
@@ -406,6 +441,7 @@ export function matchOpenCodeModel(ollamaModel: string): ToolConfigMatch {
     modelId: entry.model,
     apiBase: entry.apiBase,
     contextLength: entry.contextLength,
+    outputLength: entry.outputLength,
     ...expected,
     mismatches
   })
@@ -437,10 +473,10 @@ function ensureOllamaProvider(doc: Record<string, unknown>, apiBase: string): {
 
 /**
  * Přidá nebo aktualizuje ollama model v globálním opencode.json
- * podle aktuálních settings OllamaStudio (host → baseURL /v1, context length).
+ * podle aktuálních settings OllamaStudio (host → baseURL /v1, context + output limit).
+ * Sourozencům bez `limit.output` doplní default, aby schema OpenCode prošlo.
  *
- * Formát dle https://opencode.ai/docs/providers/ (sekce Ollama) a
- * https://github.com/ollama/ollama/blob/main/docs/integrations/opencode.mdx
+ * Formát dle https://opencode.ai/docs/providers/ a schema `limit.context` + `limit.output`.
  */
 export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
   const trimmed = ollamaModel.trim()
@@ -465,11 +501,15 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
 
   const modelBlock = asRecord(targetKey != null ? models[targetKey] : null) ?? {}
   if (!modelBlock.name) modelBlock.name = settings.name
-  if (settings.contextLength != null) setModelContext(modelBlock, settings.contextLength)
+  setModelLimit(modelBlock, {
+    context: settings.contextLength,
+    output: settings.outputLength
+  })
 
   const writeKey = settings.model
   if (targetKey && targetKey !== writeKey) delete models[targetKey]
   models[writeKey] = modelBlock
+  repairProviderModelLimits(models)
 
   writeDocument(path, doc)
   return (
@@ -478,6 +518,7 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
       name: String(modelBlock.name ?? writeKey),
       apiBase: settings.apiBase,
       contextLength: settings.contextLength,
+      outputLength: settings.outputLength,
       providerId: provider.id
     }
   )
@@ -505,6 +546,7 @@ export function removeOpenCodeModel(ollamaModel: string): boolean {
   }
   if (!removed) return false
 
+  repairProviderModelLimits(models)
   writeDocument(path, doc)
   return true
 }

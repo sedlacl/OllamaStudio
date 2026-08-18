@@ -1,6 +1,6 @@
 export type ToolConfigState = 'no-config' | 'invalid' | 'missing' | 'stale' | 'current'
 
-export type ToolConfigMismatch = 'apiBase' | 'contextLength'
+export type ToolConfigMismatch = 'apiBase' | 'contextLength' | 'outputLength'
 
 export interface ToolConfigMatch {
   state: ToolConfigState
@@ -9,8 +9,10 @@ export interface ToolConfigMatch {
   modelId?: string
   apiBase?: string
   contextLength?: number
+  outputLength?: number
   expectedApiBase?: string
   expectedContextLength?: number
+  expectedOutputLength?: number
   mismatches: ToolConfigMismatch[]
 }
 

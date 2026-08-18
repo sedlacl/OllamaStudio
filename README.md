@@ -139,6 +139,9 @@ The Continue integration reads/writes `~/.continue/config.yaml` (on Windows:
 Version changes live in [CHANGELOG.md](CHANGELOG.md). For every release always bump `version`
 in `package.json` and add release notes (see the Cursor rule in `.cursor/rules/`).
 
+Then push a git tag `vX.Y.Z` (matching `package.json`). GitHub Actions builds the Windows NSIS
+installer, Linux AppImage and `.deb` package and attaches them to the GitHub Release.
+
 The current version is shown in the window title (`OllamaStudio X.Y.Z`) and as a badge in the UI header.
 
 ## License

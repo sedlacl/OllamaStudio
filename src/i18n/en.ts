@@ -170,6 +170,7 @@ export const en: MessageTree = {
     toolUnknown: '{tool}: config status is loading',
     mismatchApiBase: 'server address',
     mismatchContext: 'context length',
+    mismatchOutput: 'output limit',
     updateContinue: 'Update Continue',
     toContinue: 'Add to Continue',
     updateContinueTitle: 'Update Continue entry from current settings (host, context)',
@@ -293,10 +294,10 @@ export const en: MessageTree = {
     barTitle: 'GPU {gpu} % · CPU {cpu} %'
   },
   logPanel: {
+    filtered: 'Filtered',
     all: 'All',
     errors: 'Errors',
-    load: 'Load',
-    unload: 'Unload',
+    load: 'Load/Unload',
     requests: 'Requests',
     filterPlaceholder: 'Filter text…',
     paused: 'Paused',
