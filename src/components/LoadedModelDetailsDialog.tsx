@@ -198,6 +198,16 @@ export default function LoadedModelDetailsDialog({
     const payload = {
       modelName,
       exportedAt: new Date().toISOString(),
+      sources: {
+        runtime:
+          'Ollama /api/ps — actually loaded runner. size = RAM+VRAM after load, size_vram = GPU portion, context_length = n_ctx. Not the on-disk file size.',
+        model:
+          'Ollama /api/show — Modelfile PARAMETER, architecture model_info, template. Defaults baked into the model, not current runner options.',
+        serveConfig:
+          'OllamaStudio serve environment. Server defaults only; keep_alive and num_ctx from loadOptions override them on load.',
+        loadOptions:
+          'Options OllamaStudio sent with the last modelLoad in this app session (keep_alive -1 = forever).'
+      },
       runtime: running,
       model: show,
       serveConfig: env ?? null,
@@ -247,14 +257,18 @@ export default function LoadedModelDetailsDialog({
                     <DetailRow label="name" value={formatValue(running.name, unavailable)} />
                     <DetailRow label="model" value={formatValue(running.model, unavailable)} />
                     <DetailRow label="digest" value={formatValue(running.digest, unavailable)} />
-                    <DetailRow label="size" value={formatBytes(running.size, unavailable)} unavailable={running.size == null} />
                     <DetailRow
-                      label="size_vram"
+                      label={t('details.runtimeSize')}
+                      value={formatBytes(running.size, unavailable)}
+                      unavailable={running.size == null}
+                    />
+                    <DetailRow
+                      label={t('details.runtimeSizeVram')}
                       value={formatBytes(running.size_vram, unavailable)}
                       unavailable={running.size_vram == null}
                     />
                     <DetailRow
-                      label="context_length"
+                      label={t('details.runtimeCtx')}
                       value={
                         running.context_length != null
                           ? formatNumber(running.context_length)
@@ -287,6 +301,7 @@ export default function LoadedModelDetailsDialog({
                     />
                   </KvGrid>
                 )}
+                <p className="detail-epistemic-note">{t('details.runtimeSizeNote')}</p>
                 <p className="detail-epistemic-note">
                   {t('details.runtimeEpistemic')}{' '}
                   <span className="detail-unavailable">{unavailable}</span>.
@@ -299,6 +314,7 @@ export default function LoadedModelDetailsDialog({
                 ) : (
                   <>
                     <h5 className="detail-subsection">parameters</h5>
+                    <p className="field-help">{t('details.parametersNote')}</p>
                     <MonoBlock text={show.parameters} emptyLabel={unavailable} />
 
                     <h5 className="detail-subsection">details</h5>

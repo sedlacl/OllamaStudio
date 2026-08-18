@@ -6,6 +6,25 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-08-18
+
+### Added
+
+- Zápis a aktualizace vybraného Ollama modelu do konfigurace OpenCode
+- Indikátor stavu konfigurace Continue a OpenCode u každého modelu (přítomný a aktuální / neaktuální / chybí / nástroj nemá config)
+- Historie požadavků na Přehledu eviduje načtení modelu (start, dokončení i chyba)
+
+### Changed
+
+- Akce u modelů: primární zůstaly Načíst a Uvolnit, ostatní (Continue, OpenCode, detail, klonování, smazání) jsou v menu dalších akcí
+- Context, Details a export JSON rozlišují runtime, Modelfile a serverové defaulty; velikost v dialogu načtení je označená jako soubor na disku, ne VRAM
+- Výchozí Context Length v dialogu načtení modelu teď odpovídá efektivnímu num_ctx (Modelfile PARAMETER, jinak OLLAMA_CONTEXT_LENGTH, omezeno architekturou)
+
+### Fixed
+
+- Výchozí výška logu na dashboardu odpovídá cca 12 řádkům; zbytečný scrollbar u krátkého obsahu zmizí
+- Dialog načtení modelu už současně neukazuje TTL 30m i „ponechat v paměti“ — posílá se jen jedna hodnota keep_alive
+
 ## [1.2.0] — 2026-08-12
 
 ### Added

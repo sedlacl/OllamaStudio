@@ -58,7 +58,8 @@ function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
     const map: Record<RequestKind, string> = {
       chat: t('dashboard.kindChat'),
       generate: t('dashboard.kindGenerate'),
-      embed: t('dashboard.kindEmbed')
+      embed: t('dashboard.kindEmbed'),
+      load: t('dashboard.kindLoad')
     }
     return map[kind]
   }
@@ -67,8 +68,14 @@ function ActiveRequestCard({ req }: { req: ActiveRequest }): JSX.Element {
     <div className={`active-req ${req.status === 'completed' ? 'active-req-done' : ''}`}>
       <div className="active-req-header">
         <div className="active-req-ids">
-          <span className="mono">task {req.taskId}</span>
-          {req.slotId != null && <span className="mono">slot {req.slotId}</span>}
+          {req.model ? (
+            <span className="mono">{req.model}</span>
+          ) : (
+            <>
+              <span className="mono">task {req.taskId}</span>
+              {req.slotId != null && <span className="mono">slot {req.slotId}</span>}
+            </>
+          )}
         </div>
         <div className="active-req-ids">
           {req.kind && <span className="history-kind">{kindLabel(req.kind)}</span>}
@@ -150,7 +157,11 @@ function ActiveRequestPlaceholder(): JSX.Element {
 function HistoryRow({ item }: { item: RequestHistoryItem }): JSX.Element {
   const { t, formatNumber, formatTime } = useI18n()
   const resultClass =
-    item.result === 'done' ? 'history-result-done' : 'history-result-stale'
+    item.result === 'done'
+      ? 'history-result-done'
+      : item.result === 'error'
+        ? 'history-result-error'
+        : 'history-result-stale'
 
   const phaseLabel = (phase: ActiveRequestPhase): string => {
     const map: Record<ActiveRequestPhase, string> = {
@@ -168,13 +179,17 @@ function HistoryRow({ item }: { item: RequestHistoryItem }): JSX.Element {
     const map: Record<RequestKind, string> = {
       chat: t('dashboard.kindChat'),
       generate: t('dashboard.kindGenerate'),
-      embed: t('dashboard.kindEmbed')
+      embed: t('dashboard.kindEmbed'),
+      load: t('dashboard.kindLoad')
     }
     return map[kind]
   }
 
-  const resultLabel = (result: RequestHistoryResult): string =>
-    result === 'done' ? t('dashboard.resultDone') : t('dashboard.resultStale')
+  const resultLabel = (result: RequestHistoryResult): string => {
+    if (result === 'done') return t('dashboard.resultDone')
+    if (result === 'error') return t('dashboard.resultError')
+    return t('dashboard.resultStale')
+  }
 
   const formatTokenPair = (prompt: number | null, generation: number | null): string => {
     if (prompt == null && generation == null) return '—'
@@ -196,7 +211,7 @@ function HistoryRow({ item }: { item: RequestHistoryItem }): JSX.Element {
 
   return (
     <tr>
-      <td className="mono">{item.taskId}</td>
+      <td className="mono">{item.model ? '—' : item.taskId}</td>
       <td className="mono">{item.slotId != null ? item.slotId : '—'}</td>
       <td>
         {item.kind ? (
@@ -204,6 +219,7 @@ function HistoryRow({ item }: { item: RequestHistoryItem }): JSX.Element {
         ) : (
           '—'
         )}
+        {item.model && <div className="history-reason mono">{item.model}</div>}
       </td>
       <td>
         <span className={resultClass}>{resultLabel(item.result)}</span>

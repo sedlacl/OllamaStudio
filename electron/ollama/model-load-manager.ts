@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import type { OllamaClient, ModelLoadOptions } from './client'
 import { recordLoadOptions } from './load-options-registry'
+import { logBuffer } from './log-buffer'
 import { tMain } from '../i18n'
 
 export type ModelLoadStatus = 'loading' | 'success' | 'error'
@@ -14,6 +15,7 @@ export interface ModelLoadState {
 
 let getWindow: () => BrowserWindow | null = () => null
 const activeLoads = new Map<string, ModelLoadState>()
+const loadHistoryTasks = new Map<string, number>()
 
 export function initModelLoadManager(windowGetter: () => BrowserWindow | null): void {
   getWindow = windowGetter
@@ -21,6 +23,18 @@ export function initModelLoadManager(windowGetter: () => BrowserWindow | null): 
 
 function emit(state: ModelLoadState): void {
   getWindow()?.webContents.send('model-load-status', state)
+}
+
+function emitRequestsChanged(): void {
+  getWindow()?.webContents.send('dashboard-requests-changed')
+}
+
+function finishLoadHistory(name: string, result: 'done' | 'error', error?: string): void {
+  const taskId = loadHistoryTasks.get(name)
+  if (taskId == null) return
+  logBuffer.finishManagedRequest(taskId, result, error)
+  loadHistoryTasks.delete(name)
+  emitRequestsChanged()
 }
 
 export function getActiveModelLoads(): ModelLoadState[] {
@@ -42,6 +56,10 @@ export function startModelLoad(
   activeLoads.set(name, state)
   emit(state)
 
+  const historyTaskId = logBuffer.startManagedRequest('load', name)
+  loadHistoryTasks.set(name, historyTaskId)
+  emitRequestsChanged()
+
   void (async () => {
     try {
       await client.load(name, loadOptions)
@@ -49,6 +67,7 @@ export function startModelLoad(
       const success: ModelLoadState = { name, status: 'success', startedAt: state.startedAt }
       activeLoads.set(name, success)
       emit(success)
+      finishLoadHistory(name, 'done')
       setTimeout(() => {
         const current = activeLoads.get(name)
         if (current?.status === 'success' && current.startedAt === state.startedAt) {
@@ -60,6 +79,7 @@ export function startModelLoad(
       const failed: ModelLoadState = { name, status: 'error', error, startedAt: state.startedAt }
       activeLoads.set(name, failed)
       emit(failed)
+      finishLoadHistory(name, 'error', error)
     }
   })()
 

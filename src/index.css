@@ -394,13 +394,20 @@ button {
   background: var(--log-bg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  height: 420px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px;
+  --log-line-height: 1.333;
+  --log-line-padding-block: 0.167em;
+  --log-line-block-size: calc(var(--log-line-height) * 1em + 2 * var(--log-line-padding-block));
+  --log-panel-lines: 20;
+  --log-panel-block-size: calc(var(--log-panel-lines) * var(--log-line-block-size) + 1.333em);
+  height: var(--log-panel-block-size);
 }
 
 .log-line {
-  padding: 2px 0;
+  line-height: var(--log-line-height);
+  padding: var(--log-line-padding-block) 0;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -451,10 +458,18 @@ button {
   height: 100%;
 }
 
+.log-panel-wrap.compact {
+  --log-panel-lines: 12;
+}
+
 .log-panel-wrap.fill .log-panel {
   flex: 1;
   min-height: 0;
   height: auto;
+}
+
+.dashboard-logs-section .log-panel-wrap.fill .log-panel {
+  min-height: var(--log-panel-block-size);
 }
 
 .log-panel-wrap.compact .log-panel-title-row {
@@ -657,6 +672,11 @@ button {
   font-weight: 600;
 }
 
+.history-result-error {
+  color: var(--error);
+  font-weight: 600;
+}
+
 .history-reason {
   margin-top: 2px;
   font-size: 11px;
@@ -850,6 +870,13 @@ button {
   text-transform: uppercase;
 }
 
+.load-subsection-label {
+  margin: 4px 0 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .load-setting-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
@@ -869,7 +896,7 @@ button {
   font-size: 12px;
 }
 
-.load-setting-row > input:not([type='checkbox']) {
+.load-setting-row > input:not([type='checkbox']):not([type='radio']) {
   width: 100%;
   padding: 7px 9px;
   border: 1px solid var(--border);
@@ -877,11 +904,23 @@ button {
   background: var(--input-bg);
 }
 
-.load-setting-row > input[type='checkbox'] {
+.load-setting-row > input:disabled {
+  opacity: 0.45;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.load-setting-row > input[type='checkbox'],
+.load-setting-row > input[type='radio'] {
   justify-self: end;
   width: 16px;
   height: 16px;
   accent-color: var(--accent);
+}
+
+.load-will-send {
+  margin: 8px 0 4px;
+  font-weight: 600;
 }
 
 .setting-readonly {
@@ -1041,6 +1080,7 @@ button {
   }
 
   .load-setting-row > input[type='checkbox'],
+  .load-setting-row > input[type='radio'],
   .setting-readonly {
     justify-self: start;
     text-align: left;
@@ -1126,3 +1166,102 @@ button {
 .preset-inline-row > input {
   flex: 1 1 180px;
 }
+
+.tool-indicators {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.tool-indicator-current {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+}
+
+.tool-indicator-stale {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.tool-indicator-missing {
+  color: var(--text-muted);
+}
+
+.tool-indicator-absent,
+.tool-indicator-invalid {
+  color: var(--error);
+  border-style: dashed;
+}
+
+.model-overflow {
+  position: relative;
+  display: inline-flex;
+}
+
+.model-overflow-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.model-overflow-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+
+.model-overflow-item:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.model-overflow-item.is-danger {
+  color: var(--error);
+}
+
+.model-overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+.table tbody tr:last-child .model-overflow-menu,
+.table tbody tr:nth-last-child(2) .model-overflow-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.model-paths {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 12px;
+}
+

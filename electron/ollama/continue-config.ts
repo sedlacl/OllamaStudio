@@ -5,6 +5,17 @@ import { parseDocument, YAMLMap, YAMLSeq, isMap, isSeq } from 'yaml'
 import { tMain } from '../i18n'
 import { loadConfig } from './config'
 import { getLoadOptions } from './load-options-registry'
+import {
+  apiBasesEquivalent,
+  displayNameFor,
+  ensureHttpBase,
+  modelsMatch,
+  normalizeOllamaModelId,
+  parseContextLength,
+  toolMatch,
+  type ToolConfigMatch,
+  type ToolConfigMismatch
+} from './tool-config-shared'
 
 export interface ContinueModelEntry {
   /** Display name v Continue (`name`) */
@@ -20,6 +31,7 @@ export interface ContinueModelEntry {
 export interface ContinueConfigStatus {
   path: string
   exists: boolean
+  invalid: boolean
   models: ContinueModelEntry[]
 }
 
@@ -33,35 +45,7 @@ function configYamlPath(): string {
   return join(continueDir(), 'config.yaml')
 }
 
-/** Ořízne `:latest` a sjednotí case — Continue často ukládá tag bez `:latest`. */
-export function normalizeOllamaModelId(name: string): string {
-  return name.trim().toLowerCase().replace(/:latest$/, '')
-}
-
-function modelsMatch(a: string, b: string): boolean {
-  return normalizeOllamaModelId(a) === normalizeOllamaModelId(b)
-}
-
-function ensureHttpBase(host: string): string {
-  const trimmed = host.trim()
-  if (!trimmed) return 'http://127.0.0.1:11434'
-  if (/^https?:\/\//i.test(trimmed)) return trimmed.replace(/\/$/, '')
-  return `http://${trimmed.replace(/\/$/, '')}`
-}
-
-function displayNameFor(model: string): string {
-  const base = model.replace(/:latest$/i, '')
-  return `ollama-${base}`
-}
-
-function parseContextLength(raw: unknown): number | undefined {
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.round(raw)
-  if (typeof raw === 'string' && raw.trim()) {
-    const n = Number(raw)
-    if (Number.isFinite(n) && n > 0) return Math.round(n)
-  }
-  return undefined
-}
+export { normalizeOllamaModelId }
 
 function readEntryFromMap(map: YAMLMap): ContinueModelEntry | null {
   const provider = String(map.get('provider') ?? '')
@@ -96,13 +80,24 @@ function emptyDocumentYaml(): string {
   ].join('\n')
 }
 
-function loadDocument(): { path: string; exists: boolean; doc: ReturnType<typeof parseDocument> } {
+function loadDocument(): {
+  path: string
+  exists: boolean
+  invalid: boolean
+  doc: ReturnType<typeof parseDocument>
+} {
   const path = configYamlPath()
   if (!existsSync(path)) {
-    return { path, exists: false, doc: parseDocument(emptyDocumentYaml()) }
+    return { path, exists: false, invalid: false, doc: parseDocument(emptyDocumentYaml()) }
   }
-  const raw = readFileSync(path, 'utf-8')
-  return { path, exists: true, doc: parseDocument(raw) }
+  try {
+    const raw = readFileSync(path, 'utf-8')
+    const doc = parseDocument(raw)
+    const invalid = doc.errors.length > 0
+    return { path, exists: true, invalid, doc }
+  } catch {
+    return { path, exists: true, invalid: true, doc: parseDocument(emptyDocumentYaml()) }
+  }
 }
 
 function ensureModelsSeq(doc: ReturnType<typeof parseDocument>): YAMLSeq {
@@ -119,9 +114,12 @@ function entryFromNode(node: unknown): ContinueModelEntry | null {
 }
 
 export function getContinueConfigStatus(): ContinueConfigStatus {
-  const { path, exists, doc } = loadDocument()
+  const { path, exists, invalid, doc } = loadDocument()
   if (!exists) {
-    return { path, exists: false, models: [] }
+    return { path, exists: false, invalid: false, models: [] }
+  }
+  if (invalid) {
+    return { path, exists: true, invalid: true, models: [] }
   }
 
   const modelsNode = doc.get('models')
@@ -133,7 +131,52 @@ export function getContinueConfigStatus(): ContinueConfigStatus {
     }
   }
 
-  return { path, exists: true, models }
+  return { path, exists: true, invalid: false, models }
+}
+
+export function matchContinueModel(ollamaModel: string): ToolConfigMatch {
+  const settings = buildContinueSettingsFor(ollamaModel)
+  const status = getContinueConfigStatus()
+  const expected = {
+    expectedApiBase: settings.apiBase,
+    expectedContextLength: settings.contextLength
+  }
+
+  if (!status.exists) {
+    return toolMatch({ state: 'no-config', path: status.path, ...expected })
+  }
+  if (status.invalid) {
+    return toolMatch({ state: 'invalid', path: status.path, ...expected })
+  }
+
+  const entry = status.models.find(
+    (m) => m.provider === 'ollama' && modelsMatch(m.model, ollamaModel)
+  )
+  if (!entry) {
+    return toolMatch({ state: 'missing', path: status.path, ...expected })
+  }
+
+  const mismatches: ToolConfigMismatch[] = []
+  if (settings.apiBase && !apiBasesEquivalent(entry.apiBase, settings.apiBase)) {
+    mismatches.push('apiBase')
+  }
+  if (
+    settings.contextLength != null &&
+    entry.contextLength !== settings.contextLength
+  ) {
+    mismatches.push('contextLength')
+  }
+
+  return toolMatch({
+    state: mismatches.length > 0 ? 'stale' : 'current',
+    path: status.path,
+    displayName: entry.name,
+    modelId: entry.model,
+    apiBase: entry.apiBase,
+    contextLength: entry.contextLength,
+    ...expected,
+    mismatches
+  })
 }
 
 export function findContinueModel(ollamaModel: string): ContinueModelEntry | null {
@@ -186,7 +229,8 @@ export function upsertContinueModel(ollamaModel: string): ContinueModelEntry {
   if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
   const settings = buildContinueSettingsFor(trimmed)
-  const { path, doc } = loadDocument()
+  const { path, exists, invalid, doc } = loadDocument()
+  if (exists && invalid) throw new Error(tMain('errors.continueInvalidConfig'))
   const seq = ensureModelsSeq(doc)
 
   let target: YAMLMap | null = null
@@ -248,8 +292,9 @@ export function removeContinueModel(ollamaModel: string): boolean {
   const trimmed = ollamaModel.trim()
   if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
-  const { path, exists, doc } = loadDocument()
+  const { path, exists, invalid, doc } = loadDocument()
   if (!exists) return false
+  if (invalid) throw new Error(tMain('errors.continueInvalidConfig'))
 
   const models = doc.get('models')
   if (!isSeq(models)) return false

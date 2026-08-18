@@ -127,14 +127,15 @@ export type ActiveRequestPhase =
   | 'done'
   | 'unknown'
 
-export type RequestHistoryResult = 'done' | 'stale'
+export type RequestHistoryResult = 'done' | 'stale' | 'error'
 
-export type RequestKind = 'chat' | 'generate' | 'embed'
+export type RequestKind = 'chat' | 'generate' | 'embed' | 'load'
 
 export interface ActiveRequest {
   taskId: number
   slotId: number | null
   kind: RequestKind | null
+  model: string | null
   phase: ActiveRequestPhase
   progressPercent: number | null
   nTokens: number | null
@@ -154,6 +155,7 @@ export interface RequestHistoryItem {
   taskId: number
   slotId: number | null
   kind: RequestKind | null
+  model: string | null
   phase: ActiveRequestPhase | null
   result: RequestHistoryResult
   completionReason: string | null
@@ -274,7 +276,44 @@ export interface ContinueModelEntry {
 export interface ContinueConfigStatus {
   path: string
   exists: boolean
+  invalid: boolean
   models: ContinueModelEntry[]
+}
+
+export interface OpenCodeModelEntry {
+  model: string
+  name: string
+  apiBase?: string
+  contextLength?: number
+  providerId: string
+}
+
+export type ToolConfigState = 'no-config' | 'invalid' | 'missing' | 'stale' | 'current'
+
+export type ToolConfigMismatch = 'apiBase' | 'contextLength'
+
+export interface ToolConfigMatch {
+  state: ToolConfigState
+  path: string
+  displayName?: string
+  modelId?: string
+  apiBase?: string
+  contextLength?: number
+  expectedApiBase?: string
+  expectedContextLength?: number
+  mismatches: ToolConfigMismatch[]
+}
+
+export interface ToolFileStatus {
+  path: string
+  exists: boolean
+  invalid: boolean
+  byModel: Record<string, ToolConfigMatch>
+}
+
+export interface IntegrationsStatus {
+  continue: ToolFileStatus
+  opencode: ToolFileStatus
 }
 
 export interface Api {
@@ -316,6 +355,9 @@ export interface Api {
   getContinueStatus: () => Promise<ContinueConfigStatus>
   upsertContinueModel: (modelName: string) => Promise<ContinueModelEntry>
   removeContinueModel: (modelName: string) => Promise<boolean>
+  getIntegrationsStatus: (modelNames: string[]) => Promise<IntegrationsStatus>
+  upsertOpenCodeModel: (modelName: string) => Promise<OpenCodeModelEntry>
+  removeOpenCodeModel: (modelName: string) => Promise<boolean>
   killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
   getAppLanguage: () => Promise<AppLanguage>
   setAppLanguage: (language: AppLanguage) => Promise<AppLanguage>

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LoadModelDialog from '../components/LoadModelDialog'
+import ModelOverflowMenu, { type OverflowAction } from '../components/ModelOverflowMenu'
+import ToolConfigIndicators from '../components/ToolConfigIndicators'
 import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
   type AppConfig,
-  type ContinueModelEntry,
+  type IntegrationsStatus,
   type ModelLoadOptions,
   type ModelLoadState,
   type ModelShow,
@@ -20,21 +22,11 @@ function formatSize(bytes: number): string {
   return `${bytes} B`
 }
 
-function normalizeOllamaModelId(name: string): string {
-  return name.trim().toLowerCase().replace(/:latest$/, '')
-}
-
-function findContinueEntry(
-  entries: ContinueModelEntry[],
-  ollamaModel: string
-): ContinueModelEntry | null {
-  return (
-    entries.find(
-      (e) =>
-        e.provider === 'ollama' &&
-        normalizeOllamaModelId(e.model) === normalizeOllamaModelId(ollamaModel)
-    ) ?? null
-  )
+function emptyIntegrations(): IntegrationsStatus {
+  return {
+    continue: { path: '', exists: false, invalid: false, byModel: {} },
+    opencode: { path: '', exists: false, invalid: false, byModel: {} }
+  }
 }
 
 export default function Models(): JSX.Element {
@@ -58,17 +50,15 @@ export default function Models(): JSX.Element {
   const [detailsModel, setDetailsModel] = useState<string | null>(null)
   const [modelLoads, setModelLoads] = useState<ModelLoadState[]>([])
   const [loadNotice, setLoadNotice] = useState<string | null>(null)
-  const [continueModels, setContinueModels] = useState<ContinueModelEntry[]>([])
-  const [continuePath, setContinuePath] = useState<string | null>(null)
-  const [continueBusy, setContinueBusy] = useState<string | null>(null)
+  const [integrations, setIntegrations] = useState<IntegrationsStatus>(emptyIntegrations)
+  const [toolBusy, setToolBusy] = useState<string | null>(null)
 
-  const refreshContinue = useCallback(async () => {
+  const refreshIntegrations = useCallback(async (names: string[]): Promise<void> => {
     try {
-      const status = await api().getContinueStatus()
-      setContinueModels(status.models)
-      setContinuePath(status.path)
+      const status = await api().getIntegrationsStatus(names)
+      setIntegrations(status)
     } catch {
-      setContinueModels([])
+      setIntegrations(emptyIntegrations())
     }
   }, [])
 
@@ -78,22 +68,21 @@ export default function Models(): JSX.Element {
       setTags(tagsList)
       setRunning(ps)
       setError(null)
+      await refreshIntegrations(tagsList.map((tag) => tag.name))
     } catch (e) {
       setError(e instanceof Error ? e.message : t('models.fetchFailed'))
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [refreshIntegrations, t])
 
   useEffect(() => {
-    refresh()
-    void refreshContinue()
+    void refresh()
     const id = setInterval(() => {
       void refresh()
-      void refreshContinue()
     }, 8000)
     return () => clearInterval(id)
-  }, [refresh, refreshContinue])
+  }, [refresh])
 
   useEffect(() => {
     api().getModelLoadStatus().then(setModelLoads).catch(() => {})
@@ -125,6 +114,9 @@ export default function Models(): JSX.Element {
 
   const isLoading = (name: string): boolean =>
     modelLoads.some((s) => s.name === name && s.status === 'loading')
+
+  const isRunning = (name: string): boolean =>
+    running.some((r) => r.name === name || r.model === name)
 
   const openLoadDialog = async (model: ModelTag): Promise<void> => {
     setLoadModel(model)
@@ -227,8 +219,9 @@ export default function Models(): JSX.Element {
   }
 
   const handleContinueUpsert = async (name: string): Promise<void> => {
-    const wasPresent = findContinueEntry(continueModels, name) != null
-    setContinueBusy(name)
+    const wasPresent = integrations.continue.byModel[name]?.state === 'current'
+      || integrations.continue.byModel[name]?.state === 'stale'
+    setToolBusy(name)
     setError(null)
     try {
       const entry = await api().upsertContinueModel(name)
@@ -239,29 +232,137 @@ export default function Models(): JSX.Element {
           action: wasPresent ? t('models.continueUpdated') : t('models.continueUploaded')
         })
       )
-      await refreshContinue()
+      await refreshIntegrations(tags.map((tag) => tag.name))
     } catch (e) {
       setError(e instanceof Error ? e.message : t('models.continueWriteFailed'))
     } finally {
-      setContinueBusy(null)
+      setToolBusy(null)
     }
   }
 
   const handleContinueRemove = async (name: string): Promise<void> => {
-    const entry = findContinueEntry(continueModels, name)
-    if (!entry) return
-    if (!confirm(t('models.continueRemoveConfirm', { name: entry.name }))) return
-    setContinueBusy(name)
+    const match = integrations.continue.byModel[name]
+    if (match?.state !== 'current' && match?.state !== 'stale') return
+    if (!confirm(t('models.continueRemoveConfirm', { name: match.displayName ?? name }))) return
+    setToolBusy(name)
     setError(null)
     try {
       await api().removeContinueModel(name)
-      setLoadNotice(t('models.continueRemoved', { name: entry.name }))
-      await refreshContinue()
+      setLoadNotice(t('models.continueRemoved', { name: match.displayName ?? name }))
+      await refreshIntegrations(tags.map((tag) => tag.name))
     } catch (e) {
       setError(e instanceof Error ? e.message : t('models.continueRemoveFailed'))
     } finally {
-      setContinueBusy(null)
+      setToolBusy(null)
     }
+  }
+
+  const handleOpenCodeUpsert = async (name: string): Promise<void> => {
+    const wasPresent = integrations.opencode.byModel[name]?.state === 'current'
+      || integrations.opencode.byModel[name]?.state === 'stale'
+    setToolBusy(name)
+    setError(null)
+    try {
+      const entry = await api().upsertOpenCodeModel(name)
+      setLoadNotice(
+        t('models.opencodeUpserted', {
+          name: entry.name,
+          model: entry.model,
+          action: wasPresent ? t('models.continueUpdated') : t('models.continueUploaded')
+        })
+      )
+      await refreshIntegrations(tags.map((tag) => tag.name))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('models.opencodeWriteFailed'))
+    } finally {
+      setToolBusy(null)
+    }
+  }
+
+  const handleOpenCodeRemove = async (name: string): Promise<void> => {
+    const match = integrations.opencode.byModel[name]
+    if (match?.state !== 'current' && match?.state !== 'stale') return
+    if (!confirm(t('models.opencodeRemoveConfirm', { name: match.displayName ?? name }))) return
+    setToolBusy(name)
+    setError(null)
+    try {
+      await api().removeOpenCodeModel(name)
+      setLoadNotice(t('models.opencodeRemoved', { name: match.displayName ?? name }))
+      await refreshIntegrations(tags.map((tag) => tag.name))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('models.opencodeRemoveFailed'))
+    } finally {
+      setToolBusy(null)
+    }
+  }
+
+  const overflowActions = (name: string): OverflowAction[] => {
+    const continueMatch = integrations.continue.byModel[name]
+    const opencodeMatch = integrations.opencode.byModel[name]
+    const continuePresent = continueMatch?.state === 'current' || continueMatch?.state === 'stale'
+    const opencodePresent = opencodeMatch?.state === 'current' || opencodeMatch?.state === 'stale'
+    const busyHere = toolBusy === name
+    const items: OverflowAction[] = [
+      {
+        id: 'continue-upsert',
+        label: continuePresent ? t('models.updateContinue') : t('models.toContinue'),
+        title: continuePresent ? t('models.updateContinueTitle') : t('models.toContinueTitle'),
+        disabled: busyHere,
+        onClick: () => void handleContinueUpsert(name)
+      }
+    ]
+    if (continuePresent) {
+      items.push({
+        id: 'continue-remove',
+        label: t('models.removeContinue'),
+        title: t('models.removeContinueTitle'),
+        danger: true,
+        disabled: busyHere,
+        onClick: () => void handleContinueRemove(name)
+      })
+    }
+    items.push({
+      id: 'opencode-upsert',
+      label: opencodePresent ? t('models.updateOpenCode') : t('models.toOpenCode'),
+      title: opencodePresent ? t('models.updateOpenCodeTitle') : t('models.toOpenCodeTitle'),
+      disabled: busyHere,
+      onClick: () => void handleOpenCodeUpsert(name)
+    })
+    if (opencodePresent) {
+      items.push({
+        id: 'opencode-remove',
+        label: t('models.removeOpenCode'),
+        title: t('models.removeOpenCodeTitle'),
+        danger: true,
+        disabled: busyHere,
+        onClick: () => void handleOpenCodeRemove(name)
+      })
+    }
+    items.push(
+      {
+        id: 'detail',
+        label: t('models.detail'),
+        separatorBefore: true,
+        onClick: () => void handleShow(name)
+      },
+      {
+        id: 'clone',
+        label: t('models.clone'),
+        onClick: () => {
+          setCloneModal(name)
+          setCloneDest(`${name}-copy`)
+        }
+      },
+      {
+        id: 'delete',
+        label: t('models.delete'),
+        danger: true,
+        disabled: busy === name,
+        separatorBefore: true,
+        onClick: () => void handleDelete(name)
+      }
+    )
+    return items
   }
 
   const pullPercent =
@@ -365,10 +466,19 @@ export default function Models(): JSX.Element {
         <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
           {t('models.localModels')}
         </h2>
-        {continuePath && (
-          <p className="metric-label" style={{ margin: '0 0 12px' }}>
-            {t('models.continuePath')} <span className="mono">{continuePath}</span>
-          </p>
+        {(integrations.continue.path || integrations.opencode.path) && (
+          <div className="model-paths">
+            {integrations.continue.path && (
+              <p className="metric-label" style={{ margin: 0 }}>
+                {t('models.continuePath')} <span className="mono">{integrations.continue.path}</span>
+              </p>
+            )}
+            {integrations.opencode.path && (
+              <p className="metric-label" style={{ margin: 0 }}>
+                {t('models.opencodePath')} <span className="mono">{integrations.opencode.path}</span>
+              </p>
+            )}
+          </div>
         )}
         {loading ? (
           <p className="empty-state">{t('models.loading')}</p>
@@ -381,127 +491,53 @@ export default function Models(): JSX.Element {
                 <th>{t('models.colName')}</th>
                 <th>{t('models.colSize')}</th>
                 <th>{t('models.colStatus')}</th>
-                <th>{t('models.colContinue')}</th>
-                <th>{t('models.colActions')}</th>
+                <th>{t('models.colTools')}</th>
+                <th className="table-actions">{t('models.colActions')}</th>
               </tr>
             </thead>
             <tbody>
-              {tags.map((m) => {
-                const continueEntry = findContinueEntry(continueModels, m.name)
-                const continueBusyHere = continueBusy === m.name
-                return (
-                  <tr key={m.digest}>
-                    <td className="mono">{m.name}</td>
-                    <td>{formatSize(m.size)}</td>
-                    <td>
-                      {isLoading(m.name)
-                        ? t('models.statusLoading')
-                        : running.some((r) => r.name === m.name || r.model === m.name)
-                          ? t('models.statusLoaded')
-                          : '—'}
-                    </td>
-                    <td>
-                      {continueEntry ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span
-                            className="status-badge status-running"
-                            title={[
-                              continueEntry.name,
-                              continueEntry.apiBase,
-                              continueEntry.contextLength
-                                ? `ctx ${continueEntry.contextLength}`
-                                : null
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          >
-                            <span className="status-dot" />
-                            {t('models.inContinue')}
-                          </span>
-                          <span className="metric-label" style={{ margin: 0 }}>
-                            {continueEntry.name}
-                            {continueEntry.contextLength
-                              ? ` · ctx ${continueEntry.contextLength}`
-                              : ''}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="status-badge">
-                          <span className="status-dot" />
-                          {t('models.notInContinue')}
-                        </span>
+              {tags.map((m) => (
+                <tr key={m.digest}>
+                  <td className="mono">{m.name}</td>
+                  <td>{formatSize(m.size)}</td>
+                  <td>
+                    {isLoading(m.name)
+                      ? t('models.statusLoading')
+                      : isRunning(m.name)
+                        ? t('models.statusLoaded')
+                        : '—'}
+                  </td>
+                  <td>
+                    <ToolConfigIndicators
+                      continueMatch={integrations.continue.byModel[m.name]}
+                      opencodeMatch={integrations.opencode.byModel[m.name]}
+                    />
+                  </td>
+                  <td className="table-actions">
+                    <div className="btn-row" style={{ justifyContent: 'flex-end' }}>
+                      {!isRunning(m.name) && (
+                        <button
+                          className="btn btn-primary"
+                          disabled={busy === m.name || isLoading(m.name)}
+                          onClick={() => void openLoadDialog(m)}
+                        >
+                          {isLoading(m.name) ? t('models.statusLoading') : t('models.load')}
+                        </button>
                       )}
-                    </td>
-                    <td>
-                      <div className="btn-row">
-                        {!running.some((r) => r.name === m.name || r.model === m.name) && (
-                          <button
-                            className="btn btn-primary"
-                            disabled={busy === m.name || isLoading(m.name)}
-                            onClick={() => void openLoadDialog(m)}
-                          >
-                            {isLoading(m.name) ? t('models.statusLoading') : t('models.load')}
-                          </button>
-                        )}
-                        {running.some((r) => r.name === m.name || r.model === m.name) && (
-                          <button
-                            className="btn"
-                            disabled={busy === m.name}
-                            onClick={() => handleUnload(m.name)}
-                          >
-                            {t('models.unload')}
-                          </button>
-                        )}
+                      {isRunning(m.name) && (
                         <button
                           className="btn"
-                          disabled={continueBusyHere}
-                          title={
-                            continueEntry
-                              ? t('models.updateContinueTitle')
-                              : t('models.toContinueTitle')
-                          }
-                          onClick={() => void handleContinueUpsert(m.name)}
-                        >
-                          {continueBusyHere
-                            ? '…'
-                            : continueEntry
-                              ? t('models.updateContinue')
-                              : t('models.toContinue')}
-                        </button>
-                        {continueEntry && (
-                          <button
-                            className="btn btn-danger"
-                            disabled={continueBusyHere}
-                            title={t('models.removeContinueTitle')}
-                            onClick={() => void handleContinueRemove(m.name)}
-                          >
-                            {t('models.removeContinue')}
-                          </button>
-                        )}
-                        <button className="btn" onClick={() => handleShow(m.name)}>
-                          {t('models.detail')}
-                        </button>
-                        <button
-                          className="btn"
-                          onClick={() => {
-                            setCloneModal(m.name)
-                            setCloneDest(`${m.name}-copy`)
-                          }}
-                        >
-                          {t('models.clone')}
-                        </button>
-                        <button
-                          className="btn btn-danger"
                           disabled={busy === m.name}
-                          onClick={() => handleDelete(m.name)}
+                          onClick={() => handleUnload(m.name)}
                         >
-                          {t('models.delete')}
+                          {t('models.unload')}
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
+                      )}
+                      <ModelOverflowMenu modelName={m.name} actions={overflowActions(m.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
@@ -529,6 +565,9 @@ export default function Models(): JSX.Element {
         <div className="modal-backdrop" onClick={() => setShowModal(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{t('models.detailTitle', { name: showModal.name })}</h3>
+            <p className="field-help" style={{ marginBottom: 10 }}>
+              {t('models.detailNote')}
+            </p>
             <pre className="mono" style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
               {showModal.data.parameters ?? showModal.data.modelfile ?? JSON.stringify(showModal.data, null, 2)}
             </pre>

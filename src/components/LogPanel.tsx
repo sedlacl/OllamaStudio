@@ -62,7 +62,6 @@ export default function LogPanel({
     { id: 'request', label: t('logPanel.requests') }
   ]
 
-  const panelHeight = fill ? undefined : maxHeight ?? (compact ? 220 : 420)
   const wrapClass = ['log-panel-wrap', compact ? 'compact' : '', fill ? 'fill' : '']
     .filter(Boolean)
     .join(' ')
@@ -104,7 +103,7 @@ export default function LogPanel({
       <div
         className="log-panel"
         ref={panelRef}
-        style={!fill && panelHeight ? { height: panelHeight } : undefined}
+        style={!fill && maxHeight != null ? { height: maxHeight } : undefined}
       >
         {filtered.length === 0 ? (
           <div className="empty-state">

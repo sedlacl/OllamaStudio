@@ -32,6 +32,11 @@ import {
   removeContinueModel,
   upsertContinueModel
 } from '../ollama/continue-config'
+import { getIntegrationsStatus } from '../ollama/integrations-status'
+import {
+  removeOpenCodeModel,
+  upsertOpenCodeModel
+} from '../ollama/opencode-config'
 import { killOllamaRelatedProcess } from '../ollama/kill-process'
 import {
   deletePreset,
@@ -341,6 +346,11 @@ function registerIpc(): void {
   ipcMain.handle('continue-status', () => getContinueConfigStatus())
   ipcMain.handle('continue-upsert-model', (_e, modelName: string) => upsertContinueModel(modelName))
   ipcMain.handle('continue-remove-model', (_e, modelName: string) => removeContinueModel(modelName))
+  ipcMain.handle('integrations-status', (_e, modelNames?: string[]) =>
+    getIntegrationsStatus(Array.isArray(modelNames) ? modelNames : [])
+  )
+  ipcMain.handle('opencode-upsert-model', (_e, modelName: string) => upsertOpenCodeModel(modelName))
+  ipcMain.handle('opencode-remove-model', (_e, modelName: string) => removeOpenCodeModel(modelName))
 }
 
 app.whenReady().then(async () => {

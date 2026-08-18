@@ -67,15 +67,34 @@ function configuredContext(serverConfig: AppConfig | null): number | null {
   return numericValue(serverConfig?.ollamaEnv.OLLAMA_CONTEXT_LENGTH)
 }
 
-function initialForm(modelInfo: ModelShow | null, serverConfig: AppConfig | null): LoadForm {
+function parseModelfileParam(parameters: string | undefined, key: string): number | null {
+  if (!parameters) return null
+  const match = parameters.match(new RegExp(`(?:^|\\n)\\s*${key}\\s+(\\S+)`, 'i'))
+  return match ? numericValue(match[1]) : null
+}
+
+function initialTtl(serverConfig: AppConfig | null): string {
+  const fromServer = serverConfig?.ollamaEnv.OLLAMA_KEEP_ALIVE?.trim()
+  return fromServer || '30m'
+}
+
+function effectiveNumCtx(modelInfo: ModelShow | null, serverConfig: AppConfig | null): number | null {
   const limit = contextLimit(modelInfo)
-  const configured = configuredContext(serverConfig)
-  const context = configured ?? limit
+  const preferred =
+    parseModelfileParam(modelInfo?.parameters, 'num_ctx') ??
+    configuredContext(serverConfig) ??
+    limit
+  if (preferred === null) return null
+  return limit !== null ? Math.min(preferred, limit) : preferred
+}
+
+function initialForm(modelInfo: ModelShow | null, serverConfig: AppConfig | null): LoadForm {
+  const context = effectiveNumCtx(modelInfo, serverConfig)
 
   return {
     keepInMemory: true,
-    ttl: '30m',
-    numCtx: context !== null ? String(limit !== null ? Math.min(context, limit) : context) : '',
+    ttl: initialTtl(serverConfig),
+    numCtx: context !== null ? String(context) : '',
     numBatch: '',
     numGpu: '-1',
     numThread: '',
@@ -105,7 +124,10 @@ export default function LoadModelDialog({
   const [form, setForm] = useState<LoadForm>(() => initialForm(modelInfo, serverConfig))
   const [validationError, setValidationError] = useState<string | null>(null)
   const maxContext = contextLimit(modelInfo)
+  const serverCtx = configuredContext(serverConfig)
+  const modelfileCtx = parseModelfileParam(modelInfo?.parameters, 'num_ctx')
   const serverEnv = serverConfig?.ollamaEnv
+  const keepAliveSent = form.keepInMemory ? '-1' : form.ttl.trim() || '—'
 
   useEffect(() => {
     if (modelInfo || serverConfig) {
@@ -115,10 +137,14 @@ export default function LoadModelDialog({
 
   const modelMeta = useMemo(() => {
     const details = model.details
-    return [details?.parameter_size, details?.quantization_level, formatSize(model.size)]
+    return [
+      details?.parameter_size,
+      details?.quantization_level,
+      `${formatSize(model.size)} ${t('loadDialog.onDisk')}`
+    ]
       .filter(Boolean)
       .join(' · ')
-  }, [model])
+  }, [model, t])
 
   const update = <K extends keyof LoadForm>(key: K, value: LoadForm[K]): void => {
     setForm((current) => ({ ...current, [key]: value }))
@@ -225,6 +251,7 @@ export default function LoadModelDialog({
               <strong>{model.name}</strong>
               {modelMeta && <span>{modelMeta}</span>}
             </div>
+            <span className="field-help">{t('loadDialog.modelMetaHelp')}</span>
           </div>
 
           <div className="form-field">
@@ -236,40 +263,80 @@ export default function LoadModelDialog({
           <div className="load-section">
             <div className="load-section-heading">{t('loadDialog.sectionLoad')}</div>
 
+            <p className="load-subsection-label">{t('loadDialog.keepAliveMode')}</p>
+
             <div className="load-setting-row">
               <div>
-                <label htmlFor="model-auto-unload">{t('loadDialog.autoUnload')}</label>
-                <span className="field-help">
-                  {t('loadDialog.autoUnloadHelp')}
-                </span>
+                <label htmlFor="model-keep-forever">{t('loadDialog.keepForever')}</label>
+                <span className="field-help">{t('loadDialog.keepForeverHelp')}</span>
               </div>
               <input
-                id="model-auto-unload"
-                type="checkbox"
-                checked={!form.keepInMemory}
-                onChange={(event) => update('keepInMemory', !event.target.checked)}
+                id="model-keep-forever"
+                type="radio"
+                name="keep-alive-mode"
+                checked={form.keepInMemory}
+                onChange={() => update('keepInMemory', true)}
               />
             </div>
 
             <div className="load-setting-row">
-              <label htmlFor="model-ttl">{t('loadDialog.ttl')}</label>
+              <div>
+                <label htmlFor="model-auto-unload">{t('loadDialog.autoUnload')}</label>
+                <span className="field-help">{t('loadDialog.autoUnloadHelp')}</span>
+              </div>
               <input
-                id="model-ttl"
-                value={form.ttl}
-                disabled={form.keepInMemory}
-                onChange={(event) => update('ttl', event.target.value)}
-                placeholder={t('loadDialog.ttlPlaceholder')}
+                id="model-auto-unload"
+                type="radio"
+                name="keep-alive-mode"
+                checked={!form.keepInMemory}
+                onChange={() => update('keepInMemory', false)}
               />
             </div>
+
+            <div className="load-setting-row">
+              <div>
+                <label htmlFor="model-ttl">{t('loadDialog.ttl')}</label>
+                <span className="field-help">
+                  {form.keepInMemory
+                    ? t('loadDialog.ttlInactive')
+                    : t('loadDialog.autoUnloadHelp')}
+                </span>
+              </div>
+              {form.keepInMemory ? (
+                <span className="setting-readonly">{t('loadDialog.ttlInactive')}</span>
+              ) : (
+                <input
+                  id="model-ttl"
+                  value={form.ttl}
+                  onChange={(event) => update('ttl', event.target.value)}
+                  placeholder={t('loadDialog.ttlPlaceholder')}
+                />
+              )}
+            </div>
+
+            <p className="field-help load-will-send">
+              {t('loadDialog.keepAliveWillSend', { value: keepAliveSent })}
+            </p>
 
             <div className="load-setting-row">
               <div>
                 <label htmlFor="model-context">{t('loadDialog.contextLength')}</label>
-                <span className="field-help">
-                  {maxContext !== null
-                    ? t('loadDialog.contextMax', { max: formatNumber(maxContext) })
-                    : t('loadDialog.contextHelp')}
-                </span>
+                <span className="field-help">{t('loadDialog.contextHelp')}</span>
+                {maxContext !== null && (
+                  <span className="field-help">
+                    {t('loadDialog.contextMax', { max: formatNumber(maxContext) })}
+                  </span>
+                )}
+                {modelfileCtx !== null && (
+                  <span className="field-help">
+                    {t('loadDialog.contextModelfile', { value: formatNumber(modelfileCtx) })}
+                  </span>
+                )}
+                {serverCtx !== null && (
+                  <span className="field-help">
+                    {t('loadDialog.contextServer', { value: formatNumber(serverCtx) })}
+                  </span>
+                )}
               </div>
               <input
                 id="model-context"
@@ -339,6 +406,14 @@ export default function LoadModelDialog({
             <SettingStatus label={t('loadDialog.unifiedKv')} value={serverEnv?.OLLAMA_KV_CACHE_TYPE} />
             <SettingStatus label={t('loadDialog.contextCheckpoints')} value={serverEnv?.LLAMA_ARG_CTX_CHECKPOINTS} />
             <SettingStatus label={t('loadDialog.flashAttention')} value={serverEnv?.OLLAMA_FLASH_ATTENTION} />
+            <SettingStatus
+              label={t('loadDialog.serverKeepAlive')}
+              value={serverEnv?.OLLAMA_KEEP_ALIVE}
+            />
+            <SettingStatus
+              label={t('loadDialog.serverContextLength')}
+              value={serverEnv?.OLLAMA_CONTEXT_LENGTH}
+            />
             <p className="field-help load-section-note">{t('loadDialog.serverNote')}</p>
           </div>
 
@@ -400,21 +475,6 @@ export default function LoadModelDialog({
             <SettingStatus label={t('loadDialog.seed')} value={t('loadDialog.seedValue')} />
             <SettingStatus label={t('loadDialog.speculative')} value={t('loadDialog.speculativeValue')} />
             <SettingStatus label={t('loadDialog.chatTemplate')} value={t('loadDialog.chatTemplateValue')} />
-          </div>
-
-          <div className="load-setting-row load-keep-row">
-            <div>
-              <label htmlFor="model-keep-memory">{t('loadDialog.keepInMemory')}</label>
-              <span className="field-help">
-                {t('loadDialog.keepInMemoryHelp')}
-              </span>
-            </div>
-            <input
-              id="model-keep-memory"
-              type="checkbox"
-              checked={form.keepInMemory}
-              onChange={(event) => update('keepInMemory', event.target.checked)}
-            />
           </div>
 
           {(validationError || error) && <div className="alert alert-error">{validationError ?? error}</div>}

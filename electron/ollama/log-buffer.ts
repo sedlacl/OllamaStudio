@@ -10,10 +10,10 @@ export type ActiveRequestPhase =
   | 'unknown'
 
 /** Outcome retained in request history (never invent success for stale tasks). */
-export type RequestHistoryResult = 'done' | 'stale'
+export type RequestHistoryResult = 'done' | 'stale' | 'error'
 
-/** Which API surface produced the task, when the runner logged it. */
-export type RequestKind = 'chat' | 'generate' | 'embed'
+/** Runner API surface, or an app-managed action such as model load. */
+export type RequestKind = 'chat' | 'generate' | 'embed' | 'load'
 
 export interface ParsedLogEvent {
   durationMs?: number
@@ -44,8 +44,10 @@ export interface ParsedLogEvent {
 export interface ActiveRequest {
   taskId: number
   slotId: number | null
-  /** chat/generate/embed when the runner logged it before the task launched. */
+  /** chat/generate/embed from runner logs, or load from the app. */
   kind: RequestKind | null
+  /** Model name when known (app-managed load). */
+  model: string | null
   phase: ActiveRequestPhase
   /** 0–100 when known from logs; null when absent (do not invent). */
   progressPercent: number | null
@@ -60,6 +62,8 @@ export interface ActiveRequest {
   updatedAt: number
   status: 'active' | 'completed'
   completionReason: string | null
+  /** App-initiated (model load); not derived from runner slot logs. */
+  managed?: boolean
 }
 
 /** Completed/stale task snapshot for dashboard history (max 10, newest first). */
@@ -67,6 +71,7 @@ export interface RequestHistoryItem {
   taskId: number
   slotId: number | null
   kind: RequestKind | null
+  model: string | null
   phase: ActiveRequestPhase | null
   result: RequestHistoryResult
   completionReason: string | null
@@ -160,6 +165,8 @@ export class LogBuffer {
   private requestHistory: RequestHistoryItem[] = []
   /** Last runner request kind seen, waiting for the slot launch that follows it. */
   private pendingRequestKind: { kind: RequestKind; at: number } | null = null
+  /** Negative ids so they never collide with Ollama runner task ids (or task -1). */
+  private nextManagedTaskId = -2
   private readonly nowFn: () => number
   private readonly maxHistory: number
 
@@ -221,6 +228,12 @@ export class LogBuffer {
 
   getActiveRequests(): ActiveRequest[] {
     this.syncActiveRequestsFromEntries()
+    const now = this.now()
+    for (const req of this.activeRequests.values()) {
+      if (req.managed && req.status === 'active') {
+        req.elapsedSeconds = (now - req.firstSeenAt) / 1000
+      }
+    }
     return [...this.activeRequests.values()].sort((a, b) => {
       if (a.status !== b.status) return a.status === 'active' ? -1 : 1
       return b.updatedAt - a.updatedAt
@@ -242,6 +255,7 @@ export class LogBuffer {
     this.activeRequests.clear()
     this.requestHistory = []
     this.pendingRequestKind = null
+    this.nextManagedTaskId = -2
   }
 
   private createEntry(stream: 'stdout' | 'stderr', line: string): LogEntry {
@@ -322,6 +336,13 @@ export class LogBuffer {
       if (current && current.kind == null && prev.kind != null) {
         current.kind = prev.kind
       }
+      if (current && current.model == null && prev.model != null) {
+        current.model = prev.model
+      }
+      // App-managed loads have no runner slot lines — keep them across replay.
+      if (!current && prev.managed) {
+        this.activeRequests.set(taskId, prev)
+      }
     }
 
     // Active tasks that fell out of the replay window were never completed → stale.
@@ -352,6 +373,7 @@ export class LogBuffer {
       taskId: p.taskId,
       slotId: p.slotId ?? null,
       kind: this.takePendingRequestKind(now),
+      model: null,
       phase: p.phase ?? 'unknown',
       progressPercent: null,
       nTokens: null,
@@ -447,6 +469,7 @@ export class LogBuffer {
         continue
       }
       if (req.status === 'active' && now - req.updatedAt > STALE_ACTIVE_MS) {
+        if (req.managed) continue
         this.archiveRequest(req, 'stale', now, req.completionReason)
         this.activeRequests.delete(taskId)
       }
@@ -469,7 +492,8 @@ export class LogBuffer {
       taskId: req.taskId,
       slotId: req.slotId,
       kind: req.kind,
-      phase: result === 'done' ? 'done' : req.phase === 'done' ? null : req.phase,
+      model: req.model,
+      phase: result === 'done' || result === 'error' ? 'done' : req.phase === 'done' ? null : req.phase,
       result,
       completionReason,
       progressPercent,
@@ -521,10 +545,61 @@ export class LogBuffer {
     }
     return -1
   }
+
+  /**
+   * Record an app-initiated action (model load) that has no runner slot task id.
+   * Returns the synthetic task id used in active/history lists.
+   */
+  startManagedRequest(kind: RequestKind, model: string): number {
+    const now = this.now()
+    const taskId = this.nextManagedTaskId
+    this.nextManagedTaskId -= 1
+    if (this.nextManagedTaskId === -1) this.nextManagedTaskId = -2
+    const req: ActiveRequest = {
+      taskId,
+      slotId: null,
+      kind,
+      model,
+      phase: 'unknown',
+      progressPercent: null,
+      nTokens: null,
+      promptTokens: null,
+      generationTokens: null,
+      elapsedSeconds: 0,
+      tokensPerSec: null,
+      promptTokensPerSec: null,
+      generationTokensPerSec: null,
+      firstSeenAt: now,
+      updatedAt: now,
+      status: 'active',
+      completionReason: null,
+      managed: true
+    }
+    this.activeRequests.set(taskId, req)
+    return taskId
+  }
+
+  finishManagedRequest(
+    taskId: number,
+    result: Extract<RequestHistoryResult, 'done' | 'error'>,
+    error?: string
+  ): void {
+    const req = this.activeRequests.get(taskId)
+    if (!req?.managed) return
+    const now = this.now()
+    req.status = 'completed'
+    req.phase = 'done'
+    req.progressPercent = result === 'done' ? 100 : req.progressPercent
+    req.elapsedSeconds = (now - req.firstSeenAt) / 1000
+    req.completionReason = error?.trim() ? error : result === 'done' ? null : req.completionReason
+    req.updatedAt = now
+    this.archiveRequest(req, result, now, req.completionReason)
+  }
 }
 
 /** True when logs showed real inference work (not cache/operator-only blips). */
 function isMeaningfulRequest(req: ActiveRequest): boolean {
+  if (req.managed) return true
   if (req.phase === 'prompt_processing' || req.phase === 'generation') return true
   if (req.progressPercent != null && req.progressPercent > 0) return true
   if (req.promptTokens != null || req.generationTokens != null) return true
@@ -538,6 +613,7 @@ function mergeHistoryItem(prev: RequestHistoryItem, next: RequestHistoryItem): R
     taskId: next.taskId,
     slotId: next.slotId ?? prev.slotId,
     kind: next.kind ?? prev.kind,
+    model: next.model ?? prev.model,
     phase: next.phase ?? prev.phase,
     result: next.result === 'done' || prev.result === 'done' ? 'done' : next.result,
     completionReason: next.completionReason ?? prev.completionReason,
