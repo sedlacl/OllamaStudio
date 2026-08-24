@@ -6,9 +6,21 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-08-24
+
+### Added
+
+- Test rychlosti u modelu změří TTFT a rychlost generování v tokenech za sekundu pomocí krátkého „Hello world“ promptu
+
 ### Changed
 
 - GitHub Actions release workflow používá checkout/setup-node v5, action-gh-release v3 a Node 22 (konec deprecation Node 20)
+
+## [1.2.4] — 2026-08-24
+
+### Fixed
+
+- Po Stop debug / násilném ukončení aplikace už nezůstávají viset procesy llama-server: `ollama serve` běží v process-tree Electronu (Windows Job Object `KILL_ON_JOB_CLOSE`)
 
 ## [1.2.3] — 2026-08-18
 

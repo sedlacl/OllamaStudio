@@ -10,6 +10,7 @@ export interface Api {
   modelShow: (name: string) => Promise<unknown>
   modelLoad: (name: string, options?: unknown) => Promise<{ ok: boolean; error?: string }>
   modelUnload: (name: string) => Promise<void>
+  modelTestSpeed: (name: string) => Promise<unknown>
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
@@ -52,6 +53,7 @@ const api: Api = {
   modelShow: (name) => ipcRenderer.invoke('model-show', name),
   modelLoad: (name, options) => ipcRenderer.invoke('model-load', name, options),
   modelUnload: (name) => ipcRenderer.invoke('model-unload', name),
+  modelTestSpeed: (name) => ipcRenderer.invoke('model-test-speed', name),
   modelDelete: (name) => ipcRenderer.invoke('model-delete', name),
   modelCopy: (source, destination) => ipcRenderer.invoke('model-copy', source, destination),
   modelPull: (name) => ipcRenderer.invoke('model-pull', name),

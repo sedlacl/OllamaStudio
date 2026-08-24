@@ -62,6 +62,18 @@ export interface ModelLoadOptions {
   ropeFrequencyScale?: number
 }
 
+export interface ModelSpeedTestResult {
+  model: string
+  prompt: string
+  response: string
+  ttftMs: number
+  tokensPerSecond: number
+  generatedTokens: number
+  totalMs: number
+  loadMs: number
+  promptTokens: number
+}
+
 export type ServeConnectionStatus = 'connected' | 'disconnected' | 'starting' | 'error'
 
 /**
@@ -241,6 +253,84 @@ export class OllamaClient {
       signal: AbortSignal.timeout(60000)
     })
     if (!res.ok) throw await httpError(res)
+  }
+
+  async testSpeed(name: string): Promise<ModelSpeedTestResult> {
+    const prompt = 'Hello world! Reply with a short greeting and one sentence about yourself.'
+    const startedAt = performance.now()
+    const res = await fetch(`${this.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: name,
+        prompt,
+        stream: true,
+        options: { num_predict: 96 }
+      }),
+      signal: AbortSignal.timeout(300000)
+    })
+    if (!res.ok) throw await httpError(res)
+
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('No response body')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let response = ''
+    let firstTokenAt: number | null = null
+    let final: {
+      eval_count?: number
+      eval_duration?: number
+      load_duration?: number
+      prompt_eval_count?: number
+    } = {}
+
+    const consumeLine = (line: string): void => {
+      if (!line.trim()) return
+      const chunk = JSON.parse(line) as {
+        response?: string
+        error?: string
+        done?: boolean
+        eval_count?: number
+        eval_duration?: number
+        load_duration?: number
+        prompt_eval_count?: number
+      }
+      if (chunk.error) throw new Error(chunk.error)
+      if (chunk.response) {
+        if (firstTokenAt === null) firstTokenAt = performance.now()
+        response += chunk.response
+      }
+      if (chunk.done) final = chunk
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) consumeLine(line)
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) consumeLine(buffer)
+
+    const finishedAt = performance.now()
+    const generatedTokens = final.eval_count ?? 0
+    const evalSeconds = (final.eval_duration ?? 0) / 1e9
+    const tokensPerSecond = evalSeconds > 0 ? generatedTokens / evalSeconds : 0
+
+    return {
+      model: name,
+      prompt,
+      response: response.trim(),
+      ttftMs: Math.max(0, (firstTokenAt ?? finishedAt) - startedAt),
+      tokensPerSecond,
+      generatedTokens,
+      totalMs: finishedAt - startedAt,
+      loadMs: (final.load_duration ?? 0) / 1e6,
+      promptTokens: final.prompt_eval_count ?? 0
+    }
   }
 
   async delete(name: string): Promise<void> {

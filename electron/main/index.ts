@@ -259,6 +259,7 @@ function registerIpc(): void {
     removeLoadOptions(name)
     clearModelLoadState(name)
   })
+  ipcMain.handle('model-test-speed', (_e, name: string) => ollamaClient.testSpeed(name))
   ipcMain.handle('model-delete', async (_e, name: string) => {
     await ollamaClient.delete(name)
     removeLoadOptions(name)
@@ -385,9 +386,16 @@ app.on('window-all-closed', () => {
   /* keep running in tray */
 })
 
-app.on('before-quit', async () => {
+let quittingAfterShutdown = false
+
+app.on('before-quit', (event) => {
   app.isQuitting = true
-  await serveManager.shutdown()
+  if (quittingAfterShutdown) return
+  event.preventDefault()
+  quittingAfterShutdown = true
+  void serveManager.shutdown().finally(() => {
+    app.quit()
+  })
 })
 
 declare module 'electron' {

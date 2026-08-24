@@ -37,6 +37,18 @@ export interface ModelLoadOptions {
   ropeFrequencyScale?: number
 }
 
+export interface ModelSpeedTestResult {
+  model: string
+  prompt: string
+  response: string
+  ttftMs: number
+  tokensPerSecond: number
+  generatedTokens: number
+  totalMs: number
+  loadMs: number
+  promptTokens: number
+}
+
 export interface ServeState {
   status: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
   pid: number | null
@@ -329,6 +341,7 @@ export interface Api {
   modelShow: (name: string) => Promise<ModelShow>
   modelLoad: (name: string, options?: ModelLoadOptions) => Promise<ModelLoadResult>
   modelUnload: (name: string) => Promise<void>
+  modelTestSpeed: (name: string) => Promise<ModelSpeedTestResult>
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>

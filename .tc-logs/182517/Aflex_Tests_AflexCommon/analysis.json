@@ -1,0 +1,21 @@
+{
+  "logPath": "R:\\External\\OllamaStudio\\.tc-logs\\182517\\Aflex_Tests_AflexCommon\\tc-build.log",
+  "statusText": "Tests failed: 1 (1 new), passed: 4",
+  "initRoot": "Error: docker exec aflex-kafka1 kafka-get-offsets.sh failed: spawnSync docker ENOENT",
+  "failures": [
+    {
+      "scenario": "deleteSubjects",
+      "dataFlow": "",
+      "tryLog": "/scripts/testLog/00-group.05.deleteSubjects.js.try_2.log",
+      "type": "INIT_CRASH",
+      "status": "NO_RESULT",
+      "excerpt": [
+        "Error: docker exec aflex-kafka1 kafka-get-offsets.sh failed: spawnSync docker ENOENT"
+      ]
+    }
+  ],
+  "failureCount": 1,
+  "categories": {
+    "INIT_CRASH": 1
+  }
+}

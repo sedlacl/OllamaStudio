@@ -1,0 +1,9 @@
+{
+  "buildId": "182516",
+  "buildTypeId": "Aflex_Tests_AflexCommon",
+  "buildTypeName": "aflexCommon",
+  "status": "FAILURE",
+  "statusText": "Tests failed: 1 (1 new), passed: 4",
+  "logPath": "R:\\External\\OllamaStudio\\.tc-logs\\182517\\Aflex_Tests_AflexCommon\\tc-build.log",
+  "artifactPaths": []
+}

@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'child_process'
+import { execFile, type ChildProcess } from 'child_process'
 import { createWriteStream, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import net from 'net'
@@ -14,6 +14,11 @@ import {
 } from './config'
 import { logBuffer } from './log-buffer'
 import { ollamaClient } from './client'
+import {
+  attachServeProcessTree,
+  spawnOllamaServe,
+  type ServeProcessTree
+} from './process-tree'
 
 const execFileAsync = promisify(execFile)
 
@@ -32,6 +37,7 @@ type StatusListener = (state: ServeState) => void
 
 export class ServeManager {
   private process: ChildProcess | null = null
+  private processTree: ServeProcessTree | null = null
   private state: ServeState = {
     status: 'stopped',
     pid: null,
@@ -151,13 +157,11 @@ export class ServeManager {
     const env = buildSpawnEnv(config)
 
     try {
-      this.process = spawn(binary, ['serve'], {
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
-      })
+      this.process = spawnOllamaServe(binary, env)
 
       const pid = this.process.pid ?? null
+      this.processTree?.dispose()
+      this.processTree = pid ? attachServeProcessTree(pid) : null
       this.setState({ pid, spawnTime: Date.now() })
 
       this.process.stdout?.on('data', (chunk: Buffer) => {
@@ -175,6 +179,7 @@ export class ServeManager {
           pid: null,
           spawnTime: null
         })
+        this.disposeProcessTree()
         this.process = null
       })
 
@@ -195,6 +200,7 @@ export class ServeManager {
         } else {
           this.setState({ status: 'stopped', pid: null, spawnTime: null, error: null })
         }
+        this.disposeProcessTree()
         this.process = null
       })
 
@@ -214,6 +220,7 @@ export class ServeManager {
 
   async stop(): Promise<void> {
     if (!this.process) {
+      this.disposeProcessTree()
       this.setState({ status: 'stopped', pid: null, spawnTime: null })
       return
     }
@@ -253,6 +260,7 @@ export class ServeManager {
   private async killProcess(): Promise<void> {
     const proc = this.process
     if (!proc || proc.killed) {
+      this.disposeProcessTree()
       this.process = null
       return
     }
@@ -289,7 +297,13 @@ export class ServeManager {
       })
     })
 
+    this.disposeProcessTree()
     this.process = null
+  }
+
+  private disposeProcessTree(): void {
+    this.processTree?.dispose()
+    this.processTree = null
   }
 
   private async tryKillConflictingProcesses(): Promise<void> {
