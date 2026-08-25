@@ -4,6 +4,7 @@ import ModelSplitTable from '../components/ModelSplitTable'
 import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
+  type GpuAdapterInfo,
   type GpuMemorySource,
   type GpuProcessInfo,
   type ResourceUsageData
@@ -20,25 +21,68 @@ function formatBytes(bytes: number): string {
   return formatMb(bytes / (1024 * 1024))
 }
 
+/** Procesy bez přiřazené karty (zdroj GPU nerozlišuje) mají vlastní sloupec. */
+const UNKNOWN_ADAPTER = '\u0000unknown'
+
+interface ProcessRow {
+  pid: number
+  processName: string
+  source: GpuMemorySource | null
+  /** VRAM podle klíče adaptéru */
+  memByAdapter: Record<string, number>
+  total: number
+  /** true, když žádný zdroj hodnotu nevrátil (ne že by byla nula) */
+  unknownMemory: boolean
+}
+
+/** Z řádků „proces × adaptér" udělá jeden řádek na proces se sloupcem pro každou kartu. */
+function pivotProcesses(rows: GpuProcessInfo[]): ProcessRow[] {
+  const byPid = new Map<number, ProcessRow>()
+  for (const r of rows) {
+    let row = byPid.get(r.pid)
+    if (!row) {
+      row = {
+        pid: r.pid,
+        processName: r.processName,
+        source: r.source,
+        memByAdapter: {},
+        total: 0,
+        unknownMemory: true
+      }
+      byPid.set(r.pid, row)
+    }
+    if (r.gpuMemoryMb == null) continue
+    const key = r.adapterKey ?? UNKNOWN_ADAPTER
+    row.memByAdapter[key] = (row.memByAdapter[key] ?? 0) + r.gpuMemoryMb
+    row.total += r.gpuMemoryMb
+    row.unknownMemory = false
+    row.source = r.source
+  }
+  return [...byPid.values()]
+}
+
+type SortKey = 'pid' | 'name' | 'total' | string
+
 function ProcessTable({
   rows,
+  adapters,
   emptyLabel,
-  scaleFor,
-  showAdapter,
+  baseFor,
   servePid,
   killingPid,
   onKill
 }: {
   rows: GpuProcessInfo[]
+  adapters: GpuAdapterInfo[]
   emptyLabel: string
-  /** základ pro výpočet podílu — podle GPU, na které řádek leží */
-  scaleFor: (row: GpuProcessInfo) => number | null
-  showAdapter: boolean
+  /** základ pro proužek podílu na daném adaptéru */
+  baseFor: (adapterKey: string) => number | null
   servePid?: number | null
   killingPid?: number | null
   onKill?: (pid: number, processName: string) => void
 }): JSX.Element {
   const { t, formatTinyShare } = useI18n()
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'total', desc: true })
 
   const sourceLabel = (source: GpuMemorySource | null): string => {
     const map: Record<GpuMemorySource, string> = {
@@ -49,8 +93,8 @@ function ProcessTable({
     return source ? map[source] : t('resources.unavailable')
   }
 
-  const formatGpuMemory = (mb: number | null): string => {
-    if (mb == null) return t('resources.unavailable')
+  const formatGpuMemory = (mb: number | undefined): string => {
+    if (mb == null) return '—'
     if (mb > 0 && mb < 1) return '<1 MB'
     return formatMb(mb)
   }
@@ -63,31 +107,90 @@ function ProcessTable({
     )
   }
 
+  const processRows = pivotProcesses(rows)
+  const usedKeys = new Set(processRows.flatMap((r) => Object.keys(r.memByAdapter)))
+  const columns = [
+    ...adapters.filter((a) => usedKeys.has(a.key)).map((a) => ({ key: a.key, name: a.name })),
+    ...(usedKeys.has(UNKNOWN_ADAPTER)
+      ? [{ key: UNKNOWN_ADAPTER, name: t('resources.unknownAdapter') }]
+      : [])
+  ]
+  // Bez jediné známé hodnoty ať tabulka pořád ukazuje aspoň jeden sloupec paměti
+  const memoryColumns =
+    columns.length > 0 ? columns : [{ key: UNKNOWN_ADAPTER, name: t('resources.colVram') }]
+  const showTotal = memoryColumns.length > 1
   const canKill = typeof onKill === 'function'
+
+  const valueOf = (row: ProcessRow, key: SortKey): number | string => {
+    if (key === 'pid') return row.pid
+    if (key === 'name') return row.processName.toLowerCase()
+    if (key === 'total') return row.total
+    return row.memByAdapter[key] ?? -1
+  }
+
+  const sorted = [...processRows].sort((a, b) => {
+    const av = valueOf(a, sort.key)
+    const bv = valueOf(b, sort.key)
+    let cmp: number
+    if (typeof av === 'string' || typeof bv === 'string') {
+      cmp = String(av).localeCompare(String(bv))
+    } else {
+      cmp = av - bv
+    }
+    if (cmp === 0) cmp = a.pid - b.pid
+    return sort.desc ? -cmp : cmp
+  })
+
+  const toggleSort = (key: SortKey): void => {
+    setSort((current) =>
+      current.key === key
+        ? { key, desc: !current.desc }
+        : // Paměť dává smysl od největší, jméno a PID od začátku
+          { key, desc: key !== 'pid' && key !== 'name' }
+    )
+  }
+
+  const SortableHeader = ({
+    label,
+    sortKey,
+    align
+  }: {
+    label: string
+    sortKey: SortKey
+    align?: 'right'
+  }): JSX.Element => (
+    <th
+      onClick={() => toggleSort(sortKey)}
+      style={{ cursor: 'pointer', userSelect: 'none', textAlign: align }}
+      title={t('resources.sortHint')}
+      aria-sort={sort.key === sortKey ? (sort.desc ? 'descending' : 'ascending') : 'none'}
+    >
+      {label}
+      <span className="metric-label" style={{ margin: '0 0 0 4px' }}>
+        {sort.key === sortKey ? (sort.desc ? '▼' : '▲') : ''}
+      </span>
+    </th>
+  )
 
   return (
     <table className="table">
       <thead>
         <tr>
-          <th>{t('resources.colPid')}</th>
-          <th>{t('resources.colProcess')}</th>
-          {showAdapter && <th>{t('resources.colGpu')}</th>}
-          <th>{t('resources.colVram')}</th>
-          <th style={{ width: '30%' }}>{t('resources.colShare')}</th>
+          <SortableHeader label={t('resources.colPid')} sortKey="pid" />
+          <SortableHeader label={t('resources.colProcess')} sortKey="name" />
+          {memoryColumns.map((c) => (
+            <SortableHeader key={c.key} label={c.name} sortKey={c.key} />
+          ))}
+          {showTotal && <SortableHeader label={t('resources.colTotal')} sortKey="total" />}
           <th>{t('resources.colSource')}</th>
           {canKill && <th aria-label={t('common.actions')} />}
         </tr>
       </thead>
       <tbody>
-        {rows.map((p) => {
-          const scaleMb = scaleFor(p)
-          const share =
-            scaleMb && scaleMb > 0 && p.gpuMemoryMb != null
-              ? (p.gpuMemoryMb / scaleMb) * 100
-              : null
+        {sorted.map((p) => {
           const isServe = servePid != null && p.pid === servePid
           return (
-            <tr key={`${p.pid}-${p.adapterKey ?? 'none'}`}>
+            <tr key={p.pid}>
               <td className="mono">
                 {p.pid}
                 {isServe && (
@@ -97,35 +200,32 @@ function ProcessTable({
                 )}
               </td>
               <td className="mono">{p.processName}</td>
-              {showAdapter && (
-                <td title={p.adapterKey ?? undefined}>
-                  {p.adapterName ?? (
-                    <span className="metric-label" style={{ margin: 0 }}>
-                      {t('resources.unknownAdapter')}
-                    </span>
-                  )}
-                </td>
-              )}
-              <td>{formatGpuMemory(p.gpuMemoryMb)}</td>
-              <td>
-                {share != null ? (
-                  <>
-                    <span className="mono" style={{ fontSize: 12 }}>
-                      {formatTinyShare(share)} %
-                    </span>
-                    <div className="progress-bar" style={{ marginTop: 4 }}>
-                      <div
-                        className="progress-fill"
-                        style={{ width: `${Math.min(100, share)}%` }}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <span className="metric-label" style={{ margin: 0 }}>
-                    —
-                  </span>
-                )}
-              </td>
+              {memoryColumns.map((c) => {
+                const mb = p.memByAdapter[c.key]
+                const base = c.key === UNKNOWN_ADAPTER ? null : baseFor(c.key)
+                const share = mb != null && base && base > 0 ? Math.min(100, (mb / base) * 100) : null
+                return (
+                  <td
+                    key={c.key}
+                    title={
+                      share != null
+                        ? t('resources.shareOfBase', {
+                            share: formatTinyShare(share),
+                            base: formatMb(base as number)
+                          })
+                        : undefined
+                    }
+                  >
+                    {p.unknownMemory ? t('resources.unavailable') : formatGpuMemory(mb)}
+                    {share != null && (
+                      <div className="progress-bar" style={{ marginTop: 4 }}>
+                        <div className="progress-fill" style={{ width: `${share}%` }} />
+                      </div>
+                    )}
+                  </td>
+                )
+              })}
+              {showTotal && <td>{p.unknownMemory ? '—' : formatMb(p.total)}</td>}
               <td className="metric-label" style={{ margin: 0 }}>
                 {sourceLabel(p.source)}
               </td>
@@ -264,13 +364,7 @@ export default function ResourceUsage(): JSX.Element {
     data?.gpuProcesses.filter((p) => !ollamaPids.has(p.pid) && p.pid !== servePid) ?? []
 
   const adapters = data?.adapters ?? []
-  const showAdapterColumn = adapters.length > 1
   const adapterByKey = new Map(adapters.map((a) => [a.key, a]))
-  /** VRAM adaptéru, na kterém proces běží; bez přiřazení padáme na celkovou škálu */
-  const scaleForRow = (row: GpuProcessInfo): number | null => {
-    const adapter = row.adapterKey ? adapterByKey.get(row.adapterKey) : undefined
-    return adapter?.dedicatedTotalMb ?? shareScaleMb
-  }
 
   const adaptersInUse = new Set(
     (data?.gpuProcesses ?? []).filter((p) => p.adapterKey).map((p) => p.adapterKey)
@@ -281,6 +375,20 @@ export default function ResourceUsage(): JSX.Element {
     (data?.gpuProcesses ?? [])
       .filter((p) => p.adapterKey === key)
       .reduce((sum, p) => sum + (p.gpuMemoryMb ?? 0), 0)
+
+  /**
+   * Základ pro podíl procesu: kapacita adaptéru, pokud ji spotřeba nepřekračuje.
+   * Integrovaná grafika hlásí jen symbolickou dedikovanou VRAM (128 MB), ale drží
+   * paměť ve sdílené RAM — pak počítáme podíl z toho, co se na adaptéru používá.
+   */
+  const shareBaseFor = (adapterKey: string): number | null => {
+    const adapter = adapterByKey.get(adapterKey)
+    if (!adapter) return shareScaleMb
+    const capacity = adapter.dedicatedTotalMb ?? 0
+    const inUse = Math.max(adapterProcessSumMb(adapter.key), adapter.dedicatedUsedMb ?? 0)
+    if (capacity > 0 && capacity >= inUse) return capacity
+    return inUse > 0 ? inUse : shareScaleMb
+  }
 
   const modelVramTotal =
     data?.loadedModels.reduce((sum, m) => sum + m.sizeVram, 0) ?? 0
@@ -495,9 +603,9 @@ export default function ResourceUsage(): JSX.Element {
         </h2>
         <ProcessTable
           rows={ollamaGpuProcs}
+          adapters={adapters}
           emptyLabel={t('resources.ollamaEmpty')}
-          scaleFor={scaleForRow}
-          showAdapter={showAdapterColumn}
+          baseFor={shareBaseFor}
           servePid={servePid}
           killingPid={killingPid}
           onKill={(pid, name) => void handleKill(pid, name)}
@@ -516,9 +624,9 @@ export default function ResourceUsage(): JSX.Element {
           </h2>
           <ProcessTable
             rows={otherGpuProcs}
+            adapters={adapters}
             emptyLabel={t('resources.otherEmpty')}
-            scaleFor={scaleForRow}
-            showAdapter={showAdapterColumn}
+            baseFor={shareBaseFor}
           />
         </div>
       )}

@@ -280,7 +280,6 @@ export const en: MessageTree = {
     colPid: 'PID',
     colProcess: 'Process',
     colVram: 'VRAM',
-    colShare: 'Share',
     colSource: 'Source',
     colGpu: 'GPU',
     colDedicatedTotal: 'Dedicated VRAM',
@@ -290,6 +289,9 @@ export const en: MessageTree = {
     colUtilization: 'Utilization',
     unknownAdapter: 'unknown',
     processCountAdapters: '{count} processes across {adapters} adapters · {source}',
+    colTotal: 'Total',
+    sortHint: 'Click to sort by this column',
+    shareOfBase: '{share} % of {base} — the adapter capacity, or its usage on integrated graphics',
     processSumHint:
       'Sum of Local Usage across processes on this adapter. It is usually lower than “Used” — the difference is driver allocations and not-yet-released cache that Windows attributes to no process.',
     adaptersTitle: 'Display adapters',

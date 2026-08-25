@@ -278,7 +278,6 @@ export const cs = {
     colPid: 'PID',
     colProcess: 'Proces',
     colVram: 'VRAM',
-    colShare: 'Podíl',
     colSource: 'Zdroj',
     colGpu: 'GPU',
     colDedicatedTotal: 'Dedikovaná VRAM',
@@ -288,6 +287,9 @@ export const cs = {
     colUtilization: 'Vytížení',
     unknownAdapter: 'neurčeno',
     processCountAdapters: '{count} procesů na {adapters} adaptérech · {source}',
+    colTotal: 'Celkem',
+    sortHint: 'Kliknutím seřadíte podle tohoto sloupce',
+    shareOfBase: '{share} % z {base} — kapacita adaptéru, u integrované grafiky jeho spotřeba',
     processSumHint:
       'Součet Local Usage procesů na tomto adaptéru. Bývá nižší než „Využito“ — rozdíl jsou alokace ovladače a dosud neuvolněná cache, které Windows nepřiřazuje žádnému procesu.',
     adaptersTitle: 'Grafické adaptéry',

@@ -14,7 +14,8 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 - Test rychlosti měří až na načteném modelu po zahřívacím běhu, s unikátním promptem a deterministickým vzorkováním; načtení modelu se do TTFT nezapočítává a nepřepisuje keep_alive ani parametry běžícího runneru
 - Tabulka načtených modelů má sloupce TTFT, Prompt a Odpověď s posledním naměřeným výsledkem; hodnoty přežijí přepnutí stránky a mizí při uvolnění modelu nebo restartu serve
 - Stránka Server hlásí verzi Ollama a upozorní, když je na GitHubu novější vydání (odkaz otevře stránku vydání v prohlížeči)
-- GPU a paměť rozlišuje jednotlivé grafické adaptéry: tabulka adaptérů (dedikovaná VRAM, využití, sdílená paměť, součet procesů, vytížení) a sloupec GPU u procesů, když je adaptérů víc. Na Windows se procesy k adaptéru přiřazují podle LUID z výkonnostních čítačů a jména se berou z DirectX registru, mimo Windows podle UUID karty z nvidia-smi
+- GPU a paměť rozlišuje jednotlivé grafické adaptéry: tabulka adaptérů (dedikovaná VRAM, využití, sdílená paměť, součet procesů, vytížení) a v tabulkách procesů sloupec pro každou kartu se zvlášť vypsanou pamětí. Na Windows se procesy k adaptéru přiřazují podle LUID z výkonnostních čítačů a jména se berou z DirectX registru, mimo Windows podle UUID karty z nvidia-smi
+- Tabulky procesů na stránce GPU a paměť jdou řadit kliknutím na hlavičku sloupce (PID, proces, paměť na konkrétní kartě, celkem)
 
 ### Changed
 
