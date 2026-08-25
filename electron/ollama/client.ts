@@ -152,6 +152,17 @@ function buildRunnerOptions(loadOptions: ModelLoadOptions): Record<string, numbe
   return options
 }
 
+/** Text pro měření promptu — díky `seed` je pokaždé jiný, takže se do něj cache netrefí. */
+function benchmarkPayload(seed: string, lines: number): string {
+  const rows: string[] = []
+  for (let i = 0; i < lines; i++) {
+    rows.push(
+      `Line ${i + 1} of benchmark payload ${seed}: measuring prompt throughput with filler value ${i * 37 + 11}.`
+    )
+  }
+  return rows.join('\n')
+}
+
 async function httpError(res: Response): Promise<Error> {
   let detail = ''
   try {
@@ -362,7 +373,8 @@ export class OllamaClient {
 
   /**
    * Měření se dělá až na načteném a zahřátém modelu, aby TTFT neobsahoval načtení
-   * modelu a prompt eval nebyl ovlivněný prompt cache z předchozího běhu.
+   * modelu. TTFT a rychlost generování se berou z krátkého promptu, rychlost
+   * zpracování promptu měří `measurePromptSpeed` zvlášť na dlouhém textu.
    * Runner options a keep_alive se přebírají z načtení modelu — jinak by Ollama
    * runner kvůli odlišným parametrům odstřelila a znovu načetla.
    */
@@ -401,10 +413,12 @@ export class OllamaClient {
       options: { ...runnerOptions, num_predict: 128, temperature: 0, seed: 42 }
     })
 
+    const promptSpeed = await this.measurePromptSpeed(name, keepAlive, runnerOptions, nonce)
+
     const generatedTokens = run.final.eval_count ?? 0
     const evalSeconds = (run.final.eval_duration ?? 0) / 1e9
-    const promptTokens = run.final.prompt_eval_count ?? 0
-    const promptEvalSeconds = (run.final.prompt_eval_duration ?? 0) / 1e9
+    const promptTokens = promptSpeed.tokens
+    const promptEvalSeconds = promptSpeed.ms / 1000
 
     return {
       model: name,
@@ -421,6 +435,42 @@ export class OllamaClient {
       loadMs: wasLoaded ? 0 : loadMs,
       wasLoaded
     }
+  }
+
+  /**
+   * Ollama hlásí v `prompt_eval_count` celý prompt, ale v `prompt_eval_duration` jen
+   * čas tokenů, které runner nenašel v prompt cache — u modelů s dlouhou šablonou
+   * pak podíl vychází i o řád vyšší. Měříme proto dvěma běhy se společným prefixem:
+   * druhý běh spočítá právě tokeny navíc, takže rozdíl počtů odpovídá naměřenému času.
+   */
+  private async measurePromptSpeed(
+    name: string,
+    keepAlive: string,
+    runnerOptions: Record<string, number | boolean>,
+    nonce: string
+  ): Promise<{ tokens: number; ms: number }> {
+    const options = { ...runnerOptions, num_predict: 1, temperature: 0 }
+    // Zhruba 25 tokenů na řádek; prompt musí zůstat pod kontextem, jinak ho Ollama ořízne
+    // a sdílený prefix by se do cache netrefil.
+    const numCtx = typeof runnerOptions.num_ctx === 'number' ? runnerOptions.num_ctx : 4096
+    const bodyLines = Math.max(8, Math.min(48, Math.floor(numCtx / 75)))
+    const prefix = benchmarkPayload(`${nonce}-a`, 6)
+    const full = `${prefix}\n${benchmarkPayload(`${nonce}-b`, bodyLines)}`
+
+    const prefixRun = await this.streamGenerate(name, { prompt: prefix, keepAlive, options })
+    const fullRun = await this.streamGenerate(name, { prompt: full, keepAlive, options })
+    // Stejný prompt podruhé: runner ho musí celý najít v cache. Když ne, cache je
+    // vypnutá a rozdíl počtů by rychlost podstřelil — použijeme pak celý prompt.
+    const repeatRun = await this.streamGenerate(name, { prompt: full, keepAlive, options })
+
+    const prefixTokens = prefixRun.final.prompt_eval_count ?? 0
+    const fullTokens = fullRun.final.prompt_eval_count ?? 0
+    const ms = (fullRun.final.prompt_eval_duration ?? 0) / 1e6
+    const repeatMs = (repeatRun.final.prompt_eval_duration ?? 0) / 1e6
+
+    const cacheHits = ms > 0 && repeatMs < ms * 0.25
+    const tokens = cacheHits && fullTokens > prefixTokens ? fullTokens - prefixTokens : fullTokens
+    return { tokens, ms }
   }
 
   private async streamGenerate(

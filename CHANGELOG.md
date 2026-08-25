@@ -6,6 +6,16 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-08-25
+
+### Added
+
+- Po načtení modelu přes Load se test rychlosti spustí sám a výsledek se jen zapíše do tabulky; ruční spuštění z nabídky „…“ zůstává. Souběžné testy jednoho modelu se odmítnou, ať si na runneru nepřekážejí
+
+### Fixed
+
+- Rychlost zpracování promptu byla nadhodnocená (u modelů s dlouhou šablonou i o řád — např. 11 488 tok/s místo 420), protože Ollama hlásí počet tokenů za celý prompt, ale čas jen za ty, které nenašla v prompt cache. Nově se měří dvojicí delších běhů se společným prefixem, takže počet tokenů odpovídá naměřenému času
+
 ## [1.3.0] — 2026-08-24
 
 ### Added

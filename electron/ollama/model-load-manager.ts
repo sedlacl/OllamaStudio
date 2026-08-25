@@ -44,7 +44,8 @@ export function getActiveModelLoads(): ModelLoadState[] {
 export function startModelLoad(
   client: OllamaClient,
   name: string,
-  options?: ModelLoadOptions
+  options?: ModelLoadOptions,
+  onLoaded?: (name: string) => void
 ): { ok: boolean; error?: string } {
   const existing = activeLoads.get(name)
   if (existing?.status === 'loading') {
@@ -68,6 +69,7 @@ export function startModelLoad(
       activeLoads.set(name, success)
       emit(success)
       finishLoadHistory(name, 'done')
+      onLoaded?.(name)
       setTimeout(() => {
         const current = activeLoads.get(name)
         if (current?.status === 'success' && current.startedAt === state.startedAt) {

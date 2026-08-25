@@ -12,6 +12,7 @@ export interface Api {
   modelUnload: (name: string) => Promise<void>
   modelTestSpeed: (name: string) => Promise<unknown>
   getSpeedTests: () => Promise<unknown>
+  onSpeedTestsChanged: (cb: () => void) => () => void
   checkOllamaUpdate: (force?: boolean) => Promise<unknown>
   openExternal: (url: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>
@@ -58,6 +59,11 @@ const api: Api = {
   modelUnload: (name) => ipcRenderer.invoke('model-unload', name),
   modelTestSpeed: (name) => ipcRenderer.invoke('model-test-speed', name),
   getSpeedTests: () => ipcRenderer.invoke('get-speed-tests'),
+  onSpeedTestsChanged: (cb) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('speed-tests-changed', handler)
+    return () => ipcRenderer.removeListener('speed-tests-changed', handler)
+  },
   checkOllamaUpdate: (force) => ipcRenderer.invoke('check-ollama-update', force),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   modelDelete: (name) => ipcRenderer.invoke('model-delete', name),

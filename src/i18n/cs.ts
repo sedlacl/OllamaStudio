@@ -324,7 +324,7 @@ export const cs = {
     promptSpeed: 'Zpracování promptu',
     promptSpeedHint: '{tokens} tokenů za {ms} ms',
     method:
-      'Měří se až na načteném modelu po zahřívacím běhu. Měřený prompt je pokaždé unikátní (obchází prompt cache) a vzorkování je deterministické (temperature 0, seed 42), aby byly běhy srovnatelné.',
+      'Měří se až na načteném modelu po zahřívacím běhu, vzorkování je deterministické (temperature 0, seed 42). TTFT a generování jdou z krátkého promptu; zpracování promptu se měří zvlášť dvojicí delších běhů se společným prefixem, protože Ollama hlásí počet tokenů za celý prompt, ale čas jen za ty, které nenašla v cache.',
     wasLoaded: 'Model byl v paměti už před testem — měření nezahrnuje načtení.',
     hadToLoad:
       'Model nebyl v paměti, test ho nejdřív načetl ({load} ms). Načtení ani zahřívací běh se do výsledků nepočítají.',
@@ -333,7 +333,7 @@ export const cs = {
     colTtft: 'TTFT',
     colPrompt: 'Prompt',
     colResponse: 'Odpověď',
-    notMeasured: 'Nezměřeno — spusťte test rychlosti z nabídky „…"'
+    notMeasured: 'Nezměřeno — načtěte model přes Load nebo spusťte test z nabídky „…"'
   },
   logPanel: {
     filtered: 'Filtrované',

@@ -34,6 +34,10 @@ export function useModelSpeedTest(onFinished?: () => void): ModelSpeedTest {
 
   useEffect(() => {
     void refreshResults()
+    // Testy spouštěné mimo tuhle stránku (automaticky po načtení modelu) hlásí main proces.
+    return api().onSpeedTestsChanged(() => {
+      void refreshResults()
+    })
   }, [refreshResults])
 
   const resultFor = (name: string): ModelSpeedTestResult | null =>

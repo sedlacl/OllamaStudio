@@ -381,6 +381,8 @@ export interface Api {
   modelUnload: (name: string) => Promise<void>
   modelTestSpeed: (name: string) => Promise<ModelSpeedTestResult>
   getSpeedTests: () => Promise<Record<string, ModelSpeedTestResult>>
+  /** Výsledek testu se změnil (ruční test, automatický po načtení, unload modelu). */
+  onSpeedTestsChanged: (cb: () => void) => () => void
   checkOllamaUpdate: (force?: boolean) => Promise<OllamaUpdateInfo>
   openExternal: (url: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>

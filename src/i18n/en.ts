@@ -326,7 +326,7 @@ export const en: MessageTree = {
     promptSpeed: 'Prompt processing',
     promptSpeedHint: '{tokens} tokens in {ms} ms',
     method:
-      'Measured on an already loaded model after a warm-up run. The measured prompt is unique on every run (bypasses the prompt cache) and sampling is deterministic (temperature 0, seed 42) so runs stay comparable.',
+      'Measured on an already loaded model after a warm-up run with deterministic sampling (temperature 0, seed 42). TTFT and generation come from a short prompt; prompt processing is measured separately by two longer runs sharing a prefix, because Ollama reports the token count for the whole prompt but the duration only for tokens missing from the cache.',
     wasLoaded: 'The model was already in memory — the measurement excludes loading.',
     hadToLoad:
       'The model was not in memory, so the test loaded it first ({load} ms). Neither the load nor the warm-up run counts towards the results.',
@@ -335,7 +335,7 @@ export const en: MessageTree = {
     colTtft: 'TTFT',
     colPrompt: 'Prompt',
     colResponse: 'Response',
-    notMeasured: 'Not measured — run the speed test from the “…” menu'
+    notMeasured: 'Not measured — load the model via Load or run the speed test from the “…” menu'
   },
   logPanel: {
     filtered: 'Filtered',

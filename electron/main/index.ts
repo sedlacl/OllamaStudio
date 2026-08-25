@@ -12,6 +12,7 @@ import { join } from 'path'
 import {
   ollamaClient,
   type ModelLoadOptions,
+  type ModelSpeedTestResult,
   type ServeConnectionStatus
 } from '../ollama/client'
 import { loadConfig, saveConfig, type AppConfig } from '../ollama/config'
@@ -60,6 +61,23 @@ let tray: Tray | null = null
 let loadedModelCount = 0
 /** true = zavření okna aplikaci ukončí místo skrytí do tray. */
 let isQuitting = false
+/** Testy rychlosti běžící právě teď — dva naráz by si na runneru překážely. */
+const speedTestsInFlight = new Set<string>()
+
+async function runSpeedTest(name: string): Promise<ModelSpeedTestResult> {
+  if (speedTestsInFlight.has(name)) {
+    throw new Error(tMain('errors.speedTestRunning', { name }))
+  }
+  speedTestsInFlight.add(name)
+  try {
+    const result = await ollamaClient.testSpeed(name, getLoadOptions(name)?.options ?? null)
+    recordSpeedTest(name, result)
+    mainWindow?.webContents.send('speed-tests-changed')
+    return result
+  } finally {
+    speedTestsInFlight.delete(name)
+  }
+}
 
 function syncLocaleFromConfig(config?: AppConfig): Locale {
   const cfg = config ?? loadConfig()
@@ -261,19 +279,21 @@ function registerIpc(): void {
   ipcMain.handle('get-models-ps', () => ollamaClient.getPs())
   ipcMain.handle('model-show', (_e, name: string) => ollamaClient.show(name))
   ipcMain.handle('model-load', (_e, name: string, options?: ModelLoadOptions) =>
-    startModelLoad(ollamaClient, name, options)
+    // Po načtení rovnou změříme rychlost, ať je v tabulce bez dalšího klikání.
+    startModelLoad(ollamaClient, name, options, (loaded) => {
+      void runSpeedTest(loaded).catch(() => {
+        /* test je doplněk načtení, chybu uživateli nehlásíme */
+      })
+    })
   )
   ipcMain.handle('model-unload', async (_e, name: string) => {
     await ollamaClient.unload(name)
     removeLoadOptions(name)
     removeSpeedTest(name)
+    mainWindow?.webContents.send('speed-tests-changed')
     clearModelLoadState(name)
   })
-  ipcMain.handle('model-test-speed', async (_e, name: string) => {
-    const result = await ollamaClient.testSpeed(name, getLoadOptions(name)?.options ?? null)
-    recordSpeedTest(name, result)
-    return result
-  })
+  ipcMain.handle('model-test-speed', (_e, name: string) => runSpeedTest(name))
 
   ipcMain.handle('get-speed-tests', () => getSpeedTests())
 
