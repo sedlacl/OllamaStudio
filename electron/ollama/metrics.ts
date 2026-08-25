@@ -493,69 +493,66 @@ export async function collectResourceUsage(
   }
 }
 
+interface CpuTimesSample {
+  idle: number
+  total: number
+  at: number
+}
+
+/** Poslední odečet, aby se vytížení počítalo přes celý interval mezi obnovami stránky. */
+let lastCpuSample: CpuTimesSample | null = null
+
+function sumCpuTimes(list: os.CpuInfo[]): { idle: number; total: number } {
+  let idle = 0
+  let total = 0
+  for (const c of list) {
+    const t = c.times
+    idle += t.idle
+    // Na Windows je přerušovací čas součástí kernel time, takže by se přičtením počítal dvakrát.
+    total += t.user + t.nice + t.sys + t.idle + (process.platform === 'win32' ? 0 : t.irq)
+  }
+  return { idle, total }
+}
+
+function usageBetween(
+  before: { idle: number; total: number },
+  after: { idle: number; total: number }
+): number | null {
+  const totalDelta = after.total - before.total
+  if (totalDelta <= 0) return null
+  const idleDelta = after.idle - before.idle
+  return Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100))
+}
+
 /**
- * Vytížení CPU napříč jádry z rozdílu os.cpus() časů přes krátký vzorek.
- * os.loadavg() je na Windows vždy 0, proto počítáme z idle/total delty.
+ * Vytížení CPU z rozdílu os.cpus() časů. Windows počítadla přes CIM
+ * (Win32_PerfFormattedData_*) tady dávala nesmysly — hodnota je počítaná od poslední
+ * obnovy WMI provideru, takže okno vzorku je neznámé a čísla skákala (22 % proti
+ * skutečným 11 %). os.loadavg() je zase na Windows vždy 0.
  */
 async function getCpuInfo(sampleMs = 500): Promise<CpuInfo> {
   const cpus = os.cpus()
   const model = cpus[0]?.model?.trim() || 'CPU'
   const cores = cpus.length
 
-  if (process.platform === 'win32') {
-    const perf = await getWindowsCpuUsage()
-    if (perf !== null) return { model, cores, usagePercent: perf }
-  }
-
-  const sum = (list: os.CpuInfo[]): { idle: number; total: number } => {
-    let idle = 0
-    let total = 0
-    for (const c of list) {
-      const t = c.times
-      idle += t.idle
-      total += t.user + t.nice + t.sys + t.idle + t.irq
-    }
-    return { idle, total }
-  }
-
   try {
-    const a = sum(cpus)
+    const now = Date.now()
+    const current = sumCpuTimes(cpus)
+
+    // Průměr od minulého dotazu (obnova stránky) — klidnější než krátký vzorek.
+    if (lastCpuSample && now - lastCpuSample.at >= 1000) {
+      const usagePercent = usageBetween(lastCpuSample, current)
+      lastCpuSample = { ...current, at: now }
+      if (usagePercent !== null) return { model, cores, usagePercent }
+    }
+
+    // První dotaz nebo dva těsně po sobě: krátký vlastní vzorek.
     await new Promise((resolve) => setTimeout(resolve, sampleMs))
-    const b = sum(os.cpus())
-    const idleDelta = b.idle - a.idle
-    const totalDelta = b.total - a.total
-    const usagePercent =
-      totalDelta > 0 ? Math.max(0, Math.min(100, (1 - idleDelta / totalDelta) * 100)) : null
-    return { model, cores, usagePercent }
+    const after = sumCpuTimes(os.cpus())
+    lastCpuSample = { ...after, at: Date.now() }
+    return { model, cores, usagePercent: usageBetween(current, after) }
   } catch {
     return { model, cores, usagePercent: null }
-  }
-}
-
-/**
- * Vytížení CPU na Windows přes CIM (Win32_PerfFormattedData_PerfOS_Processor).
- * Názvy třídy/vlastnosti jsou jazykově neutrální (na rozdíl od cest Get-Counter),
- * hodnota `_Total` je předpočtená a odpovídá Správci úloh. null → fallback na os.cpus().
- */
-async function getWindowsCpuUsage(): Promise<number | null> {
-  try {
-    const script = [
-      "$ErrorActionPreference = 'SilentlyContinue'",
-      "$t = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor | Where-Object { $_.Name -eq '_Total' }",
-      'if ($t) { [int]$t.PercentProcessorTime }'
-    ].join('\n')
-
-    const { stdout } = await execFileAsync(
-      'powershell',
-      ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      { timeout: 8000, windowsHide: true }
-    )
-
-    const n = parseFloat(stdout.trim())
-    if (!Number.isFinite(n)) return null
-    return Math.max(0, Math.min(100, n))
-  } catch {
-    return null
   }
 }
 

@@ -487,6 +487,7 @@ export default function ResourceUsage(): JSX.Element {
               <div className="metric-label" style={{ marginTop: 6 }}>
                 {data.cpu.model} · {t('resources.cores', { cores: data.cpu.cores })}
               </div>
+              <div className="metric-label">{t('resources.cpuLoadHint')}</div>
             </>
           )}
         </div>

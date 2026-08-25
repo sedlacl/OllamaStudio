@@ -257,6 +257,7 @@ export const cs = {
     utilization: 'vytížení {pct} %',
     gpuEstimate: 'Odhad z /api/ps (nvidia-smi nedostupné)',
     cpuLoad: 'CPU zátěž',
+    cpuLoadHint: 'Průměr všech jader od minulé obnovy',
     cores: '{cores} jader',
     processVramSum: 'Součet VRAM procesů',
     processCount: '{count} procesů · {source}',

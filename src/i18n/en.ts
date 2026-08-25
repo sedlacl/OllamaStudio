@@ -259,6 +259,7 @@ export const en: MessageTree = {
     utilization: 'utilization {pct} %',
     gpuEstimate: 'Estimate from /api/ps (nvidia-smi unavailable)',
     cpuLoad: 'CPU load',
+    cpuLoadHint: 'Average across all cores since the previous refresh',
     cores: '{cores} cores',
     processVramSum: 'Sum of process VRAM',
     processCount: '{count} processes · {source}',
