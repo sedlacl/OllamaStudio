@@ -15,6 +15,7 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ### Fixed
 
+- V logu i v klouzavém průměru na Přehledu se objevovalo 1 000 000 tok/s. Tuhle zástupnou hodnotu tiskne llama.cpp, když generování trvá naměřených 0 ms; nesmyslné rychlosti se teď zahazují a pomocné běhy testu rychlosti generují krátký text místo jediného tokenu
 - CPU zátěž na stránce GPU a paměť skákala a neodpovídala Správci úloh (např. 28 % a 48 % při klidu okolo 10 %). Hodnota z WMI se počítala od poslední obnovy provideru, tedy přes neznámé okno; nově se bere průměr jádrových časů mezi obnovami stránky, takže odpadlo i spouštění PowerShellu na pozadí
 - Rychlost zpracování promptu byla nadhodnocená (u modelů s dlouhou šablonou i o řád — např. 11 488 tok/s místo 420), protože Ollama hlásí počet tokenů za celý prompt, ale čas jen za ty, které nenašla v prompt cache. Nově se měří dvojicí delších běhů se společným prefixem, takže počet tokenů odpovídá naměřenému času
 

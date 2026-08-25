@@ -449,7 +449,9 @@ export class OllamaClient {
     runnerOptions: Record<string, number | boolean>,
     nonce: string
   ): Promise<{ tokens: number; ms: number }> {
-    const options = { ...runnerOptions, num_predict: 1, temperature: 0 }
+    // num_predict 1 nechá llama.cpp naměřit 0 ms generování a do logu pak jde
+    // zástupná hodnota 1000000 tok/s; pár tokenů navíc stojí zlomek vteřiny.
+    const options = { ...runnerOptions, num_predict: 8, temperature: 0 }
     // Zhruba 25 tokenů na řádek; prompt musí zůstat pod kontextem, jinak ho Ollama ořízne
     // a sdílený prefix by se do cache netrefil.
     const numCtx = typeof runnerOptions.num_ctx === 'number' ? runnerOptions.num_ctx : 4096

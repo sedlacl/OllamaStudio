@@ -118,6 +118,17 @@ const SLOT_ELAPSED_RE = /\bt\s*=\s*([\d.]+)\s*s\b/i
 const SLOT_TPS_RE = /([\d.]+)\s+tokens?\s+per\s+second/i
 /** Live decode throughput: `tg = 5.57 t/s` */
 const SLOT_TG_TPS_RE = /\btg\s*=\s*([\d.]+)\s*t\/s/i
+/**
+ * Když llama.cpp naměří 0.00 ms, vytiskne místo dělení nulou 1000000.00 tokens per second.
+ * Taková hodnota by se jinak dostala do klouzavého průměru na Přehledu i vedle řádku logu.
+ */
+const MAX_PLAUSIBLE_TPS = 50_000
+
+function parseTps(raw: string): number | null {
+  const value = parseFloat(raw)
+  if (!Number.isFinite(value) || value <= 0 || value > MAX_PLAUSIBLE_TPS) return null
+  return value
+}
 /** Prompt/eval summary token count: `ms / 290 tokens` */
 const SLOT_SUMMARY_TOKENS_RE = /\/\s*(\d+)\s+tokens\b/i
 /**
@@ -719,10 +730,16 @@ function parseLine(line: string): ParsedLogEvent {
   }
 
   const promptTps = line.match(PROMPT_TPS_RE)
-  if (promptTps) parsed.promptTokensPerSec = parseFloat(promptTps[1])
+  if (promptTps) {
+    const value = parseTps(promptTps[1])
+    if (value !== null) parsed.promptTokensPerSec = value
+  }
 
   const genTps = line.match(GEN_TPS_RE) ?? line.match(ALT_TPS_RE)
-  if (genTps) parsed.generationTokensPerSec = parseFloat(genTps[1])
+  if (genTps) {
+    const value = parseTps(genTps[1])
+    if (value !== null) parsed.generationTokensPerSec = value
+  }
 
   const slotHeader = line.match(SLOT_HEADER_RE)
   if (slotHeader) {
@@ -765,27 +782,34 @@ function parseLine(line: string): ParsedLogEvent {
 
     const tg = line.match(SLOT_TG_TPS_RE)
     if (tg) {
-      parsed.tokensPerSec = parseFloat(tg[1])
-      parsed.generationTokensPerSec = parsed.tokensPerSec
+      const value = parseTps(tg[1])
+      if (value !== null) {
+        parsed.tokensPerSec = value
+        parsed.generationTokensPerSec = value
+      }
       parsed.phase = parsed.phase ?? 'generation'
     }
 
     const tps = line.match(SLOT_TPS_RE)
     if (tps) {
-      parsed.tokensPerSec = parseFloat(tps[1])
-      if (parsed.phase === 'generation') {
-        parsed.generationTokensPerSec = parsed.tokensPerSec
-      } else if (parsed.phase === 'prompt_processing') {
-        parsed.promptTokensPerSec = parsed.tokensPerSec
-        // Prefer live prompt throughput for rolling average while prefill is active.
-        parsed.generationTokensPerSec = parsed.tokensPerSec
+      const value = parseTps(tps[1])
+      if (value !== null) {
+        parsed.tokensPerSec = value
+        if (parsed.phase === 'generation') {
+          parsed.generationTokensPerSec = value
+        } else if (parsed.phase === 'prompt_processing') {
+          parsed.promptTokensPerSec = value
+          // Prefer live prompt throughput for rolling average while prefill is active.
+          parsed.generationTokensPerSec = value
+        }
       }
     }
 
     if (parsed.phase === 'done' || SLOT_DONE_RE.test(line)) {
       parsed.isTaskComplete = true
       parsed.phase = parsed.phase ?? 'done'
-      parsed.completionReason = detectCompletionReason(line)
+      const reason = detectCompletionReason(line)
+      if (reason) parsed.completionReason = reason
     }
   }
 
