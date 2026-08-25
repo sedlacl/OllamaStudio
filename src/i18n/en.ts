@@ -439,7 +439,11 @@ export const en: MessageTree = {
       'These values apply to the whole serve process. keep_alive and num_ctx from this dialog override them on load.',
     advanced: 'Advanced runner options',
     tryMmap: 'Try mmap',
-    tryMmapHelp: 'Ollama option use_mmap.',
+    tryMmapHelp:
+      'Ollama option use_mmap. Leaving the default sends no value, so the runner matches what clients without options (OpenCode, Continue) ask for — otherwise their first request reloads the model.',
+    mmapAuto: 'Ollama default',
+    mmapOn: 'On (true)',
+    mmapOff: 'Off (false)',
     useMlock: 'Use mlock',
     useMlockHelp: 'Ollama option use_mlock.',
     ropeBase: 'RoPE Frequency Base',

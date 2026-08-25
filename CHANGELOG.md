@@ -6,6 +6,22 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.3.3] — 2026-08-25
+
+### Fixed
+
+- První požadavek z OpenCode odstřelil běžící model a načetl ho znovu (osm sekund a keep-alive „navždy“ spadlo na serverový default). Studio při načtení posílalo `use_mmap: true`, kdežto Ollama na Windows s CUDA mmap sama vypíná, takže klient bez `options` si vyžádal jiný runner, než jaký běžel
+
+### Changed
+
+- Volba Try mmap v dialogu načtení už není zaškrtávátko, ale trojice Výchozí Ollama / Zapnuto / Vypnuto. Výchozí volba `use_mmap` vůbec neposílá, takže runner odpovídá tomu, co dostanou i klienti bez `options`. Uložené presety si svoji dřívější hodnotu ponechají
+
+## [1.3.2] — 2026-08-25
+
+### Fixed
+
+- OpenCode kompaktoval session hned po první zprávě a model se přitom znovu načítal. Do konfigurace se zapisoval `limit.output` 32 000 tokenů i u 32k okna, takže OpenCode nechal na prompt necelý tisíc tokenů, zatímco jeho systémová zpráva s popisem nástrojů zabere přes 9 000. Output se teď drží na čtvrtině okna (u 32k tedy 8 192) a při aktualizaci se srazí i příliš velká hodnota z dřívějších verzí — ručně sníženou hodnotu zápis ponechá
+
 ## [1.3.1] — 2026-08-25
 
 ### Added

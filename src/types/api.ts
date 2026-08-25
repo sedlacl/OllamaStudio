@@ -283,6 +283,13 @@ export interface ModelLoadResult {
 
 export type PresetKind = 'load' | 'serve'
 
+/**
+ * Volba `use_mmap` při načtení. `auto` znamená hodnotu vůbec neposlat — Ollama si
+ * mmap vybere sama (na Windows s CUDA ho vypíná) a runner tak odpovídá tomu, co
+ * dostane i klient, který options neposílá.
+ */
+export type MmapPreference = 'auto' | 'on' | 'off'
+
 export interface LoadPresetData {
   keepInMemory: boolean
   ttl: string
@@ -290,7 +297,8 @@ export interface LoadPresetData {
   numBatch: string
   numGpu: string
   numThread: string
-  useMmap: boolean
+  /** Presety z verzí do 1.3.2 mají boolean. */
+  useMmap: MmapPreference | boolean
   useMlock: boolean
   ropeBase: string
   ropeScale: string

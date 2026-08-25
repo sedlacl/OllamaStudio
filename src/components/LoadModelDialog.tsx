@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
-import type { AppConfig, LoadPresetData, ModelLoadOptions, ModelShow, ModelTag } from '../types/api'
+import type {
+  AppConfig,
+  LoadPresetData,
+  MmapPreference,
+  ModelLoadOptions,
+  ModelShow,
+  ModelTag
+} from '../types/api'
 import PresetBar from './PresetBar'
 
 export interface LoadModelDialogProps {
@@ -20,7 +27,7 @@ interface LoadForm {
   numBatch: string
   numGpu: string
   numThread: string
-  useMmap: boolean
+  useMmap: MmapPreference
   useMlock: boolean
   ropeBase: string
   ropeScale: string
@@ -28,6 +35,12 @@ interface LoadForm {
 
 function formToPreset(form: LoadForm): LoadPresetData {
   return { ...form }
+}
+
+function mmapFromPreset(value: MmapPreference | boolean | undefined): MmapPreference {
+  if (value === true) return 'on'
+  if (value === false) return 'off'
+  return value ?? 'auto'
 }
 
 function presetToForm(data: LoadPresetData): LoadForm {
@@ -38,7 +51,7 @@ function presetToForm(data: LoadPresetData): LoadForm {
     numBatch: data.numBatch ?? '',
     numGpu: data.numGpu ?? '-1',
     numThread: data.numThread ?? '',
-    useMmap: data.useMmap !== false,
+    useMmap: mmapFromPreset(data.useMmap),
     useMlock: !!data.useMlock,
     ropeBase: data.ropeBase ?? '',
     ropeScale: data.ropeScale ?? ''
@@ -98,7 +111,7 @@ function initialForm(modelInfo: ModelShow | null, serverConfig: AppConfig | null
     numBatch: '',
     numGpu: '-1',
     numThread: '',
-    useMmap: true,
+    useMmap: 'auto',
     useMlock: false,
     ropeBase: '',
     ropeScale: ''
@@ -199,7 +212,7 @@ export default function LoadModelDialog({
       numBatch,
       numGpu,
       numThread,
-      useMmap: form.useMmap,
+      useMmap: form.useMmap === 'auto' ? undefined : form.useMmap === 'on',
       useMlock: form.useMlock,
       ropeFrequencyBase: ropeBase,
       ropeFrequencyScale: ropeScale
@@ -425,12 +438,15 @@ export default function LoadModelDialog({
                 <label htmlFor="model-mmap">{t('loadDialog.tryMmap')}</label>
                 <span className="field-help">{t('loadDialog.tryMmapHelp')}</span>
               </div>
-              <input
+              <select
                 id="model-mmap"
-                type="checkbox"
-                checked={form.useMmap}
-                onChange={(event) => update('useMmap', event.target.checked)}
-              />
+                value={form.useMmap}
+                onChange={(event) => update('useMmap', event.target.value as MmapPreference)}
+              >
+                <option value="auto">{t('loadDialog.mmapAuto')}</option>
+                <option value="on">{t('loadDialog.mmapOn')}</option>
+                <option value="off">{t('loadDialog.mmapOff')}</option>
+              </select>
             </div>
 
             <div className="load-setting-row">

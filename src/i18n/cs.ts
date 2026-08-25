@@ -437,7 +437,11 @@ export const cs = {
       'Tyto hodnoty platí pro celý serve. keep_alive a num_ctx z tohoto dialogu je při načtení přepíšou.',
     advanced: 'Pokročilé runner options',
     tryMmap: 'Try mmap',
-    tryMmapHelp: 'Ollama option use_mmap.',
+    tryMmapHelp:
+      'Ollama option use_mmap. Necháte-li výchozí volbu, hodnota se nepošle a runner bude stejný jako pro klienty bez options (OpenCode, Continue) — jinak jim první požadavek model překlopí a znovu načte.',
+    mmapAuto: 'Výchozí Ollama',
+    mmapOn: 'Zapnuto (true)',
+    mmapOff: 'Vypnuto (false)',
     useMlock: 'Use mlock',
     useMlockHelp: 'Ollama option use_mlock.',
     ropeBase: 'RoPE Frequency Base',

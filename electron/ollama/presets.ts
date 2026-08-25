@@ -8,6 +8,9 @@ import { localeTag } from '../i18n/types'
 
 export type PresetKind = 'load' | 'serve'
 
+/** Volba `use_mmap`; `auto` = neposílat a nechat rozhodnout Ollamu. */
+export type MmapPreference = 'auto' | 'on' | 'off'
+
 /** Formulář dialogu Načíst model — stringová pole jako ve UI. */
 export interface LoadPresetData {
   keepInMemory: boolean
@@ -16,7 +19,8 @@ export interface LoadPresetData {
   numBatch: string
   numGpu: string
   numThread: string
-  useMmap: boolean
+  /** Presety z verzí do 1.3.2 mají boolean. */
+  useMmap: MmapPreference | boolean
   useMlock: boolean
   ropeBase: string
   ropeScale: string

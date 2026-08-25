@@ -26,8 +26,29 @@ export interface OpenCodeModelEntry {
   providerId: string
 }
 
-/** OpenCode schema (`limit`) vyžaduje `context` i `output`. 32k = dokumentovaný default OpenCode. */
-export const DEFAULT_OPENCODE_OUTPUT_LIMIT = 32_000
+/** Strop `limit.output` v OpenCode — vyšší hodnoty si stejně sráží na 32k. */
+export const MAX_OPENCODE_OUTPUT_LIMIT = 32_000
+
+/**
+ * OpenCode spouští auto-compaction při `estimated > context - max(output, buffer)`.
+ * Output blízký contextu tedy nechá na prompt jen pár set tokenů a session se
+ * kompaktuje hned od prvního requestu, protože systémový prompt s tool schématy
+ * bývá přes 10k tokenů. Držíme proto output na čtvrtině okna.
+ */
+const OUTPUT_LIMIT_CONTEXT_DIVISOR = 4
+
+/** Doporučený `limit.output` pro dané okno; bez známého okna zůstává strop. */
+export function recommendedOutputLimit(context: number | undefined): number {
+  if (context == null) return MAX_OPENCODE_OUTPUT_LIMIT
+  const share = Math.floor(context / OUTPUT_LIMIT_CONTEXT_DIVISOR)
+  return Math.max(1, Math.min(share, MAX_OPENCODE_OUTPUT_LIMIT))
+}
+
+/** Ručně sníženou hodnotu respektuje, příliš velkou (i z dřívějších verzí) srazí. */
+function cappedOutputLimit(existing: number | undefined, context: number | undefined): number {
+  const recommended = recommendedOutputLimit(context)
+  return existing != null ? Math.min(existing, recommended) : recommended
+}
 
 export interface OpenCodeConfigStatus {
   path: string
@@ -227,7 +248,7 @@ function getModelOutput(modelBlock: Record<string, unknown>): number | undefined
 
 /**
  * OpenCode JSON schema: pokud existuje `limit`, jsou povinné `context` i `output`.
- * Existující `output` zachová; chybějící doplní defaultem.
+ * Chybějící `output` doplní, existující srazí pod strop vůči `context`.
  */
 function setModelLimit(
   modelBlock: Record<string, unknown>,
@@ -235,7 +256,7 @@ function setModelLimit(
 ): void {
   const existing = asRecord(modelBlock.limit) ?? {}
   const context = opts.context ?? parseContextLength(existing.context ?? modelBlock.contextLength)
-  const output = opts.output ?? parseContextLength(existing.output) ?? DEFAULT_OPENCODE_OUTPUT_LIMIT
+  const output = opts.output ?? cappedOutputLimit(parseContextLength(existing.output), context)
   if (context == null && modelBlock.limit == null) return
   const limit: Record<string, unknown> = { ...existing }
   if (context != null) limit.context = context
@@ -389,13 +410,14 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
   const ctxFromServer = parseContextLength(config.ollamaEnv.OLLAMA_CONTEXT_LENGTH)
   const existing = findOpenCodeModel(ollamaModel)
   const modelId = ollamaModel.replace(/:latest$/i, '')
+  const contextLength = ctxFromLoad ?? ctxFromServer ?? existing?.contextLength
 
   return {
     model: modelId,
     name: existing?.name ?? displayNameFor(modelId),
     apiBase: ensureOpenAiV1Base(config.ollamaEnv.OLLAMA_HOST),
-    contextLength: ctxFromLoad ?? ctxFromServer ?? existing?.contextLength,
-    outputLength: existing?.outputLength ?? DEFAULT_OPENCODE_OUTPUT_LIMIT
+    contextLength,
+    outputLength: cappedOutputLimit(existing?.outputLength, contextLength)
   }
 }
 
@@ -474,7 +496,7 @@ function ensureOllamaProvider(doc: Record<string, unknown>, apiBase: string): {
 /**
  * Přidá nebo aktualizuje ollama model v globálním opencode.json
  * podle aktuálních settings OllamaStudio (host → baseURL /v1, context + output limit).
- * Sourozencům bez `limit.output` doplní default, aby schema OpenCode prošlo.
+ * Sourozencům `limit.output` doplní i srazí pod strop vůči jejich `limit.context`.
  *
  * Formát dle https://opencode.ai/docs/providers/ a schema `limit.context` + `limit.output`.
  */
