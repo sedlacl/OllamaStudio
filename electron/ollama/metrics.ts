@@ -7,10 +7,31 @@ import type { ActiveRequest, RequestHistoryItem } from './log-buffer'
 const execFileAsync = promisify(execFile)
 
 export interface GpuMetrics {
+  /** index z nvidia-smi; null u adaptérů, které nvidia-smi nevidí */
+  index: number | null
+  /** UUID z nvidia-smi — jediné pojítko mezi kartou a procesy mimo Windows */
+  uuid: string | null
   name: string
   memoryUsedMb: number
   memoryTotalMb: number
   utilizationPercent: number | null
+}
+
+/**
+ * Zobrazovací adaptér Windows. `key` je instance výkonnostních čítačů
+ * (`luid_0x00000000_0x00013b1f_phys_0`) — podle ní se per-proces VRAM přiřazuje ke GPU.
+ */
+export interface GpuAdapter {
+  key: string
+  name: string
+  /** dedikovaná VRAM adaptéru (z DirectX registru) */
+  dedicatedTotalMb: number | null
+  /** aktuálně využitá dedikovaná paměť adaptéru */
+  dedicatedUsedMb: number | null
+  /** systémová RAM, kterou adaptér používá jako GPU paměť */
+  sharedUsedMb: number | null
+  /** metriky z nvidia-smi, pokud jde o NVIDIA kartu */
+  nvidia: GpuMetrics | null
 }
 
 export interface ProcessMemory {
@@ -81,26 +102,197 @@ export async function collectMetrics(
 }
 
 async function getGpuMetrics(): Promise<GpuMetrics | null> {
+  return (await getNvidiaGpus())[0] ?? null
+}
+
+/** Všechny NVIDIA karty, seřazené podle indexu z nvidia-smi. */
+async function getNvidiaGpus(): Promise<GpuMetrics[]> {
   try {
     const { stdout } = await execFileAsync(
       'nvidia-smi',
       [
-        '--query-gpu=name,memory.used,memory.total,utilization.gpu',
+        '--query-gpu=index,name,memory.used,memory.total,utilization.gpu,uuid',
         '--format=csv,noheader,nounits'
       ],
       { timeout: 5000, windowsHide: true }
     )
-    const line = stdout.trim().split('\n')[0]
-    if (!line) return null
-    const [name, used, total, util] = line.split(',').map((s) => s.trim())
-    return {
-      name: name ?? 'GPU',
-      memoryUsedMb: parseFloat(used) || 0,
-      memoryTotalMb: parseFloat(total) || 0,
-      utilizationPercent: util ? parseFloat(util) : null
+    const gpus: GpuMetrics[] = []
+    for (const line of stdout.trim().split('\n')) {
+      if (!line.trim()) continue
+      const [index, name, used, total, util, uuid] = line.split(',').map((s) => s.trim())
+      const parsedIndex = parseInt(index, 10)
+      gpus.push({
+        index: Number.isFinite(parsedIndex) ? parsedIndex : null,
+        uuid: uuid || null,
+        name: name || 'GPU',
+        memoryUsedMb: parseFloat(used) || 0,
+        memoryTotalMb: parseFloat(total) || 0,
+        utilizationPercent: util ? parseFloat(util) : null
+      })
     }
+    return gpus.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
   } catch {
-    return null
+    return []
+  }
+}
+
+/**
+ * Zobrazovací adaptéry z DirectX registru (jméno + dedikovaná VRAM podle LUID)
+ * spárované s čítačem `\GPU Adapter Memory(...)\Dedicated Usage`. LUID v registru
+ * je 64bit číslo, instance čítače ho má rozdělené na `luid_0x<high>_0x<low>`.
+ */
+async function getGpuAdapters(nvidiaGpus: GpuMetrics[]): Promise<GpuAdapter[]> {
+  if (process.platform !== 'win32') {
+    return nvidiaGpus.map((gpu) => ({
+      key: `nvidia-${gpu.index ?? 0}`,
+      name: gpu.name,
+      dedicatedTotalMb: gpu.memoryTotalMb,
+      dedicatedUsedMb: gpu.memoryUsedMb,
+      sharedUsedMb: null,
+      nvidia: gpu
+    }))
+  }
+
+  const rows = await runAdapterScript()
+  const adapters: GpuAdapter[] = []
+  const usedNvidia = new Set<GpuMetrics>()
+
+  for (const row of rows) {
+    const nvidia =
+      nvidiaGpus.find((g) => !usedNvidia.has(g) && g.name.toLowerCase() === row.name.toLowerCase()) ??
+      null
+    if (nvidia) usedNvidia.add(nvidia)
+    adapters.push({
+      key: row.key,
+      name: row.name,
+      dedicatedTotalMb: nvidia?.memoryTotalMb ?? row.totalMb,
+      // nvidia-smi je čerstvější a přesnější než čítač adaptéru
+      dedicatedUsedMb: nvidia?.memoryUsedMb ?? row.usedMb,
+      sharedUsedMb: row.sharedMb,
+      nvidia
+    })
+  }
+
+  // NVIDIA karty, které registr/čítače nevrátily (jiné jméno, vypnuté čítače)
+  for (const gpu of nvidiaGpus) {
+    if (usedNvidia.has(gpu)) continue
+    adapters.push({
+      key: `nvidia-${gpu.index ?? adapters.length}`,
+      name: gpu.name,
+      dedicatedTotalMb: gpu.memoryTotalMb,
+      dedicatedUsedMb: gpu.memoryUsedMb,
+      sharedUsedMb: null,
+      nvidia: gpu
+    })
+  }
+
+  return adapters.sort((a, b) => {
+    if (a.nvidia && !b.nvidia) return -1
+    if (!a.nvidia && b.nvidia) return 1
+    return (b.dedicatedTotalMb ?? 0) - (a.dedicatedTotalMb ?? 0)
+  })
+}
+
+interface AdapterRow {
+  key: string
+  name: string
+  totalMb: number | null
+  usedMb: number | null
+  sharedMb: number | null
+}
+
+/** Výčet adaptérů je drahý (PowerShell + čítače) — držíme ho krátce v cache. */
+const ADAPTER_CACHE_MS = 15_000
+let adapterCache: { rows: AdapterRow[]; at: number } | null = null
+
+async function runAdapterScript(): Promise<AdapterRow[]> {
+  if (adapterCache && Date.now() - adapterCache.at < ADAPTER_CACHE_MS) {
+    return adapterCache.rows
+  }
+  try {
+    const script = [
+      "$ErrorActionPreference = 'SilentlyContinue'",
+      ...localizedCounterHelper(),
+      '$byLuid = @{}',
+      "Get-ChildItem 'HKLM:\\SOFTWARE\\Microsoft\\DirectX' | ForEach-Object {",
+      '  $p = Get-ItemProperty $_.PSPath',
+      '  if ($p.Description -and $null -ne $p.AdapterLuid) {',
+      '    $luid = [uint64]$p.AdapterLuid',
+      '    $hi = [uint32]($luid -shr 32)',
+      '    $lo = [uint32]($luid -band 0xFFFFFFFF)',
+      "    $k = 'luid_0x{0:x8}_0x{1:x8}' -f $hi, $lo",
+      '    $byLuid[$k] = @($p.Description, [double]$p.DedicatedVideoMemory)',
+      '  }',
+      '}',
+      // Lokalizovaná Windows mají přeložené názvy čítačů, instance luid_* zůstávají stejné.
+      "$dedName = 'Dedicated Usage'",
+      "$paths = @('\\GPU Adapter Memory(*)\\Dedicated Usage', '\\GPU Adapter Memory(*)\\Shared Usage')",
+      '$samples = (Get-Counter -Counter $paths -ErrorAction SilentlyContinue).CounterSamples',
+      'if (-not $samples) {',
+      "  $setName = Get-LocalizedName 'GPU Adapter Memory'",
+      "  $dedName = Get-LocalizedName 'Dedicated Usage'",
+      "  $shrName = Get-LocalizedName 'Shared Usage'",
+      '  $paths = @("\\$setName(*)\\$dedName", "\\$setName(*)\\$shrName")',
+      '  $samples = (Get-Counter -Counter $paths -ErrorAction SilentlyContinue).CounterSamples',
+      '}',
+      '$dedSuffix = $dedName.ToLower()',
+      '$agg = @{}',
+      'foreach ($s in $samples) {',
+      '  $inst = $s.InstanceName',
+      '  if (-not $agg.ContainsKey($inst)) { $agg[$inst] = @(0.0, 0.0) }',
+      '  $pair = $agg[$inst]',
+      "  if ($s.Path.ToLower().EndsWith($dedSuffix) -or $s.Path.ToLower().EndsWith('dedicated usage')) {",
+      '    $pair[0] = $pair[0] + [double]$s.CookedValue',
+      '  } else {',
+      '    $pair[1] = $pair[1] + [double]$s.CookedValue',
+      '  }',
+      '  $agg[$inst] = $pair',
+      '}',
+      '$seen = @{}',
+      'foreach ($inst in $agg.Keys) {',
+      "  $luid = ($inst -replace '_phys_\\d+$', '')",
+      '  $entry = $byLuid[$luid]',
+      "  $name = ''",
+      '  $total = 0',
+      '  if ($entry) { $name = $entry[0]; $total = $entry[1] }',
+      '  $seen[$luid] = $true',
+      '  $v = $agg[$inst]',
+      '  "$inst|$name|$total|$($v[0])|$($v[1])"',
+      '}',
+      // Adaptéry z registru, které nemají instanci čítače (např. nepoužívané)
+      'foreach ($k in $byLuid.Keys) {',
+      '  if (-not $seen[$k]) {',
+      '    $e = $byLuid[$k]',
+      '    "${k}_phys_0|$($e[0])|$($e[1])||"',
+      '  }',
+      '}'
+    ].join('\n')
+
+    const { stdout } = await execFileAsync(
+      'powershell',
+      ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+      { timeout: 10000, windowsHide: true }
+    )
+
+    const rows: AdapterRow[] = []
+    for (const line of stdout.split(/\r?\n/)) {
+      const parts = line.trim().split('|')
+      if (parts.length < 4 || !parts[0]) continue
+      const totalBytes = parseFloat(parts[2])
+      const usedBytes = parseFloat(parts[3])
+      const sharedBytes = parseFloat(parts[4] ?? '')
+      rows.push({
+        key: parts[0].toLowerCase(),
+        name: parts[1] || parts[0],
+        totalMb: Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes / (1024 * 1024) : null,
+        usedMb: Number.isFinite(usedBytes) ? usedBytes / (1024 * 1024) : null,
+        sharedMb: Number.isFinite(sharedBytes) ? sharedBytes / (1024 * 1024) : null
+      })
+    }
+    adapterCache = { rows, at: Date.now() }
+    return rows
+  } catch {
+    return []
   }
 }
 
@@ -151,9 +343,14 @@ export type GpuMemorySource = 'nvidia-smi' | 'perf-counter' | 'process-list'
 export interface GpuProcess {
   pid: number
   processName: string
-  /** null = zdroj nevrátil číslo (typicky nvidia-smi [N/A] na WDDM) */
+  /** rezidentní paměť v VRAM adaptéru; null = zdroj nevrátil číslo */
   gpuMemoryMb: number | null
   source: GpuMemorySource
+  /** adaptér, na kterém paměť leží; null = zdroj GPU nerozlišuje */
+  adapterKey: string | null
+  adapterName: string | null
+  /** UUID karty z nvidia-smi; mimo Windows podle něj přiřazujeme proces k adaptéru */
+  gpuUuid?: string | null
 }
 
 export interface SystemMemory {
@@ -171,6 +368,8 @@ export interface CpuInfo {
 
 export interface ResourceUsageData {
   gpu: GpuMetrics | null
+  /** všechny zobrazovací adaptéry včetně iGPU a virtuálních */
+  adapters: GpuAdapter[]
   gpuAvailable: boolean
   /** false, když per-proces VRAM neumí ani nvidia-smi, ani výkonnostní čítače */
   perProcessVramAvailable: boolean
@@ -193,8 +392,8 @@ export async function collectResourceUsage(
   servePid: number | null,
   serveStatus: string
 ): Promise<ResourceUsageData> {
-  const [gpu, smiProcesses, perfProcesses, ollamaProcs, ps, serveMemory, cpu] = await Promise.all([
-    getGpuMetrics(),
+  const [nvidiaGpus, smiRows, perfRows, ollamaProcs, ps, serveMemory, cpu] = await Promise.all([
+    getNvidiaGpus(),
     getGpuProcessesFromSmi(),
     getGpuProcessesFromPerfCounters(),
     getOllamaRelatedProcesses(servePid),
@@ -202,6 +401,29 @@ export async function collectResourceUsage(
     getProcessMemory(servePid),
     getCpuInfo()
   ])
+
+  const gpu = nvidiaGpus[0] ?? null
+  const adapters = await getGpuAdapters(nvidiaGpus)
+  const adapterNames = new Map(adapters.map((a) => [a.key, a.name]))
+  // Mimo Windows (a v TCC režimu) je UUID jediná vazba procesu na konkrétní kartu.
+  const keyByUuid = new Map(
+    adapters.filter((a) => a.nvidia?.uuid).map((a) => [a.nvidia?.uuid as string, a.key])
+  )
+  // Když je NVIDIA jediný adaptér, patří jí i řádky z nvidia-smi bez UUID.
+  const soleNvidiaKey = adapters.filter((a) => a.nvidia).length === 1
+    ? (adapters.find((a) => a.nvidia)?.key ?? null)
+    : null
+
+  const withAdapter = (row: GpuProcess): GpuProcess => {
+    const key =
+      row.adapterKey ??
+      (row.gpuUuid ? keyByUuid.get(row.gpuUuid) ?? null : null) ??
+      (row.source === 'nvidia-smi' ? soleNvidiaKey : null)
+    return { ...row, adapterKey: key, adapterName: key ? adapterNames.get(key) ?? null : null }
+  }
+
+  const smiProcesses = smiRows.map(withAdapter)
+  const perfProcesses = perfRows.map(withAdapter)
 
   const loadedModels = ps.map((p) => ({
     name: p.name,
@@ -212,8 +434,8 @@ export async function collectResourceUsage(
   const modelVramMb =
     loadedModels.reduce((sum, m) => sum + m.sizeVram, 0) / (1024 * 1024)
 
-  const smiByPid = new Map(smiProcesses.map((p) => [p.pid, p]))
-  const perfByPid = new Map(perfProcesses.map((p) => [p.pid, p]))
+  const smiByPid = groupByPid(smiProcesses)
+  const perfByPid = groupByPid(perfProcesses)
 
   // Výkonnostní čítače Windows fungují i na WDDM, kde nvidia-smi vrací [N/A].
   const perProcessSource: GpuMemorySource | null = perfProcesses.some(
@@ -251,6 +473,7 @@ export async function collectResourceUsage(
 
   return {
     gpu,
+    adapters,
     gpuAvailable: gpu !== null,
     perProcessVramAvailable,
     perProcessSource,
@@ -351,15 +574,59 @@ export function parseGpuMemoryMb(raw: string | undefined): number | null {
 /** Alokace menší než tato hodnota nepovažujeme za spotřebu aplikace. */
 const MIN_LISTED_VRAM_MB = 1
 
+/**
+ * PowerShell helper, který přeloží anglický název čítače na lokalizovaný přes Perflib
+ * registr (index je jazykově neutrální). Bez něj by na neanglických Windows selhaly
+ * cesty typu `\GPU Process Memory(*)\Local Usage`.
+ */
+function localizedCounterHelper(): string[] {
+  return [
+    '$script:PerfNameCache = $null',
+    'function Get-LocalizedName([string]$english) {',
+    '  if ($null -eq $script:PerfNameCache) {',
+    "    $base = 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Perflib'",
+    "    $en = (Get-ItemProperty \"$base\\009\" -ErrorAction SilentlyContinue).Counter",
+    "    $loc = (Get-ItemProperty \"$base\\CurrentLanguage\" -ErrorAction SilentlyContinue).Counter",
+    '    $map = @{}',
+    '    if ($en -and $loc) {',
+    '      $byIndex = @{}',
+    '      for ($i = 0; $i -lt $loc.Length - 1; $i += 2) { $byIndex[$loc[$i]] = $loc[$i + 1] }',
+    '      for ($i = 0; $i -lt $en.Length - 1; $i += 2) {',
+    '        $name = $en[$i + 1]',
+    '        if ($name -and -not $map.ContainsKey($name)) {',
+    '          $t = $byIndex[$en[$i]]',
+    '          if ($t) { $map[$name] = $t }',
+    '        }',
+    '      }',
+    '    }',
+    '    $script:PerfNameCache = $map',
+    '  }',
+    '  $hit = $script:PerfNameCache[$english]',
+    '  if ($hit) { return $hit }',
+    '  return $english',
+    '}'
+  ]
+}
+
 /** Čítače dávají jméno bez přípony, nvidia-smi celou cestu — sjednocujeme na kratší tvar. */
 function displayProcessName(
   pid: number,
-  perfByPid: Map<number, GpuProcess>,
-  smiByPid: Map<number, GpuProcess>,
+  perfByPid: Map<number, GpuProcess[]>,
+  smiByPid: Map<number, GpuProcess[]>,
   fallback: string
 ): string {
-  const name = perfByPid.get(pid)?.processName ?? smiByPid.get(pid)?.processName ?? fallback
+  const name = perfByPid.get(pid)?.[0]?.processName ?? smiByPid.get(pid)?.[0]?.processName ?? fallback
   return basenameProcess(name)
+}
+
+function groupByPid(rows: GpuProcess[]): Map<number, GpuProcess[]> {
+  const map = new Map<number, GpuProcess[]>()
+  for (const row of rows) {
+    const list = map.get(row.pid)
+    if (list) list.push(row)
+    else map.set(row.pid, [row])
+  }
+  return map
 }
 
 function basenameProcess(pathOrName: string): string {
@@ -388,71 +655,87 @@ function compareGpuMemoryDesc(a: GpuProcess, b: GpuProcess): number {
   return bv - av
 }
 
+/**
+ * Sloučí Ollama procesy ze všech zdrojů. Proces běžící na více adaptérech dostane
+ * řádek pro každý z nich, aby šla VRAM rozlišit podle GPU.
+ */
 function mergeOllamaProcesses(
   discovered: GpuProcess[],
-  smiByPid: Map<number, GpuProcess>,
-  perfByPid: Map<number, GpuProcess>,
+  smiByPid: Map<number, GpuProcess[]>,
+  perfByPid: Map<number, GpuProcess[]>,
   servePid: number | null
 ): GpuProcess[] {
-  const byPid = new Map<number, GpuProcess>()
+  const fallbackNames = new Map<number, string>()
+  for (const p of discovered) fallbackNames.set(p.pid, p.processName)
 
-  const resolve = (pid: number, fallbackName: string): GpuProcess => {
-    const perfMb = perfByPid.get(pid)?.gpuMemoryMb ?? null
-    const smiMb = smiByPid.get(pid)?.gpuMemoryMb ?? null
-    return {
-      pid,
-      processName: displayProcessName(pid, perfByPid, smiByPid, fallbackName),
-      gpuMemoryMb: perfMb ?? smiMb,
-      source: perfMb != null ? 'perf-counter' : smiMb != null ? 'nvidia-smi' : 'process-list'
+  // Doplň Ollama PIDy, které vidí nvidia-smi nebo čítače, ale process-list je nechytil
+  for (const rows of [...smiByPid.values(), ...perfByPid.values()]) {
+    for (const p of rows) {
+      if (fallbackNames.has(p.pid)) continue
+      if (!isOllamaRelatedName(p.processName) && p.pid !== servePid) continue
+      fallbackNames.set(p.pid, p.processName)
     }
   }
 
-  for (const p of discovered) {
-    byPid.set(p.pid, resolve(p.pid, p.processName))
+  const out: GpuProcess[] = []
+  for (const [pid, fallbackName] of fallbackNames) {
+    const processName = displayProcessName(pid, perfByPid, smiByPid, fallbackName)
+    const measured = (perfByPid.get(pid) ?? smiByPid.get(pid) ?? []).filter(
+      (r) => r.gpuMemoryMb != null
+    )
+    if (measured.length === 0) {
+      out.push({
+        pid,
+        processName,
+        gpuMemoryMb: null,
+        source: 'process-list',
+        adapterKey: null,
+        adapterName: null
+      })
+      continue
+    }
+    for (const row of measured) out.push({ ...row, processName })
   }
 
-  // Doplň Ollama PIDy, které vidí nvidia-smi nebo čítače, ale process-list je nechytil
-  for (const p of [...smiByPid.values(), ...perfByPid.values()]) {
-    if (!isOllamaRelatedName(p.processName) && p.pid !== servePid) continue
-    if (byPid.has(p.pid)) continue
-    byPid.set(p.pid, resolve(p.pid, p.processName))
-  }
-
-  return [...byPid.values()]
+  return out
 }
 
 /**
- * Per-proces VRAM z výkonnostních čítačů Windows (\GPU Process Memory\Dedicated Usage).
- * Na rozdíl od nvidia-smi vrací na WDDM skutečná čísla. Hodnoty se sčítají přes všechny
- * instance (adaptéry) jednoho PID.
+ * Per-proces VRAM z výkonnostních čítačů Windows, po adaptérech (LUID v instanci).
+ *
+ * Bereme `Local Usage` = rezidentní paměť na daném adaptéru; její součet přes procesy sedí
+ * na nvidia-smi do pár procent. `Dedicated Usage` nepoužíváme, protože na NVIDIA driveru
+ * hlásí násobky skutečnosti (~11 GB proti 2,4 GB z nvidia-smi), a `Shared Usage` per proces
+ * také ne — kompozitor (dwm) v ní má započítané plochy cizích procesů.
  */
 async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
   if (process.platform !== 'win32') return []
   try {
     const script = [
       "$ErrorActionPreference = 'SilentlyContinue'",
+      ...localizedCounterHelper(),
       'function Get-GpuSamples {',
-      "  $s = (Get-Counter '\\GPU Process Memory(*)\\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples",
+      "  $s = (Get-Counter '\\GPU Process Memory(*)\\Local Usage' -ErrorAction SilentlyContinue).CounterSamples",
       '  if ($s) { return $s }',
-      // Lokalizované Windows mají přeložené názvy čítačů; instance pid_* zůstávají stejné.
-      "  $set = Get-Counter -ListSet * -ErrorAction SilentlyContinue | Where-Object { $_.Paths -match '\\(pid_' } | Select-Object -First 1",
-      '  if (-not $set) { return @() }',
-      "  $path = $set.Counter | Where-Object { $_ -match 'Dedicated' } | Select-Object -First 1",
-      '  if (-not $path) { $path = $set.Counter | Select-Object -First 1 }',
-      '  return (Get-Counter $path -ErrorAction SilentlyContinue).CounterSamples',
+      // Lokalizovaná Windows mají přeložené názvy čítačů; instance pid_* zůstávají stejné.
+      "  $setName = Get-LocalizedName 'GPU Process Memory'",
+      "  $local = Get-LocalizedName 'Local Usage'",
+      '  return (Get-Counter "\\$setName(*)\\$local" -ErrorAction SilentlyContinue).CounterSamples',
       '}',
       '$agg = @{}',
       'foreach ($s in Get-GpuSamples) {',
-      "  if ($s.InstanceName -match 'pid_(\\d+)_' -and $s.CookedValue -gt 0) {",
-      '    $id = [int]$Matches[1]',
-      '    $agg[$id] = [double]$agg[$id] + [double]$s.CookedValue',
+      "  if ($s.InstanceName -match '^pid_(\\d+)_(luid_.+)$' -and $s.CookedValue -gt 0) {",
+      '    $k = "$($Matches[1])|$($Matches[2])"',
+      '    $agg[$k] = [double]$agg[$k] + [double]$s.CookedValue',
       '  }',
       '}',
       'foreach ($k in $agg.Keys) {',
-      '  $p = Get-Process -Id $k -ErrorAction SilentlyContinue',
+      "  $parts = $k -split '\\|'",
+      '  $id = [int]$parts[0]',
+      '  $p = Get-Process -Id $id -ErrorAction SilentlyContinue',
       "  $n = ''",
       '  if ($p) { $n = $p.ProcessName }',
-      '  "$k|$n|$($agg[$k])"',
+      '  "$id|$n|$($agg[$k])|$($parts[1])"',
       '}'
     ].join('\n')
 
@@ -465,15 +748,17 @@ async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
     const out: GpuProcess[] = []
     for (const line of stdout.split(/\r?\n/)) {
       const parts = line.trim().split('|')
-      if (parts.length < 3) continue
+      if (parts.length < 4) continue
       const pid = parseInt(parts[0], 10)
-      const bytes = parseFloat(parts[2])
-      if (!Number.isFinite(pid) || !Number.isFinite(bytes)) continue
+      const localBytes = parseFloat(parts[2])
+      if (!Number.isFinite(pid) || !Number.isFinite(localBytes)) continue
       out.push({
         pid,
         processName: parts[1] || `pid ${pid}`,
-        gpuMemoryMb: bytes / (1024 * 1024),
-        source: 'perf-counter'
+        gpuMemoryMb: localBytes / (1024 * 1024),
+        source: 'perf-counter',
+        adapterKey: parts[3] ? parts[3].toLowerCase() : null,
+        adapterName: null
       })
     }
     return out
@@ -483,25 +768,32 @@ async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
 }
 
 async function getGpuProcessesFromSmi(): Promise<GpuProcess[]> {
+  // gpu_uuid umí až novější nvidia-smi; bez něj jen přijdeme o rozlišení karet
+  const withUuid = await querySmiComputeApps(true)
+  if (withUuid !== null) return withUuid
+  return (await querySmiComputeApps(false)) ?? []
+}
+
+async function querySmiComputeApps(withUuid: boolean): Promise<GpuProcess[] | null> {
   try {
+    const fields = withUuid
+      ? 'pid,process_name,used_gpu_memory,gpu_uuid'
+      : 'pid,process_name,used_gpu_memory'
     const { stdout } = await execFileAsync(
       'nvidia-smi',
-      [
-        '--query-compute-apps=pid,process_name,used_gpu_memory',
-        '--format=csv,noheader,nounits'
-      ],
+      [`--query-compute-apps=${fields}`, '--format=csv,noheader,nounits'],
       { timeout: 5000, windowsHide: true }
     )
     const lines = stdout.trim().split('\n').filter(Boolean)
     const processes: GpuProcess[] = []
     for (const line of lines) {
       const parts = line.split(',').map((s) => s.trim())
-      // process_name může obsahovat čárky ve vzácných cestách — PID první, paměť poslední
-      if (parts.length < 3) continue
-      const pidStr = parts[0]
-      const memStr = parts[parts.length - 1]
-      const processName = parts.slice(1, -1).join(', ')
-      const pid = parseInt(pidStr ?? '', 10)
+      // process_name může obsahovat čárky ve vzácných cestách — PID je první, paměť (a UUID) poslední
+      if (parts.length < (withUuid ? 4 : 3)) continue
+      const uuid = withUuid ? parts[parts.length - 1] : null
+      const memStr = withUuid ? parts[parts.length - 2] : parts[parts.length - 1]
+      const processName = parts.slice(1, withUuid ? -2 : -1).join(', ')
+      const pid = parseInt(parts[0] ?? '', 10)
       if (!Number.isFinite(pid) || !processName || /insufficient permissions/i.test(processName)) {
         continue
       }
@@ -509,12 +801,15 @@ async function getGpuProcessesFromSmi(): Promise<GpuProcess[]> {
         pid,
         processName,
         gpuMemoryMb: parseGpuMemoryMb(memStr),
-        source: 'nvidia-smi'
+        source: 'nvidia-smi',
+        adapterKey: null,
+        adapterName: null,
+        gpuUuid: uuid?.startsWith('GPU-') ? uuid : null
       })
     }
     return processes
   } catch {
-    return []
+    return null
   }
 }
 
@@ -591,7 +886,9 @@ async function getOllamaRelatedProcesses(servePid: number | null): Promise<GpuPr
         pid: row.pid,
         processName: basenameProcess(row.name),
         gpuMemoryMb: null,
-        source: 'process-list' as const
+        source: 'process-list' as const,
+        adapterKey: null,
+        adapterName: null
       }))
   } catch {
     if (servePid != null) {
@@ -600,7 +897,9 @@ async function getOllamaRelatedProcesses(servePid: number | null): Promise<GpuPr
           pid: servePid,
           processName: 'ollama',
           gpuMemoryMb: null,
-          source: 'process-list'
+          source: 'process-list',
+          adapterKey: null,
+          adapterName: null
         }
       ]
     }
@@ -623,7 +922,9 @@ function parsePidNameLines(stdout: string): GpuProcess[] {
       pid,
       processName: basenameProcess(processName),
       gpuMemoryMb: null,
-      source: 'process-list'
+      source: 'process-list',
+      adapterKey: null,
+      adapterName: null
     })
   }
   return out

@@ -115,7 +115,6 @@ export const cs = {
     continueRemoveFailed: 'Odebrání z Continue selhalo',
     opencodeWriteFailed: 'Zápis do OpenCode selhal',
     opencodeRemoveFailed: 'Odebrání z OpenCode selhalo',
-    speedTestFailed: 'Test rychlosti modelu selhal',
     deleteConfirm: 'Smazat model „{name}"?',
     continueRemoveConfirm: 'Odebrat „{name}" z Continue konfigurace?',
     opencodeRemoveConfirm: 'Odebrat „{name}" z OpenCode konfigurace?',
@@ -132,11 +131,7 @@ export const cs = {
     downloading: 'Stahuje se…',
     download: 'Stáhnout',
     loadedInMemory: 'Načteno v paměti',
-    colModel: 'Model',
-    colVram: 'VRAM',
     colActions: 'Akce',
-    showParams: 'Zobrazit všechny parametry',
-    modelParamsAria: 'Parametry modelu {name}',
     unload: 'Uvolnit',
     localModels: 'Lokální modely',
     continuePath: 'Continue:',
@@ -153,15 +148,6 @@ export const cs = {
     inContinue: 'V Continue',
     notInContinue: 'Není',
     load: 'Načíst',
-    speedTest: 'Test rychlosti',
-    speedTesting: 'Testuji…',
-    speedTestTitle: 'Odeslat krátký Hello world prompt a změřit TTFT a rychlost generování',
-    speedResultTitle: 'Rychlost — {name}',
-    speedTtft: 'TTFT',
-    speedTokensPerSecond: 'Generování',
-    speedDetails:
-      '{tokens} výstupních tokenů, {promptTokens} tokenů promptu · celkem {total} ms · načtení modelu {load} ms',
-    speedResponse: 'Odpověď modelu',
     moreActions: 'Další akce',
     moreActionsAria: 'Další akce pro {name}',
     toolContinue: 'Continue',
@@ -222,7 +208,16 @@ export const cs = {
     confirmTitle: 'Restartovat serve?',
     confirmBody:
       'Uloží se nová konfigurace a proces ollama serve se restartuje. Probíhající inference budou přerušeny.',
-    saving: 'Ukládám…'
+    saving: 'Ukládám…',
+    versionLabel: 'Verze Ollama',
+    versionUnknown: 'neznámá (serve neběží)',
+    latestVersion: 'poslední vydaná {version}',
+    checkUpdate: 'Zkontrolovat aktualizaci',
+    checking: 'Kontroluji…',
+    updateAvailable: 'K dispozici je Ollama {latest}, běží {current}.',
+    upToDate: 'Používáte poslední vydanou verzi Ollama.',
+    updateCheckFailed: 'Kontrola aktualizace se nezdařila: {error}',
+    openRelease: 'Otevřít stránku vydání'
   },
   logs: {
     title: 'Logy serve',
@@ -252,7 +247,7 @@ export const cs = {
       ' VRAM u načtených modelů je odhad z Ollama /api/ps (pole size_vram).',
     perfCounterTitle: 'Per-proces VRAM z výkonnostních čítačů Windows',
     perfCounterBody:
-      ' — čítač \\GPU Process Memory(pid_*)\\Dedicated Usage. Na Windows v režimu WDDM vrací nvidia-smi u procesů [N/A], protože paměť spravuje KMD, ne NVIDIA driver. Součet přes procesy se může od celkové VRAM GPU lišit (sdílené a driverové alokace).',
+      ' — čítač \\GPU Process Memory(pid_*)\\Local Usage. Na Windows v režimu WDDM vrací nvidia-smi u procesů [N/A], protože paměť spravuje KMD, ne NVIDIA driver. Součet přes procesy se může od celkové VRAM GPU mírně lišit (driverové alokace).',
     perProcessMissingTitle: 'Per-proces VRAM není dostupné',
     perProcessMissingBody:
       ' — nvidia-smi vrací pro procesy [N/A] a výkonnostní čítače GPU se nepodařilo přečíst. U jednotlivých procesů nezobrazujeme falešné 0 MB.',
@@ -285,6 +280,19 @@ export const cs = {
     colVram: 'VRAM',
     colShare: 'Podíl',
     colSource: 'Zdroj',
+    colGpu: 'GPU',
+    colDedicatedTotal: 'Dedikovaná VRAM',
+    colAdapterUsed: 'Využito',
+    colSharedUsed: 'Sdílená paměť',
+    colProcessSum: 'Součet procesů',
+    colUtilization: 'Vytížení',
+    unknownAdapter: 'neurčeno',
+    processCountAdapters: '{count} procesů na {adapters} adaptérech · {source}',
+    processSumHint:
+      'Součet Local Usage procesů na tomto adaptéru. Bývá nižší než „Využito“ — rozdíl jsou alokace ovladače a dosud neuvolněná cache, které Windows nepřiřazuje žádnému procesu.',
+    adaptersTitle: 'Grafické adaptéry',
+    adaptersHint:
+      'Per-proces VRAM se přiřazuje k adaptéru podle LUID z výkonnostních čítačů, jména adaptérů jsou z DirectX registru. Měříme čítač Local Usage (rezidentní paměť na kartě), protože Dedicated Usage hlásí na NVIDIA driveru násobky skutečnosti. Sdílená paměť je systémová RAM použitá jako GPU paměť — u integrované grafiky nese většinu spotřeby a uvádíme ji jen za celý adaptér, per proces ji kompozitor Windows započítává vícekrát.',
     sourcePerfCounter: 'čítače Windows',
     sourceNvidiaSmi: 'nvidia-smi',
     sourceProcessList: 'seznam procesů'
@@ -300,6 +308,30 @@ export const cs = {
     gpuVram: 'GPU (VRAM)',
     cpuRam: 'CPU (RAM)',
     barTitle: 'GPU {gpu} % · CPU {cpu} %'
+  },
+  speedTest: {
+    action: 'Test rychlosti',
+    running: 'Testuji…',
+    actionTitle: 'Odeslat krátký „Hello world" prompt a změřit TTFT a rychlost generování',
+    failed: 'Test rychlosti modelu selhal',
+    resultTitle: 'Rychlost — {name}',
+    ttft: 'TTFT',
+    ttftHint: 'Čas do prvního tokenu (bez načtení modelu)',
+    throughput: 'Generování',
+    throughputHint: '{tokens} tokenů (eval_count / eval_duration)',
+    promptSpeed: 'Zpracování promptu',
+    promptSpeedHint: '{tokens} tokenů za {ms} ms',
+    method:
+      'Měří se až na načteném modelu po zahřívacím běhu. Měřený prompt je pokaždé unikátní (obchází prompt cache) a vzorkování je deterministické (temperature 0, seed 42), aby byly běhy srovnatelné.',
+    wasLoaded: 'Model byl v paměti už před testem — měření nezahrnuje načtení.',
+    hadToLoad:
+      'Model nebyl v paměti, test ho nejdřív načetl ({load} ms). Načtení ani zahřívací běh se do výsledků nepočítají.',
+    response: 'Odpověď modelu',
+    thinking: 'Reasoning modelu (odpověď zůstala prázdná)',
+    colTtft: 'TTFT',
+    colPrompt: 'Prompt',
+    colResponse: 'Odpověď',
+    notMeasured: 'Nezměřeno — spusťte test rychlosti z nabídky „…"'
   },
   logPanel: {
     filtered: 'Filtrované',

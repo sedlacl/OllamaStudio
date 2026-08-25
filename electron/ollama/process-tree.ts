@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from 'child_process'
+import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'child_process'
 import { existsSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -180,10 +180,9 @@ export function spawnOllamaServe(
   binary: string,
   env: NodeJS.ProcessEnv
 ): ChildProcess {
-  const stdio = ['ignore', 'pipe', 'pipe'] as const
-  const common = {
+  const common: SpawnOptions = {
     env,
-    stdio,
+    stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
     detached: false
   }

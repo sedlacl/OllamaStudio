@@ -5,6 +5,7 @@ import {
   api,
   type AppConfig,
   type OllamaEnvConfig,
+  type OllamaUpdateInfo,
   type ServePresetData,
   type ServeState
 } from '../types/api'
@@ -48,12 +49,26 @@ export default function Server(): JSX.Element {
   const [binary, setBinary] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [confirmRestart, setConfirmRestart] = useState(false)
+  const [update, setUpdate] = useState<OllamaUpdateInfo | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
 
   useEffect(() => {
     api().getServerConfig().then(setConfig).catch(() => {})
     api().getServeStatus().then(setServe).catch(() => {})
     api().detectOllamaBinary().then(setBinary).catch(() => {})
+    api().checkOllamaUpdate().then(setUpdate).catch(() => {})
   }, [])
+
+  const checkUpdate = async (): Promise<void> => {
+    setCheckingUpdate(true)
+    try {
+      setUpdate(await api().checkOllamaUpdate(true))
+    } catch {
+      /* chybu vrací i samotný výsledek v poli error */
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
 
   const updateEnv = (key: keyof OllamaEnvConfig, value: string): void => {
     setConfig((c) => ({ ...c, ollamaEnv: { ...c.ollamaEnv, [key]: value } }))
@@ -80,6 +95,54 @@ export default function Server(): JSX.Element {
         {serve?.pid && (
           <div className="metric-label" style={{ marginTop: 8 }}>
             {t('server.pidServe', { pid: serve.pid })}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <div>
+            <div className="metric-label">{t('server.versionLabel')}</div>
+            <div className="mono">
+              {update?.current ?? t('server.versionUnknown')}
+              {update?.latest && (
+                <span className="metric-label" style={{ margin: 0 }}>
+                  {' '}
+                  · {t('server.latestVersion', { version: update.latest })}
+                </span>
+              )}
+            </div>
+          </div>
+          <button className="btn" onClick={checkUpdate} disabled={checkingUpdate}>
+            {checkingUpdate ? t('server.checking') : t('server.checkUpdate')}
+          </button>
+        </div>
+
+        {update?.error && (
+          <div className="alert" style={{ marginTop: 12, marginBottom: 0 }}>
+            {t('server.updateCheckFailed', { error: update.error })}
+          </div>
+        )}
+
+        {update && !update.error && update.updateAvailable && (
+          <div className="alert" style={{ marginTop: 12, marginBottom: 0 }}>
+            {t('server.updateAvailable', {
+              latest: update.latest ?? '',
+              current: update.current ?? '?'
+            })}{' '}
+            <a
+              href={update.releaseUrl}
+              onClick={(e) => {
+                e.preventDefault()
+                void api().openExternal(update.releaseUrl)
+              }}
+            >
+              {t('server.openRelease')}
+            </a>
+          </div>
+        )}
+
+        {update && !update.error && !update.updateAvailable && update.latest && (
+          <div className="metric-label" style={{ marginTop: 12 }}>
+            {t('server.upToDate')}
           </div>
         )}
       </div>

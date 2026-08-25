@@ -4,6 +4,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  shell,
   Tray
 } from 'electron'
 import { existsSync } from 'fs'
@@ -39,6 +40,12 @@ import {
 } from '../ollama/opencode-config'
 import { killOllamaRelatedProcess } from '../ollama/kill-process'
 import {
+  clearAllSpeedTests,
+  getSpeedTests,
+  recordSpeedTest,
+  removeSpeedTest
+} from '../ollama/speed-test-registry'
+import {
   deletePreset,
   importPresetJson,
   listPresets,
@@ -51,6 +58,8 @@ import { isLocale, setMainLocale, tMain, type Locale } from '../i18n'
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let loadedModelCount = 0
+/** true = zavření okna aplikaci ukončí místo skrytí do tray. */
+let isQuitting = false
 
 function syncLocaleFromConfig(config?: AppConfig): Locale {
   const cfg = config ?? loadConfig()
@@ -100,7 +109,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('close', (event) => {
-    if (!app.isQuitting) {
+    if (!isQuitting) {
       event.preventDefault()
       mainWindow?.hide()
     }
@@ -179,7 +188,7 @@ function updateTrayMenu(): void {
     {
       label: tMain('tray.quit'),
       click: () => {
-        app.isQuitting = true
+        isQuitting = true
         app.quit()
       }
     }
@@ -257,12 +266,32 @@ function registerIpc(): void {
   ipcMain.handle('model-unload', async (_e, name: string) => {
     await ollamaClient.unload(name)
     removeLoadOptions(name)
+    removeSpeedTest(name)
     clearModelLoadState(name)
   })
-  ipcMain.handle('model-test-speed', (_e, name: string) => ollamaClient.testSpeed(name))
+  ipcMain.handle('model-test-speed', async (_e, name: string) => {
+    const result = await ollamaClient.testSpeed(name, getLoadOptions(name)?.options ?? null)
+    recordSpeedTest(name, result)
+    return result
+  })
+
+  ipcMain.handle('get-speed-tests', () => getSpeedTests())
+
+  ipcMain.handle('check-ollama-update', (_e, force?: boolean) =>
+    ollamaClient.checkForUpdate({ force: force === true })
+  )
+
+  // Jen https odkazy, ať z rendereru nejde spustit lokální soubor ani jiný protokol.
+  ipcMain.handle('open-external', async (_e, url: string) => {
+    if (typeof url === 'string' && url.startsWith('https://')) {
+      await shell.openExternal(url)
+    }
+  })
+
   ipcMain.handle('model-delete', async (_e, name: string) => {
     await ollamaClient.delete(name)
     removeLoadOptions(name)
+    removeSpeedTest(name)
   })
   ipcMain.handle('model-copy', (_e, source: string, destination: string) =>
     ollamaClient.copy(source, destination)
@@ -292,6 +321,7 @@ function registerIpc(): void {
     }
     syncLocaleFromConfig(merged)
     clearAllLoadOptions()
+    clearAllSpeedTests()
     await serveManager.saveConfigAndRestart(merged)
     updateTrayMenu()
     return serveManager.getState()
@@ -316,11 +346,13 @@ function registerIpc(): void {
   ipcMain.handle('stop-server', async () => {
     await serveManager.stop()
     clearAllLoadOptions()
+    clearAllSpeedTests()
     return serveManager.getState()
   })
 
   ipcMain.handle('restart-server', async (_e, forceKillConflict?: boolean) => {
     clearAllLoadOptions()
+    clearAllSpeedTests()
     await serveManager.restart(forceKillConflict ?? false)
     return serveManager.getState()
   })
@@ -365,6 +397,7 @@ app.whenReady().then(async () => {
     updateTrayMenu()
     if (state.status === 'stopped' || state.status === 'error') {
       clearAllLoadOptions()
+      clearAllSpeedTests()
     }
   })
 
@@ -389,7 +422,7 @@ app.on('window-all-closed', () => {
 let quittingAfterShutdown = false
 
 app.on('before-quit', (event) => {
-  app.isQuitting = true
+  isQuitting = true
   if (quittingAfterShutdown) return
   event.preventDefault()
   quittingAfterShutdown = true
@@ -397,9 +430,3 @@ app.on('before-quit', (event) => {
     app.quit()
   })
 })
-
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean
-  }
-}

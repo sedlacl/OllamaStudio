@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LoadModelDialog from '../components/LoadModelDialog'
 import ModelOverflowMenu, { type OverflowAction } from '../components/ModelOverflowMenu'
+import ModelSplitTable from '../components/ModelSplitTable'
 import ToolConfigIndicators from '../components/ToolConfigIndicators'
+import { useModelSpeedTest } from '../components/useModelSpeedTest'
 import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
@@ -11,7 +13,6 @@ import {
   type ModelLoadOptions,
   type ModelLoadState,
   type ModelShow,
-  type ModelSpeedTestResult,
   type ModelTag,
   type PullProgress,
   type RunningModel
@@ -53,8 +54,6 @@ export default function Models(): JSX.Element {
   const [loadNotice, setLoadNotice] = useState<string | null>(null)
   const [integrations, setIntegrations] = useState<IntegrationsStatus>(emptyIntegrations)
   const [toolBusy, setToolBusy] = useState<string | null>(null)
-  const [speedBusy, setSpeedBusy] = useState<string | null>(null)
-  const [speedResult, setSpeedResult] = useState<ModelSpeedTestResult | null>(null)
 
   const refreshIntegrations = useCallback(async (names: string[]): Promise<void> => {
     try {
@@ -78,6 +77,10 @@ export default function Models(): JSX.Element {
       setLoading(false)
     }
   }, [refreshIntegrations, t])
+
+  const speedTest = useModelSpeedTest(() => {
+    void refresh()
+  })
 
   useEffect(() => {
     void refresh()
@@ -165,20 +168,6 @@ export default function Models(): JSX.Element {
       setError(e instanceof Error ? e.message : t('models.unloadFailed'))
     } finally {
       setBusy(null)
-    }
-  }
-
-  const handleSpeedTest = async (name: string): Promise<void> => {
-    setSpeedBusy(name)
-    setSpeedResult(null)
-    setError(null)
-    try {
-      setSpeedResult(await api().modelTestSpeed(name))
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t('models.speedTestFailed'))
-    } finally {
-      setSpeedBusy(null)
     }
   }
 
@@ -358,11 +347,11 @@ export default function Models(): JSX.Element {
     items.push(
       {
         id: 'speed-test',
-        label: speedBusy === name ? t('models.speedTesting') : t('models.speedTest'),
-        title: t('models.speedTestTitle'),
-        disabled: speedBusy !== null || isLoading(name),
+        label: speedTest.busyModel === name ? t('speedTest.running') : t('speedTest.action'),
+        title: t('speedTest.actionTitle'),
+        disabled: speedTest.busyModel !== null || isLoading(name),
         separatorBefore: true,
-        onClick: () => void handleSpeedTest(name)
+        onClick: () => speedTest.run(name)
       },
       {
         id: 'detail',
@@ -446,51 +435,26 @@ export default function Models(): JSX.Element {
           <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
             {t('models.loadedInMemory')}
           </h2>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t('models.colModel')}</th>
-                <th>{t('models.colVram')}</th>
-                <th>{t('models.colActions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {running.map((m) => (
-                <tr key={m.name}>
-                  <td className="mono">{m.name}</td>
-                  <td>{m.size_vram ? formatSize(m.size_vram) : '—'}</td>
-                  <td>
-                    <div className="btn-row">
-                      <button
-                        type="button"
-                        className="btn btn-icon"
-                        title={t('models.showParams')}
-                        aria-label={t('models.modelParamsAria', { name: m.name })}
-                        onClick={() => setDetailsModel(m.name)}
-                      >
-                        …
-                      </button>
-                      <button
-                        className="btn"
-                        disabled={busy === m.name}
-                        onClick={() => handleUnload(m.name)}
-                      >
-                        {t('models.unload')}
-                      </button>
-                      <button
-                        className="btn"
-                        disabled={speedBusy !== null}
-                        title={t('models.speedTestTitle')}
-                        onClick={() => void handleSpeedTest(m.name)}
-                      >
-                        {speedBusy === m.name ? t('models.speedTesting') : t('models.speedTest')}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ModelSplitTable
+            models={running.map((m) => ({
+              name: m.name,
+              size: m.size,
+              sizeVram: m.size_vram ?? 0
+            }))}
+            onDetails={setDetailsModel}
+            onSpeedTestFinished={() => {
+              void refresh()
+            }}
+            extraActions={(name) => [
+              {
+                id: 'unload',
+                label: t('models.unload'),
+                disabled: busy === name,
+                separatorBefore: true,
+                onClick: () => void handleUnload(name)
+              }
+            ]}
+          />
         </div>
       )}
 
@@ -635,42 +599,7 @@ export default function Models(): JSX.Element {
         </div>
       )}
 
-      {speedResult && (
-        <div className="modal-backdrop" onClick={() => setSpeedResult(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>{t('models.speedResultTitle', { name: speedResult.model })}</h3>
-            <div className="card-grid" style={{ marginTop: 16 }}>
-              <div className="card">
-                <div className="metric-label">{t('models.speedTtft')}</div>
-                <div className="metric-value">{speedResult.ttftMs.toFixed(0)} ms</div>
-              </div>
-              <div className="card">
-                <div className="metric-label">{t('models.speedTokensPerSecond')}</div>
-                <div className="metric-value">{speedResult.tokensPerSecond.toFixed(1)} tok/s</div>
-              </div>
-            </div>
-            <p className="field-help">
-              {t('models.speedDetails', {
-                tokens: speedResult.generatedTokens,
-                promptTokens: speedResult.promptTokens,
-                total: speedResult.totalMs.toFixed(0),
-                load: speedResult.loadMs.toFixed(0)
-              })}
-            </p>
-            <div className="form-field" style={{ marginTop: 12 }}>
-              <label>{t('models.speedResponse')}</label>
-              <pre className="mono" style={{ maxHeight: 180, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
-                {speedResult.response || '—'}
-              </pre>
-            </div>
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setSpeedResult(null)}>
-                {t('common.close')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {speedTest.dialog}
     </div>
   )
 }

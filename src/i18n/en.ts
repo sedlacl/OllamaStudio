@@ -117,7 +117,6 @@ export const en: MessageTree = {
     continueRemoveFailed: 'Removing from Continue failed',
     opencodeWriteFailed: 'Writing to OpenCode failed',
     opencodeRemoveFailed: 'Removing from OpenCode failed',
-    speedTestFailed: 'Model speed test failed',
     deleteConfirm: 'Delete model “{name}”?',
     continueRemoveConfirm: 'Remove “{name}” from Continue config?',
     opencodeRemoveConfirm: 'Remove “{name}” from OpenCode config?',
@@ -134,11 +133,7 @@ export const en: MessageTree = {
     downloading: 'Downloading…',
     download: 'Download',
     loadedInMemory: 'Loaded in memory',
-    colModel: 'Model',
-    colVram: 'VRAM',
     colActions: 'Actions',
-    showParams: 'Show all parameters',
-    modelParamsAria: 'Parameters for model {name}',
     unload: 'Unload',
     localModels: 'Local models',
     continuePath: 'Continue:',
@@ -155,15 +150,6 @@ export const en: MessageTree = {
     inContinue: 'In Continue',
     notInContinue: 'Not present',
     load: 'Load',
-    speedTest: 'Test speed',
-    speedTesting: 'Testing…',
-    speedTestTitle: 'Send a short Hello world prompt and measure TTFT and generation speed',
-    speedResultTitle: 'Speed — {name}',
-    speedTtft: 'TTFT',
-    speedTokensPerSecond: 'Generation',
-    speedDetails:
-      '{tokens} output tokens, {promptTokens} prompt tokens · {total} ms total · {load} ms model load',
-    speedResponse: 'Model response',
     moreActions: 'More actions',
     moreActionsAria: 'More actions for {name}',
     toolContinue: 'Continue',
@@ -224,7 +210,16 @@ export const en: MessageTree = {
     confirmTitle: 'Restart serve?',
     confirmBody:
       'The new configuration will be saved and the ollama serve process restarted. In-flight inference will be interrupted.',
-    saving: 'Saving…'
+    saving: 'Saving…',
+    versionLabel: 'Ollama version',
+    versionUnknown: 'unknown (serve is not running)',
+    latestVersion: 'latest release {version}',
+    checkUpdate: 'Check for update',
+    checking: 'Checking…',
+    updateAvailable: 'Ollama {latest} is available, you are running {current}.',
+    upToDate: 'You are running the latest released Ollama.',
+    updateCheckFailed: 'Update check failed: {error}',
+    openRelease: 'Open release page'
   },
   logs: {
     title: 'Serve logs',
@@ -254,7 +249,7 @@ export const en: MessageTree = {
       ' VRAM for loaded models is an estimate from Ollama /api/ps (size_vram field).',
     perfCounterTitle: 'Per-process VRAM from Windows performance counters',
     perfCounterBody:
-      ' — counter \\GPU Process Memory(pid_*)\\Dedicated Usage. On Windows in WDDM mode, nvidia-smi returns [N/A] for processes because memory is managed by the KMD, not the NVIDIA driver. The per-process sum may differ from total GPU VRAM (shared and driver allocations).',
+      ' — counter \\GPU Process Memory(pid_*)\\Local Usage. On Windows in WDDM mode, nvidia-smi returns [N/A] for processes because memory is managed by the KMD, not the NVIDIA driver. The per-process sum may differ slightly from total GPU VRAM (driver allocations).',
     perProcessMissingTitle: 'Per-process VRAM is unavailable',
     perProcessMissingBody:
       ' — nvidia-smi returns [N/A] for processes and GPU performance counters could not be read. We do not show fake 0 MB for individual processes.',
@@ -287,6 +282,19 @@ export const en: MessageTree = {
     colVram: 'VRAM',
     colShare: 'Share',
     colSource: 'Source',
+    colGpu: 'GPU',
+    colDedicatedTotal: 'Dedicated VRAM',
+    colAdapterUsed: 'Used',
+    colSharedUsed: 'Shared memory',
+    colProcessSum: 'Process sum',
+    colUtilization: 'Utilization',
+    unknownAdapter: 'unknown',
+    processCountAdapters: '{count} processes across {adapters} adapters · {source}',
+    processSumHint:
+      'Sum of Local Usage across processes on this adapter. It is usually lower than “Used” — the difference is driver allocations and not-yet-released cache that Windows attributes to no process.',
+    adaptersTitle: 'Display adapters',
+    adaptersHint:
+      'Per-process VRAM is attributed to an adapter by the LUID in the performance counters; adapter names come from the DirectX registry. We read the Local Usage counter (memory resident on the card) because Dedicated Usage reports several times the real value on the NVIDIA driver. Shared memory is system RAM used as GPU memory — on integrated graphics it carries most of the usage, and we only report it per adapter because the Windows compositor counts it multiple times per process.',
     sourcePerfCounter: 'Windows counters',
     sourceNvidiaSmi: 'nvidia-smi',
     sourceProcessList: 'process list'
@@ -302,6 +310,30 @@ export const en: MessageTree = {
     gpuVram: 'GPU (VRAM)',
     cpuRam: 'CPU (RAM)',
     barTitle: 'GPU {gpu} % · CPU {cpu} %'
+  },
+  speedTest: {
+    action: 'Test speed',
+    running: 'Testing…',
+    actionTitle: 'Send a short “Hello world” prompt and measure TTFT and generation speed',
+    failed: 'Model speed test failed',
+    resultTitle: 'Speed — {name}',
+    ttft: 'TTFT',
+    ttftHint: 'Time to first token (model load excluded)',
+    throughput: 'Generation',
+    throughputHint: '{tokens} tokens (eval_count / eval_duration)',
+    promptSpeed: 'Prompt processing',
+    promptSpeedHint: '{tokens} tokens in {ms} ms',
+    method:
+      'Measured on an already loaded model after a warm-up run. The measured prompt is unique on every run (bypasses the prompt cache) and sampling is deterministic (temperature 0, seed 42) so runs stay comparable.',
+    wasLoaded: 'The model was already in memory — the measurement excludes loading.',
+    hadToLoad:
+      'The model was not in memory, so the test loaded it first ({load} ms). Neither the load nor the warm-up run counts towards the results.',
+    response: 'Model response',
+    thinking: 'Model reasoning (the response stayed empty)',
+    colTtft: 'TTFT',
+    colPrompt: 'Prompt',
+    colResponse: 'Response',
+    notMeasured: 'Not measured — run the speed test from the “…” menu'
   },
   logPanel: {
     filtered: 'Filtered',

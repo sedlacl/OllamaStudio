@@ -41,12 +41,29 @@ export interface ModelSpeedTestResult {
   model: string
   prompt: string
   response: string
+  /** Čas do prvního tokenu měřeného běhu — model už je načtený a zahřátý. */
   ttftMs: number
   tokensPerSecond: number
   generatedTokens: number
-  totalMs: number
-  loadMs: number
+  /** Reasoning výstup u modelů s thinking parserem; `response` bývá u nich prázdné. */
+  thinking: string
+  promptTokensPerSecond: number
   promptTokens: number
+  promptEvalMs: number
+  totalMs: number
+  /** Doba načtení modelu do paměti; 0 = model už běžel. */
+  loadMs: number
+  /** false = model se kvůli testu musel načíst (načtení se do TTFT nepočítá). */
+  wasLoaded: boolean
+}
+
+export interface OllamaUpdateInfo {
+  current: string | null
+  latest: string | null
+  updateAvailable: boolean
+  releaseUrl: string
+  checkedAt: number
+  error?: string
 }
 
 export interface ServeState {
@@ -183,6 +200,8 @@ export interface RequestHistoryItem {
 
 export interface DashboardData {
   gpu: {
+    /** index z nvidia-smi; null u adaptérů, které nvidia-smi nevidí */
+    index?: number | null
     name: string
     memoryUsedMb: number
     memoryTotalMb: number
@@ -207,13 +226,32 @@ export type GpuMemorySource = 'nvidia-smi' | 'perf-counter' | 'process-list'
 export interface GpuProcessInfo {
   pid: number
   processName: string
-  /** null = hodnota není dostupná (např. nvidia-smi [N/A] na WDDM) */
+  /** rezidentní paměť ve VRAM adaptéru; null = hodnota není dostupná */
   gpuMemoryMb: number | null
   source: GpuMemorySource
+  /** adaptér, na kterém paměť leží; null = zdroj GPU nerozlišuje */
+  adapterKey: string | null
+  adapterName: string | null
+}
+
+export interface GpuAdapterInfo {
+  key: string
+  name: string
+  dedicatedTotalMb: number | null
+  dedicatedUsedMb: number | null
+  sharedUsedMb: number | null
+  nvidia: {
+    index: number | null
+    name: string
+    memoryUsedMb: number
+    memoryTotalMb: number
+    utilizationPercent: number | null
+  } | null
 }
 
 export interface ResourceUsageData {
   gpu: DashboardData['gpu']
+  adapters: GpuAdapterInfo[]
   gpuAvailable: boolean
   /** false, když per-proces VRAM neumí ani nvidia-smi, ani výkonnostní čítače */
   perProcessVramAvailable: boolean
@@ -342,6 +380,9 @@ export interface Api {
   modelLoad: (name: string, options?: ModelLoadOptions) => Promise<ModelLoadResult>
   modelUnload: (name: string) => Promise<void>
   modelTestSpeed: (name: string) => Promise<ModelSpeedTestResult>
+  getSpeedTests: () => Promise<Record<string, ModelSpeedTestResult>>
+  checkOllamaUpdate: (force?: boolean) => Promise<OllamaUpdateInfo>
+  openExternal: (url: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>

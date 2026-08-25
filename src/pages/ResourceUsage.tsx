@@ -23,14 +23,17 @@ function formatBytes(bytes: number): string {
 function ProcessTable({
   rows,
   emptyLabel,
-  scaleMb,
+  scaleFor,
+  showAdapter,
   servePid,
   killingPid,
   onKill
 }: {
   rows: GpuProcessInfo[]
   emptyLabel: string
-  scaleMb: number | null
+  /** základ pro výpočet podílu — podle GPU, na které řádek leží */
+  scaleFor: (row: GpuProcessInfo) => number | null
+  showAdapter: boolean
   servePid?: number | null
   killingPid?: number | null
   onKill?: (pid: number, processName: string) => void
@@ -68,6 +71,7 @@ function ProcessTable({
         <tr>
           <th>{t('resources.colPid')}</th>
           <th>{t('resources.colProcess')}</th>
+          {showAdapter && <th>{t('resources.colGpu')}</th>}
           <th>{t('resources.colVram')}</th>
           <th style={{ width: '30%' }}>{t('resources.colShare')}</th>
           <th>{t('resources.colSource')}</th>
@@ -76,13 +80,14 @@ function ProcessTable({
       </thead>
       <tbody>
         {rows.map((p) => {
+          const scaleMb = scaleFor(p)
           const share =
             scaleMb && scaleMb > 0 && p.gpuMemoryMb != null
               ? (p.gpuMemoryMb / scaleMb) * 100
               : null
           const isServe = servePid != null && p.pid === servePid
           return (
-            <tr key={p.pid}>
+            <tr key={`${p.pid}-${p.adapterKey ?? 'none'}`}>
               <td className="mono">
                 {p.pid}
                 {isServe && (
@@ -92,6 +97,15 @@ function ProcessTable({
                 )}
               </td>
               <td className="mono">{p.processName}</td>
+              {showAdapter && (
+                <td title={p.adapterKey ?? undefined}>
+                  {p.adapterName ?? (
+                    <span className="metric-label" style={{ margin: 0 }}>
+                      {t('resources.unknownAdapter')}
+                    </span>
+                  )}
+                </td>
+              )}
               <td>{formatGpuMemory(p.gpuMemoryMb)}</td>
               <td>
                 {share != null ? (
@@ -249,6 +263,25 @@ export default function ResourceUsage(): JSX.Element {
   const otherGpuProcs =
     data?.gpuProcesses.filter((p) => !ollamaPids.has(p.pid) && p.pid !== servePid) ?? []
 
+  const adapters = data?.adapters ?? []
+  const showAdapterColumn = adapters.length > 1
+  const adapterByKey = new Map(adapters.map((a) => [a.key, a]))
+  /** VRAM adaptéru, na kterém proces běží; bez přiřazení padáme na celkovou škálu */
+  const scaleForRow = (row: GpuProcessInfo): number | null => {
+    const adapter = row.adapterKey ? adapterByKey.get(row.adapterKey) : undefined
+    return adapter?.dedicatedTotalMb ?? shareScaleMb
+  }
+
+  const adaptersInUse = new Set(
+    (data?.gpuProcesses ?? []).filter((p) => p.adapterKey).map((p) => p.adapterKey)
+  ).size
+
+  /** Součet per-proces VRAM na daném adaptéru */
+  const adapterProcessSumMb = (key: string): number =>
+    (data?.gpuProcesses ?? [])
+      .filter((p) => p.adapterKey === key)
+      .reduce((sum, p) => sum + (p.gpuMemoryMb ?? 0), 0)
+
   const modelVramTotal =
     data?.loadedModels.reduce((sum, m) => sum + m.sizeVram, 0) ?? 0
 
@@ -356,12 +389,18 @@ export default function ResourceUsage(): JSX.Element {
             {perProcessTotal != null ? formatMb(perProcessTotal) : '—'}
           </div>
           <div className="metric-label">
-            {perProcessOk
-              ? t('resources.processCount', {
-                  count: data?.gpuProcesses.length ?? 0,
-                  source: sourceLabel(perProcessSource)
-                })
-              : t('resources.sourceUnavailable')}
+            {!perProcessOk
+              ? t('resources.sourceUnavailable')
+              : adaptersInUse > 1
+                ? t('resources.processCountAdapters', {
+                    count: data?.gpuProcesses.length ?? 0,
+                    adapters: adaptersInUse,
+                    source: sourceLabel(perProcessSource)
+                  })
+                : t('resources.processCount', {
+                    count: data?.gpuProcesses.length ?? 0,
+                    source: sourceLabel(perProcessSource)
+                  })}
           </div>
         </div>
 
@@ -399,6 +438,57 @@ export default function ResourceUsage(): JSX.Element {
         </div>
       </div>
 
+      {adapters.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h2 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600 }}>
+            {t('resources.adaptersTitle')}
+          </h2>
+          <p className="metric-label" style={{ margin: '0 0 12px' }}>
+            {t('resources.adaptersHint')}
+          </p>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>{t('resources.colGpu')}</th>
+                <th>{t('resources.colDedicatedTotal')}</th>
+                <th>{t('resources.colAdapterUsed')}</th>
+                <th>{t('resources.colSharedUsed')}</th>
+                <th>{t('resources.colProcessSum')}</th>
+                <th>{t('resources.colUtilization')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adapters.map((a) => {
+                const processSum = adapterProcessSumMb(a.key)
+                return (
+                  <tr key={a.key}>
+                    <td title={a.key}>
+                      {a.name}
+                      {a.nvidia?.index != null && (
+                        <span className="metric-label" style={{ margin: '0 0 0 6px' }}>
+                          nvidia-smi #{a.nvidia.index}
+                        </span>
+                      )}
+                    </td>
+                    <td>{a.dedicatedTotalMb != null ? formatMb(a.dedicatedTotalMb) : '—'}</td>
+                    <td>{a.dedicatedUsedMb != null ? formatMb(a.dedicatedUsedMb) : '—'}</td>
+                    <td>{a.sharedUsedMb != null ? formatMb(a.sharedUsedMb) : '—'}</td>
+                    <td title={t('resources.processSumHint')}>
+                      {processSum > 0 ? formatMb(processSum) : '—'}
+                    </td>
+                    <td>
+                      {a.nvidia?.utilizationPercent != null
+                        ? `${a.nvidia.utilizationPercent} %`
+                        : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
           {t('resources.ollamaProcesses')}
@@ -406,7 +496,8 @@ export default function ResourceUsage(): JSX.Element {
         <ProcessTable
           rows={ollamaGpuProcs}
           emptyLabel={t('resources.ollamaEmpty')}
-          scaleMb={shareScaleMb}
+          scaleFor={scaleForRow}
+          showAdapter={showAdapterColumn}
           servePid={servePid}
           killingPid={killingPid}
           onKill={(pid, name) => void handleKill(pid, name)}
@@ -426,7 +517,8 @@ export default function ResourceUsage(): JSX.Element {
           <ProcessTable
             rows={otherGpuProcs}
             emptyLabel={t('resources.otherEmpty')}
-            scaleMb={shareScaleMb}
+            scaleFor={scaleForRow}
+            showAdapter={showAdapterColumn}
           />
         </div>
       )}

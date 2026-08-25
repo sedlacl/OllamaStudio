@@ -10,11 +10,20 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ### Added
 
-- Test rychlosti u modelu změří TTFT a rychlost generování v tokenech za sekundu pomocí krátkého „Hello world“ promptu
+- Test rychlosti u modelu změří TTFT, rychlost generování a rychlost zpracování promptu; spouští se z nabídky „…“ u modelu
+- Test rychlosti měří až na načteném modelu po zahřívacím běhu, s unikátním promptem a deterministickým vzorkováním; načtení modelu se do TTFT nezapočítává a nepřepisuje keep_alive ani parametry běžícího runneru
+- Tabulka načtených modelů má sloupce TTFT, Prompt a Odpověď s posledním naměřeným výsledkem; hodnoty přežijí přepnutí stránky a mizí při uvolnění modelu nebo restartu serve
+- Stránka Server hlásí verzi Ollama a upozorní, když je na GitHubu novější vydání (odkaz otevře stránku vydání v prohlížeči)
+- GPU a paměť rozlišuje jednotlivé grafické adaptéry: tabulka adaptérů (dedikovaná VRAM, využití, sdílená paměť, součet procesů, vytížení) a sloupec GPU u procesů, když je adaptérů víc. Na Windows se procesy k adaptéru přiřazují podle LUID z výkonnostních čítačů a jména se berou z DirectX registru, mimo Windows podle UUID karty z nvidia-smi
 
 ### Changed
 
+- Načtené modely vypadají stejně na Přehledu, Využití zdrojů i na stránce Modely — všude je stejná tabulka s rozložením GPU/CPU a jednotnou nabídkou „…“ (parametry, test rychlosti, uvolnění)
 - GitHub Actions release workflow používá checkout/setup-node v5, action-gh-release v3 a Node 22 (konec deprecation Node 20)
+
+### Fixed
+
+- Per-proces VRAM na stránce GPU a paměť ukazovala násobky skutečnosti (dwm třeba 9 GB na 16GB kartě). Čítač Dedicated Usage nahradil Local Usage, jehož součet přes procesy odpovídá nvidia-smi; díky tomu je vidět i integrovaná grafika, která žádnou dedikovanou paměť nemá
 
 ## [1.2.4] — 2026-08-24
 

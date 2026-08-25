@@ -1,4 +1,7 @@
+import ModelOverflowMenu, { type OverflowAction } from './ModelOverflowMenu'
+import { useModelSpeedTest } from './useModelSpeedTest'
 import { useI18n } from '../i18n/I18nProvider'
+import type { ModelSpeedTestResult } from '../types/api'
 
 export interface ModelSplitRow {
   name: string
@@ -11,6 +14,10 @@ export interface ModelSplitRow {
 export interface ModelSplitTableProps {
   models: ModelSplitRow[]
   onDetails: (name: string) => void
+  /** Akce navíc do „…“ menu (např. Uvolnit na stránce Modely). */
+  extraActions?: (name: string) => OverflowAction[]
+  /** Zavolá se po dokončení testu rychlosti (refresh dat stránky). */
+  onSpeedTestFinished?: () => void
 }
 
 function formatMb(mb: number): string {
@@ -56,11 +63,81 @@ function splitOf(m: ModelSplitRow): {
   }
 }
 
+/** TTFT / rychlost promptu / rychlost generování z posledního testu rychlosti. */
+function SpeedCells({
+  result,
+  running
+}: {
+  result: ModelSpeedTestResult | null
+  running: boolean
+}): JSX.Element {
+  const { t } = useI18n()
+
+  if (running) {
+    return (
+      <>
+        <td className="metric-label">…</td>
+        <td className="metric-label">…</td>
+        <td className="metric-label">…</td>
+      </>
+    )
+  }
+
+  if (!result) {
+    const empty = (
+      <span className="metric-label" style={{ margin: 0 }} title={t('speedTest.notMeasured')}>
+        —
+      </span>
+    )
+    return (
+      <>
+        <td>{empty}</td>
+        <td>{empty}</td>
+        <td>{empty}</td>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <td title={t('speedTest.ttftHint')}>{result.ttftMs.toFixed(0)} ms</td>
+      <td title={t('speedTest.promptSpeedHint', {
+        tokens: result.promptTokens,
+        ms: result.promptEvalMs.toFixed(0)
+      })}>
+        {result.promptTokensPerSecond.toFixed(1)} tok/s
+      </td>
+      <td title={t('speedTest.throughputHint', { tokens: result.generatedTokens })}>
+        {result.tokensPerSecond.toFixed(1)} tok/s
+      </td>
+    </>
+  )
+}
+
 export default function ModelSplitTable({
   models,
-  onDetails
+  onDetails,
+  extraActions,
+  onSpeedTestFinished
 }: ModelSplitTableProps): JSX.Element {
   const { t, formatTinyPercent } = useI18n()
+  const speedTest = useModelSpeedTest(onSpeedTestFinished)
+
+  const actionsFor = (name: string): OverflowAction[] => [
+    {
+      id: 'details',
+      label: t('splitTable.showParams'),
+      onClick: () => onDetails(name)
+    },
+    {
+      id: 'speed-test',
+      label: speedTest.busyModel === name ? t('speedTest.running') : t('speedTest.action'),
+      title: t('speedTest.actionTitle'),
+      disabled: speedTest.busyModel !== null,
+      onClick: () => speedTest.run(name)
+    },
+    ...(extraActions?.(name) ?? [])
+  ]
 
   return (
     <>
@@ -72,6 +149,9 @@ export default function ModelSplitTable({
             <th>{t('splitTable.onGpu')}</th>
             <th>{t('splitTable.ramCpu')}</th>
             <th style={{ width: '22%' }}>{t('splitTable.distribution')}</th>
+            <th>{t('speedTest.colTtft')}</th>
+            <th>{t('speedTest.colPrompt')}</th>
+            <th>{t('speedTest.colResponse')}</th>
             <th aria-label={t('common.actions')} />
           </tr>
         </thead>
@@ -109,16 +189,12 @@ export default function ModelSplitTable({
                     </span>
                   )}
                 </td>
+                <SpeedCells
+                  result={speedTest.resultFor(m.name)}
+                  running={speedTest.busyModel === m.name}
+                />
                 <td className="table-actions">
-                  <button
-                    type="button"
-                    className="btn btn-icon"
-                    title={t('splitTable.showParams')}
-                    aria-label={t('splitTable.modelParamsAria', { name: m.name })}
-                    onClick={() => onDetails(m.name)}
-                  >
-                    …
-                  </button>
+                  <ModelOverflowMenu modelName={m.name} actions={actionsFor(m.name)} />
                 </td>
               </tr>
             )
@@ -141,6 +217,7 @@ export default function ModelSplitTable({
           {t('splitTable.cpuRam')}
         </span>
       </div>
+      {speedTest.dialog}
     </>
   )
 }

@@ -66,12 +66,22 @@ export interface ModelSpeedTestResult {
   model: string
   prompt: string
   response: string
+  /** Čas do prvního tokenu měřeného běhu — model už je načtený a zahřátý. */
   ttftMs: number
+  /** Generování: eval_count / eval_duration z Ollama. */
   tokensPerSecond: number
   generatedTokens: number
-  totalMs: number
-  loadMs: number
+  /** Reasoning výstup u modelů s thinking parserem; `response` bývá u nich prázdné. */
+  thinking: string
+  /** Zpracování promptu: prompt_eval_count / prompt_eval_duration z Ollama. */
+  promptTokensPerSecond: number
   promptTokens: number
+  promptEvalMs: number
+  totalMs: number
+  /** Doba načtení modelu do paměti; 0 = model už běžel. */
+  loadMs: number
+  /** false = model se kvůli testu musel načíst (načtení se do TTFT nepočítá). */
+  wasLoaded: boolean
 }
 
 export type ServeConnectionStatus = 'connected' | 'disconnected' | 'starting' | 'error'
@@ -85,6 +95,61 @@ export function encodeKeepAlive(value: string): string | number {
   const trimmed = value.trim()
   if (/^-?\d+$/.test(trimmed)) return Number(trimmed)
   return trimmed
+}
+
+interface GenerateMetrics {
+  eval_count?: number
+  eval_duration?: number
+  prompt_eval_count?: number
+  prompt_eval_duration?: number
+  load_duration?: number
+}
+
+/** Verze Ollama z GitHub Releases + porovnání s běžící instalací. */
+export interface OllamaUpdateInfo {
+  current: string | null
+  latest: string | null
+  updateAvailable: boolean
+  releaseUrl: string
+  checkedAt: number
+  error?: string
+}
+
+/** Semver porovnání „v0.32.10" vs „0.32.9"; vrací >0 když je `a` novější. */
+export function compareVersions(a: string, b: string): number {
+  const parse = (value: string): number[] =>
+    value
+      .trim()
+      .replace(/^v/i, '')
+      .split(/[.+-]/)
+      .map((part) => parseInt(part, 10))
+      .filter((part) => Number.isFinite(part))
+
+  const left = parse(a)
+  const right = parse(b)
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+/**
+ * Parametry runneru z /api/generate `options`; musí sedět s načtením, jinak Ollama
+ * runner odstřelí a načte znovu.
+ *
+ * Posílají se jen položky z `api.Runner` (Ollama 0.32): num_ctx, num_batch, num_gpu,
+ * main_gpu, use_mmap, num_thread. `use_mlock` a `rope_frequency_*` už API nezná —
+ * skončily by jen jako `invalid option provided` v logu serveru.
+ */
+function buildRunnerOptions(loadOptions: ModelLoadOptions): Record<string, number | boolean> {
+  const options: Record<string, number | boolean> = {}
+  if (loadOptions.numCtx !== undefined) options.num_ctx = loadOptions.numCtx
+  if (loadOptions.numBatch !== undefined) options.num_batch = loadOptions.numBatch
+  if (loadOptions.numGpu !== undefined) options.num_gpu = loadOptions.numGpu
+  if (loadOptions.numThread !== undefined) options.num_thread = loadOptions.numThread
+  if (loadOptions.useMmap !== undefined) options.use_mmap = loadOptions.useMmap
+  return options
 }
 
 async function httpError(res: Response): Promise<Error> {
@@ -107,10 +172,13 @@ async function httpError(res: Response): Promise<Error> {
 
 export class OllamaClient {
   private static readonly VERSION_CACHE_MS = 10_000
+  private static readonly UPDATE_CACHE_MS = 6 * 60 * 60 * 1000
+  private static readonly RELEASES_URL = 'https://github.com/ollama/ollama/releases/latest'
 
   private baseUrl: string
   private versionCache: { value: string; at: number } | null = null
   private versionFetch: Promise<string> | null = null
+  private updateCache: OllamaUpdateInfo | null = null
 
   constructor(baseUrl?: string) {
     this.baseUrl = baseUrl ?? this.resolveBaseUrl()
@@ -190,6 +258,55 @@ export class OllamaClient {
     return data.version ?? 'unknown'
   }
 
+  /**
+   * Porovná běžící Ollama s posledním GitHub Release. Výsledek se drží v cache,
+   * aby otevření stránky Server netlouklo na GitHub API (limit pro nepřihlášené).
+   */
+  async checkForUpdate(options?: { force?: boolean }): Promise<OllamaUpdateInfo> {
+    const now = Date.now()
+    if (
+      !options?.force &&
+      this.updateCache &&
+      now - this.updateCache.checkedAt < OllamaClient.UPDATE_CACHE_MS
+    ) {
+      return this.updateCache
+    }
+
+    let current: string | null = null
+    try {
+      current = await this.getVersion()
+    } catch {
+      /* serve neběží — verzi nezjistíme, latest ukážeme stejně */
+    }
+
+    const info: OllamaUpdateInfo = {
+      current,
+      latest: null,
+      updateAvailable: false,
+      releaseUrl: OllamaClient.RELEASES_URL,
+      checkedAt: now
+    }
+
+    try {
+      const res = await fetch('https://api.github.com/repos/ollama/ollama/releases/latest', {
+        headers: { Accept: 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(10000)
+      })
+      if (!res.ok) throw await httpError(res)
+      const data = (await res.json()) as { tag_name?: string; html_url?: string }
+      const latest = data.tag_name?.trim().replace(/^v/i, '') ?? null
+      info.latest = latest
+      if (data.html_url) info.releaseUrl = data.html_url
+      info.updateAvailable =
+        latest !== null && current !== null && compareVersions(latest, current) > 0
+    } catch (e) {
+      info.error = e instanceof Error ? e.message : String(e)
+    }
+
+    this.updateCache = info
+    return info
+  }
+
   async getTags(): Promise<ModelTag[]> {
     const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(30000) })
     if (!res.ok) throw await httpError(res)
@@ -216,19 +333,7 @@ export class OllamaClient {
   }
 
   async load(name: string, loadOptions: ModelLoadOptions = { keepAlive: '-1' }): Promise<void> {
-    const options: Record<string, number | boolean> = {}
-    if (loadOptions.numCtx !== undefined) options.num_ctx = loadOptions.numCtx
-    if (loadOptions.numBatch !== undefined) options.num_batch = loadOptions.numBatch
-    if (loadOptions.numGpu !== undefined) options.num_gpu = loadOptions.numGpu
-    if (loadOptions.numThread !== undefined) options.num_thread = loadOptions.numThread
-    if (loadOptions.useMmap !== undefined) options.use_mmap = loadOptions.useMmap
-    if (loadOptions.useMlock !== undefined) options.use_mlock = loadOptions.useMlock
-    if (loadOptions.ropeFrequencyBase !== undefined) {
-      options.rope_frequency_base = loadOptions.ropeFrequencyBase
-    }
-    if (loadOptions.ropeFrequencyScale !== undefined) {
-      options.rope_frequency_scale = loadOptions.ropeFrequencyScale
-    }
+    const options = buildRunnerOptions(loadOptions)
 
     const res = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
@@ -255,17 +360,93 @@ export class OllamaClient {
     if (!res.ok) throw await httpError(res)
   }
 
-  async testSpeed(name: string): Promise<ModelSpeedTestResult> {
-    const prompt = 'Hello world! Reply with a short greeting and one sentence about yourself.'
+  /**
+   * Měření se dělá až na načteném a zahřátém modelu, aby TTFT neobsahoval načtení
+   * modelu a prompt eval nebyl ovlivněný prompt cache z předchozího běhu.
+   * Runner options a keep_alive se přebírají z načtení modelu — jinak by Ollama
+   * runner kvůli odlišným parametrům odstřelila a znovu načetla.
+   */
+  async testSpeed(
+    name: string,
+    loadOptions?: ModelLoadOptions | null
+  ): Promise<ModelSpeedTestResult> {
+    const config = loadConfig()
+    const keepAlive =
+      loadOptions?.keepAlive ?? (config.ollamaEnv.OLLAMA_KEEP_ALIVE.trim() || '5m')
+    const runnerOptions = loadOptions ? buildRunnerOptions(loadOptions) : {}
+
+    const running = await this.getPs()
+    const wasLoaded = running.some((m) => m.name === name || m.model === name)
+
+    let loadMs = 0
+    if (!wasLoaded) {
+      const loadStartedAt = performance.now()
+      await this.load(name, { ...(loadOptions ?? {}), keepAlive })
+      loadMs = performance.now() - loadStartedAt
+    }
+
+    // Zahřívací běh: jiný prompt než měřený, aby si měřený běh nesáhl do prompt cache.
+    await this.streamGenerate(name, {
+      prompt: 'Warm-up. Answer with the single word: ready.',
+      keepAlive,
+      options: { ...runnerOptions, num_predict: 8, temperature: 0 }
+    })
+
+    const nonce = Date.now().toString(36)
+    const prompt = `Hello world! Introduce yourself in three sentences. Reference id ${nonce}.`
+    const run = await this.streamGenerate(name, {
+      prompt,
+      keepAlive,
+      // Deterministické vzorkování → srovnatelné běhy; num_predict drží délku výstupu.
+      options: { ...runnerOptions, num_predict: 128, temperature: 0, seed: 42 }
+    })
+
+    const generatedTokens = run.final.eval_count ?? 0
+    const evalSeconds = (run.final.eval_duration ?? 0) / 1e9
+    const promptTokens = run.final.prompt_eval_count ?? 0
+    const promptEvalSeconds = (run.final.prompt_eval_duration ?? 0) / 1e9
+
+    return {
+      model: name,
+      prompt,
+      response: run.response.trim(),
+      thinking: run.thinking.trim(),
+      ttftMs: run.ttftMs,
+      tokensPerSecond: evalSeconds > 0 ? generatedTokens / evalSeconds : 0,
+      generatedTokens,
+      promptTokensPerSecond: promptEvalSeconds > 0 ? promptTokens / promptEvalSeconds : 0,
+      promptTokens,
+      promptEvalMs: promptEvalSeconds * 1000,
+      totalMs: run.totalMs,
+      loadMs: wasLoaded ? 0 : loadMs,
+      wasLoaded
+    }
+  }
+
+  private async streamGenerate(
+    name: string,
+    request: {
+      prompt: string
+      keepAlive: string
+      options: Record<string, number | boolean>
+    }
+  ): Promise<{
+    response: string
+    thinking: string
+    ttftMs: number
+    totalMs: number
+    final: GenerateMetrics
+  }> {
     const startedAt = performance.now()
     const res = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: name,
-        prompt,
+        prompt: request.prompt,
         stream: true,
-        options: { num_predict: 96 }
+        keep_alive: encodeKeepAlive(request.keepAlive),
+        options: request.options
       }),
       signal: AbortSignal.timeout(300000)
     })
@@ -277,29 +458,25 @@ export class OllamaClient {
     const decoder = new TextDecoder()
     let buffer = ''
     let response = ''
+    let thinking = ''
     let firstTokenAt: number | null = null
-    let final: {
-      eval_count?: number
-      eval_duration?: number
-      load_duration?: number
-      prompt_eval_count?: number
-    } = {}
+    let final: GenerateMetrics = {}
 
     const consumeLine = (line: string): void => {
       if (!line.trim()) return
-      const chunk = JSON.parse(line) as {
+      const chunk = JSON.parse(line) as GenerateMetrics & {
         response?: string
+        thinking?: string
         error?: string
         done?: boolean
-        eval_count?: number
-        eval_duration?: number
-        load_duration?: number
-        prompt_eval_count?: number
       }
       if (chunk.error) throw new Error(chunk.error)
-      if (chunk.response) {
+      // Modely s reasoning parserem (glimmer, harmony…) posílají text v `thinking`,
+      // `response` zůstane prázdné — pro TTFT se počítá první token z obojího.
+      if (chunk.response || chunk.thinking) {
         if (firstTokenAt === null) firstTokenAt = performance.now()
-        response += chunk.response
+        response += chunk.response ?? ''
+        thinking += chunk.thinking ?? ''
       }
       if (chunk.done) final = chunk
     }
@@ -316,20 +493,12 @@ export class OllamaClient {
     if (buffer.trim()) consumeLine(buffer)
 
     const finishedAt = performance.now()
-    const generatedTokens = final.eval_count ?? 0
-    const evalSeconds = (final.eval_duration ?? 0) / 1e9
-    const tokensPerSecond = evalSeconds > 0 ? generatedTokens / evalSeconds : 0
-
     return {
-      model: name,
-      prompt,
-      response: response.trim(),
+      response,
+      thinking,
       ttftMs: Math.max(0, (firstTokenAt ?? finishedAt) - startedAt),
-      tokensPerSecond,
-      generatedTokens,
       totalMs: finishedAt - startedAt,
-      loadMs: (final.load_duration ?? 0) / 1e6,
-      promptTokens: final.prompt_eval_count ?? 0
+      final
     }
   }
 
