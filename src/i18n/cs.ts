@@ -344,6 +344,9 @@ export const cs = {
     filterPlaceholder: 'Filtrovat text…',
     paused: 'Pozastaveno',
     autoscroll: 'Autoscroll',
+    copy: 'Kopírovat',
+    copied: 'Zkopírováno',
+    copyTitle: 'Zkopírovat zobrazené řádky do schránky ({count})',
     clear: 'Vymazat',
     empty: 'Žádné logy',
     emptyFiltered: 'Žádné logy (filtr)'

@@ -10,6 +10,7 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ### Added
 
+- Tlačítko Kopírovat v panelu logů zkopíruje do schránky právě zobrazené řádky včetně času, streamu a úrovně
 - Po načtení modelu přes Load se test rychlosti spustí sám a výsledek se jen zapíše do tabulky; ruční spuštění z nabídky „…“ zůstává. Souběžné testy jednoho modelu se odmítnou, ať si na runneru nepřekážejí
 
 ### Fixed

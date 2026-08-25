@@ -71,8 +71,10 @@ export default function LogPanel({
   const [textFilter, setTextFilter] = useState('')
   const [category, setCategory] = useState<FilterCategory>(readStoredFilter)
   const [paused, setPaused] = useState(false)
+  const [copied, setCopied] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(paused)
+  const copyResetRef = useRef<number | null>(null)
 
   useEffect(() => {
     pausedRef.current = paused
@@ -93,6 +95,13 @@ export default function LogPanel({
     panelRef.current.scrollTop = panelRef.current.scrollHeight
   }, [entries, paused])
 
+  useEffect(
+    () => () => {
+      if (copyResetRef.current) window.clearTimeout(copyResetRef.current)
+    },
+    []
+  )
+
   const filtered = entries.filter((e) => {
     if (!matchesCategory(e, category)) return false
     if (textFilter && !e.text.toLowerCase().includes(textFilter.toLowerCase())) return false
@@ -110,6 +119,23 @@ export default function LogPanel({
   const selectCategory = (id: FilterCategory): void => {
     setCategory(id)
     writeStoredFilter(id)
+  }
+
+  /** Kopírují se řádky, které jsou zrovna vidět — s úrovní, o kterou by se barvou přišlo. */
+  const copyLogs = (): void => {
+    const text = filtered
+      .map((e) => `[${formatTime(e.timestamp)}] [${e.stream}] [${e.level.toUpperCase()}] ${e.text}`)
+      .join('\n')
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true)
+        if (copyResetRef.current) window.clearTimeout(copyResetRef.current)
+        copyResetRef.current = window.setTimeout(() => setCopied(false), 1500)
+      })
+      .catch(() => {
+        /* schránka nedostupná */
+      })
   }
 
   const wrapClass = ['log-panel-wrap', compact ? 'compact' : '', fill ? 'fill' : '']
@@ -142,6 +168,14 @@ export default function LogPanel({
         ))}
         <button className={`filter-chip${paused ? ' active' : ''}`} onClick={() => setPaused((p) => !p)}>
           {paused ? t('logPanel.paused') : t('logPanel.autoscroll')}
+        </button>
+        <button
+          className="btn"
+          onClick={copyLogs}
+          disabled={filtered.length === 0}
+          title={t('logPanel.copyTitle', { count: filtered.length })}
+        >
+          {copied ? t('logPanel.copied') : t('logPanel.copy')}
         </button>
         {showClear && (
           <button className="btn" onClick={() => api().clearLogs().then(() => setEntries([]))}>

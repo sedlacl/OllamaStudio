@@ -346,6 +346,9 @@ export const en: MessageTree = {
     filterPlaceholder: 'Filter text…',
     paused: 'Paused',
     autoscroll: 'Autoscroll',
+    copy: 'Copy',
+    copied: 'Copied',
+    copyTitle: 'Copy the visible lines to the clipboard ({count})',
     clear: 'Clear',
     empty: 'No logs',
     emptyFiltered: 'No logs (filtered)'
