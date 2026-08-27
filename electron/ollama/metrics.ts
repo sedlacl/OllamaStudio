@@ -390,13 +390,21 @@ export interface ResourceUsageData {
 export async function collectResourceUsage(
   client: OllamaClient,
   servePid: number | null,
-  serveStatus: string
+  serveStatus: string,
+  options?: {
+    backend?: 'ollama' | 'tabby'
+    managedPids?: number[]
+  }
 ): Promise<ResourceUsageData> {
+  const backend = options?.backend ?? 'ollama'
+  const managedPids = options?.managedPids ?? []
   const [nvidiaGpus, smiRows, perfRows, ollamaProcs, ps, serveMemory, cpu] = await Promise.all([
     getNvidiaGpus(),
     getGpuProcessesFromSmi(),
     getGpuProcessesFromPerfCounters(),
-    getOllamaRelatedProcesses(servePid),
+    backend === 'tabby'
+      ? getManagedBackendProcesses(servePid, managedPids)
+      : getOllamaRelatedProcesses(servePid),
     client.getPs().catch(() => []),
     getProcessMemory(servePid),
     getCpuInfo()
@@ -807,6 +815,68 @@ async function querySmiComputeApps(withUuid: boolean): Promise<GpuProcess[] | nu
     return processes
   } catch {
     return null
+  }
+}
+
+/** Serve PID + potomci / procesy se jménem Ollama / llama runner. */
+async function getManagedBackendProcesses(
+  servePid: number | null,
+  managedPids: number[]
+): Promise<GpuProcess[]> {
+  const pids = new Set<number>(managedPids)
+  if (servePid != null) pids.add(servePid)
+  if (pids.size === 0) return []
+
+  try {
+    if (process.platform === 'win32') {
+      const list = [...pids].join(',')
+      const { stdout } = await execFileAsync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `$ids=@(${list}); Get-CimInstance Win32_Process | Where-Object { $ids -contains $_.ProcessId } | ForEach-Object { "$($_.ProcessId)|$($_.Name)" }`
+        ],
+        { timeout: 8000, windowsHide: true }
+      )
+      return parsePidNameLines(stdout)
+    }
+
+    const out: GpuProcess[] = []
+    for (const pid of pids) {
+      try {
+        const { stdout } = await execFileAsync('ps', ['-o', 'comm=', '-p', String(pid)], {
+          timeout: 3000
+        })
+        out.push({
+          pid,
+          processName: stdout.trim() || 'python',
+          gpuMemoryMb: null,
+          source: 'process-list',
+          adapterKey: null,
+          adapterName: null
+        })
+      } catch {
+        out.push({
+          pid,
+          processName: 'python',
+          gpuMemoryMb: null,
+          source: 'process-list',
+          adapterKey: null,
+          adapterName: null
+        })
+      }
+    }
+    return out
+  } catch {
+    return [...pids].map((pid) => ({
+      pid,
+      processName: 'python',
+      gpuMemoryMb: null,
+      source: 'process-list' as const,
+      adapterKey: null,
+      adapterName: null
+    }))
   }
 }
 

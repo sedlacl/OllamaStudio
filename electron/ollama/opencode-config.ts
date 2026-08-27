@@ -2,8 +2,9 @@ import { homedir } from 'os'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { tMain } from '../i18n'
-import { loadConfig } from './config'
+import { getActiveBackend, loadConfig, tabbyBaseUrl } from './config'
 import { getLoadOptions } from './load-options-registry'
+import { readTabbyAuth } from '../tabby/auth'
 import {
   apiBasesEquivalent,
   displayNameFor,
@@ -61,6 +62,8 @@ const SCHEMA = 'https://opencode.ai/config.json'
 const PROVIDER_NPM = '@ai-sdk/openai-compatible'
 const PROVIDER_NAME = 'Ollama (local)'
 const PROVIDER_ID = 'ollama'
+const TABBY_PROVIDER_ID = 'tabbyapi'
+const TABBY_PROVIDER_NAME = 'TabbyAPI (local)'
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
@@ -279,6 +282,20 @@ function isOllamaProvider(id: string, block: Record<string, unknown>): boolean {
   return /:11434\b/.test(base) || /localhost:11434/i.test(base)
 }
 
+function isTabbyProvider(id: string, block: Record<string, unknown>): boolean {
+  if (id.toLowerCase() === TABBY_PROVIDER_ID) return true
+  if (/tabby/i.test(String(block.name ?? ''))) return true
+  const base = getBaseUrl(block) ?? ''
+  return /:5000\b/.test(base) || (/tabby/i.test(id) && /\/v1$/i.test(base))
+}
+
+function setProviderApiKey(block: Record<string, unknown>, apiKey: string | null): void {
+  const options = asRecord(block.options) ?? {}
+  if (apiKey) options.apiKey = apiKey
+  else delete options.apiKey
+  block.options = options
+}
+
 function providersRoot(doc: Record<string, unknown>): {
   key: 'provider' | 'providers'
   map: Record<string, unknown>
@@ -318,24 +335,51 @@ function findOllamaProvider(doc: Record<string, unknown>): {
   return null
 }
 
+function findTabbyProvider(doc: Record<string, unknown>): {
+  key: 'provider' | 'providers'
+  id: string
+  block: Record<string, unknown>
+} | null {
+  const roots: Array<{ key: 'provider' | 'providers'; map: Record<string, unknown> }> = []
+  const provider = asRecord(doc.provider)
+  const providers = asRecord(doc.providers)
+  if (provider) roots.push({ key: 'provider', map: provider })
+  if (providers) roots.push({ key: 'providers', map: providers })
+
+  for (const root of roots) {
+    const preferred = asRecord(root.map[TABBY_PROVIDER_ID])
+    if (preferred) return { key: root.key, id: TABBY_PROVIDER_ID, block: preferred }
+  }
+  for (const root of roots) {
+    for (const [id, value] of Object.entries(root.map)) {
+      const block = asRecord(value)
+      if (block && isTabbyProvider(id, block)) {
+        return { key: root.key, id, block }
+      }
+    }
+  }
+  return null
+}
+
 function listModelsFromDoc(doc: Record<string, unknown>): OpenCodeModelEntry[] {
-  const found = findOllamaProvider(doc)
-  if (!found) return []
-  const models = asRecord(found.block.models)
-  if (!models) return []
-  const apiBase = getBaseUrl(found.block)
   const entries: OpenCodeModelEntry[] = []
-  for (const [model, value] of Object.entries(models)) {
-    const block = asRecord(value) ?? {}
-    const name = typeof block.name === 'string' && block.name.trim() ? block.name : model
-    entries.push({
-      model,
-      name,
-      apiBase,
-      contextLength: getModelContext(block),
-      outputLength: getModelOutput(block),
-      providerId: found.id
-    })
+  for (const found of [findOllamaProvider(doc), findTabbyProvider(doc)]) {
+    if (!found) continue
+    const models = asRecord(found.block.models)
+    if (!models) continue
+    const apiBase = getBaseUrl(found.block)
+    for (const [model, value] of Object.entries(models)) {
+      const block = asRecord(value) ?? {}
+      const name = typeof block.name === 'string' && block.name.trim() ? block.name : model
+      entries.push({
+        model,
+        name,
+        apiBase,
+        contextLength: getModelContext(block),
+        outputLength: getModelOutput(block),
+        providerId: found.id
+      })
+    }
   }
   return entries
 }
@@ -399,8 +443,29 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
   apiBase: string
   contextLength: number | undefined
   outputLength: number
+  providerId: string
+  apiKey: string | null
 } {
   const config = loadConfig()
+  const backend = getActiveBackend(config)
+  const existing = findOpenCodeModel(ollamaModel)
+
+  if (backend === 'tabby') {
+    const modelId = ollamaModel.trim()
+    const apiBase = ensureOpenAiV1Base(tabbyBaseUrl(config.tabby))
+    const auth = readTabbyAuth(config.tabby)
+    return {
+      model: modelId,
+      name: existing?.name ?? modelId,
+      apiBase,
+      contextLength: existing?.contextLength,
+      outputLength: cappedOutputLimit(existing?.outputLength, existing?.contextLength),
+      providerId: TABBY_PROVIDER_ID,
+      // Jen API klíč — nikdy admin.
+      apiKey: auth.disableAuth ? null : auth.apiKey
+    }
+  }
+
   const base = ollamaModel.replace(/:latest$/i, '')
   const recorded =
     getLoadOptions(ollamaModel) ??
@@ -408,7 +473,6 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
     getLoadOptions(`${base}:latest`)
   const ctxFromLoad = recorded?.options.numCtx
   const ctxFromServer = parseContextLength(config.ollamaEnv.OLLAMA_CONTEXT_LENGTH)
-  const existing = findOpenCodeModel(ollamaModel)
   const modelId = ollamaModel.replace(/:latest$/i, '')
   const contextLength = ctxFromLoad ?? ctxFromServer ?? existing?.contextLength
 
@@ -417,7 +481,9 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
     name: existing?.name ?? displayNameFor(modelId),
     apiBase: ensureOpenAiV1Base(config.ollamaEnv.OLLAMA_HOST),
     contextLength,
-    outputLength: cappedOutputLimit(existing?.outputLength, contextLength)
+    outputLength: cappedOutputLimit(existing?.outputLength, contextLength),
+    providerId: PROVIDER_ID,
+    apiKey: null
   }
 }
 
@@ -493,12 +559,41 @@ function ensureOllamaProvider(doc: Record<string, unknown>, apiBase: string): {
   return { id: PROVIDER_ID, block }
 }
 
+function ensureTabbyProvider(
+  doc: Record<string, unknown>,
+  apiBase: string,
+  apiKey: string | null
+): {
+  id: string
+  block: Record<string, unknown>
+} {
+  const existing = findTabbyProvider(doc)
+  if (existing) {
+    if (!existing.block.npm) existing.block.npm = PROVIDER_NPM
+    if (!existing.block.name) existing.block.name = TABBY_PROVIDER_NAME
+    setBaseUrl(existing.block, apiBase)
+    setProviderApiKey(existing.block, apiKey)
+    if (!asRecord(existing.block.models)) existing.block.models = {}
+    return existing
+  }
+
+  const root = providersRoot(doc)
+  const options: Record<string, unknown> = { baseURL: apiBase }
+  if (apiKey) options.apiKey = apiKey
+  const block: Record<string, unknown> = {
+    npm: PROVIDER_NPM,
+    name: TABBY_PROVIDER_NAME,
+    options,
+    models: {}
+  }
+  root.map[TABBY_PROVIDER_ID] = block
+  return { id: TABBY_PROVIDER_ID, block }
+}
+
 /**
- * Přidá nebo aktualizuje ollama model v globálním opencode.json
- * podle aktuálních settings OllamaStudio (host → baseURL /v1, context + output limit).
- * Sourozencům `limit.output` doplní i srazí pod strop vůči jejich `limit.context`.
- *
- * Formát dle https://opencode.ai/docs/providers/ a schema `limit.context` + `limit.output`.
+ * Přidá nebo aktualizuje model v globálním opencode.json
+ * podle aktivního backendu (Ollama → provider `ollama`, Tabby → `tabbyapi`).
+ * Tabby API klíč zapisuje main proces přímo — nikdy admin klíč.
  */
 export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
   const trimmed = ollamaModel.trim()
@@ -509,7 +604,10 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
   if (exists && invalid) throw new Error(tMain('errors.opencodeInvalidConfig'))
 
   if (!doc.$schema) doc.$schema = SCHEMA
-  const provider = ensureOllamaProvider(doc, settings.apiBase)
+  const provider =
+    settings.providerId === TABBY_PROVIDER_ID
+      ? ensureTabbyProvider(doc, settings.apiBase, settings.apiKey)
+      : ensureOllamaProvider(doc, settings.apiBase)
   const models = asRecord(provider.block.models) ?? {}
   provider.block.models = models
 
@@ -554,7 +652,9 @@ export function removeOpenCodeModel(ollamaModel: string): boolean {
   if (!exists) return false
   if (invalid) throw new Error(tMain('errors.opencodeInvalidConfig'))
 
-  const found = findOllamaProvider(doc)
+  const backend = getActiveBackend()
+  const found =
+    backend === 'tabby' ? findTabbyProvider(doc) : findOllamaProvider(doc)
   if (!found) return false
   const models = asRecord(found.block.models)
   if (!models) return false

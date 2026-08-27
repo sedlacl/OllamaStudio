@@ -6,7 +6,7 @@ import type { OllamaEnvConfig } from './config'
 import { getMainLocale, tMain } from '../i18n'
 import { localeTag } from '../i18n/types'
 
-export type PresetKind = 'load' | 'serve'
+export type PresetKind = 'load' | 'serve' | 'tabby-load'
 
 /** Volba `use_mmap`; `auto` = neposílat a nechat rozhodnout Ollamu. */
 export type MmapPreference = 'auto' | 'on' | 'off'
@@ -31,9 +31,24 @@ export interface ServePresetData {
   autoStartServe: boolean
 }
 
+export interface TabbyLoadPresetData {
+  maxSeqLen: string
+  cacheSize: string
+  cacheMode: string
+  tensorParallel: boolean
+  gpuSplitAuto: boolean
+  gpuSplit: string
+  chunkSize: string
+  outputChunking: boolean
+  vision: boolean
+  mtpEnabled: boolean
+  draftNumTokens: string
+}
+
 export type PresetDataMap = {
   load: LoadPresetData
   serve: ServePresetData
+  'tabby-load': TabbyLoadPresetData
 }
 
 export interface Preset<K extends PresetKind = PresetKind> {

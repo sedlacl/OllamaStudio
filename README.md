@@ -4,8 +4,9 @@
 
 # OllamaStudio
 
-Desktop app for **Windows** and **Linux** (including WSL) that manages a local **Ollama server**.
-OllamaStudio launches `ollama serve` as its own child process, monitors metrics (GPU/CPU/RAM),
+Desktop app for **Windows** and **Linux** (including WSL) that manages a local
+**Ollama** server and, on Windows, an optional **TabbyAPI** backend for **EXL3** models.
+OllamaStudio launches the active backend as its own child process, monitors metrics (GPU/CPU/RAM),
 manages models and shows live logs.
 
 </div>
@@ -17,6 +18,20 @@ manages models and shows live logs.
 - **Node.js** 18+ and npm (on WSL/Linux prefer the Linux Node binary, e.g. `/usr/bin/node`)
 - **Ollama CLI installed** ([ollama.com](https://ollama.com)) — the app does not bundle the CLI
 - For GPU metrics: an NVIDIA GPU and `nvidia-smi` in PATH (per-process VRAM via Windows performance counters is Windows-only; Linux uses nvidia-smi process list when available)
+- **TabbyAPI (optional, Windows):** a separate checkout + Python 3.12 venv (e.g. under `D:\AI\Tabby`). Studio does **not** run `start.bat`; it spawns `venv\Scripts\python.exe main.py` with the install directory as cwd. Keep this venv separate from other tools (e.g. Unsloth).
+
+## Backends
+
+Only **one** managed backend is active at a time. Switching stops the Studio-owned process of the previous backend; an external process already listening on the Tabby port is detected but not killed.
+
+| Backend | Default endpoint | Models |
+|---------|------------------|--------|
+| Ollama (default) | `127.0.0.1:11434` | Ollama library tags |
+| TabbyAPI | `127.0.0.1:5000` | EXL3 folders / HF download |
+
+Tabby auth keys live in `api_tokens.yml` on disk; the UI only shows whether an API/admin key is present. OpenCode gets the **API** key only (never the admin key or a HF token). Continue remains Ollama-only in 1.4.0.
+
+**Known limitation:** Tabby log telemetry is best-effort. When request metrics are missing or unstable, the dashboard shows them as unavailable instead of inventing values. Tabby `/v1/download` itself does not report progress; Studio derives truthful progress from Hugging Face metadata and downloaded bytes on disk, and falls back to an indeterminate status when the total size cannot be determined.
 
 ## Important — port 11434
 

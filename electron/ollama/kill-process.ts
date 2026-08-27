@@ -55,14 +55,17 @@ async function forceKillPid(pid: number): Promise<void> {
 }
 
 /**
- * Ukončí jen Ollama / llama-server procesy.
- * Pokud jde o PID spravovaného `ollama serve`, zavolá stopServe() (čistý shutdown).
+ * Ukončí jen Ollama / llama-server procesy (nebo explicitně povolené PIDy Tabby stromu).
+ * Pokud jde o PID spravovaného serve, zavolá stopServe() (čistý shutdown).
  */
 export async function killOllamaRelatedProcess(
   pid: number,
   options: {
     servePid: number | null
     stopServe: () => Promise<void>
+    /** Povolí ukončení bez kontroly jména (jen v rámci allowedPids). */
+    allowAnyName?: boolean
+    allowedPids?: number[]
   }
 ): Promise<KillProcessResult> {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -80,6 +83,24 @@ export async function killOllamaRelatedProcess(
       return {
         ok: false,
         error: e instanceof Error ? e.message : tMain('errors.stopServeFailed')
+      }
+    }
+  }
+
+  if (options.allowAnyName) {
+    if (!options.allowedPids?.includes(pid)) {
+      return {
+        ok: false,
+        error: tMain('errors.notOllamaProcess', { pid, name: 'unknown' })
+      }
+    }
+    try {
+      await forceKillPid(pid)
+      return { ok: true }
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : tMain('errors.killPidFailed', { pid })
       }
     }
   }

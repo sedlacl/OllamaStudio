@@ -6,6 +6,28 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-08-27
+
+### Added
+
+- Druhý backend **TabbyAPI** pro EXL3 modely (Windows): Studio spravuje oddělenou instalaci (výchozí `D:\AI\Tabby`), spouští `venv\Scripts\python.exe main.py`, přepíná se s Ollamou (vždy jen jeden aktivní)
+- Katalog modelů z Tabby admin API, load dialog s cache bits, GPU split, vision a MTP přes `tabby_config.yml`
+- Stažení z Hugging Face: složka se odvodí sama (`repo` / `repo-revision`), revize lze načíst z Hubu a progress ukazuje skutečná procenta podle velikosti souborů — když total nejde zjistit, zbývá neurčitý stav místo falešných %
+- OpenCode provider `tabbyapi` (`@ai-sdk/openai-compatible`, `http://127.0.0.1:5000/v1`) — API klíč zapisuje main proces, admin klíč do konfigurace nejde
+- Preflight Tabby instalace, fingerprint autentizace bez zobrazení klíčů, test rychlosti přes streamované `/v1/chat/completions`
+
+### Changed
+
+- Stránka Server, Layout a tray ukazují aktivní backend; stránka GPU/paměť popisuje procesy aktivního backendu (ne jen „Ollama“)
+- Log parser a metriky requestů berou Tabby řádky `Received` / `Metrics` / `Finished`; chybějící telemetrie se nehádá
+
+### Fixed
+
+- Při přepnutí backendu se korektně zastaví jen Studiem vlastněný proces; cizí `python.exe` na portu se neukončuje
+- Zástupce v nabídce Start a `OllamaStudio.exe` měly výchozí ikonu Electronu a hlásily se jako Electron 33.4.11; instalátor teď do binárky zapisuje ikonu i verzi aplikace
+- Katalog modelů a admin operace Tabby končily chybou `401 Please provide an API key`. TabbyAPI ověřuje admin endpointy nejdřív API klíčem, takže Studio posílá `x-api-key` i `x-admin-key`
+- Po přerušeném stažení z Hugging Face šlo znovu stáhnout jen ručním smazáním složky. Studio teď pozná existující složku, nabídne smazání, jiný název, nebo použití kompletního modelu — Tabby hlášku „path already exists“ už neukazuje jako syrové HTTP 400
+
 ## [1.3.3] — 2026-08-25
 
 ### Fixed

@@ -358,7 +358,9 @@ export default function ResourceUsage(): JSX.Element {
   const perProcessTotal = data?.perProcessVramTotalMb ?? null
   const shareScaleMb = vramTotal ?? perProcessTotal
 
-  const ollamaGpuProcs = data?.ollamaProcesses ?? []
+  const ollamaGpuProcs = data?.backendProcesses ?? data?.ollamaProcesses ?? []
+  const backendId = data?.backendId ?? 'ollama'
+  const backendName = backendId === 'tabby' ? t('backend.tabby') : t('backend.ollama')
   const ollamaPids = new Set(ollamaGpuProcs.map((p) => p.pid))
   const otherGpuProcs =
     data?.gpuProcesses.filter((p) => !ollamaPids.has(p.pid) && p.pid !== servePid) ?? []
@@ -600,12 +602,12 @@ export default function ResourceUsage(): JSX.Element {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
-          {t('resources.ollamaProcesses')}
+          {t('resources.backendProcesses', { backend: backendName })}
         </h2>
         <ProcessTable
           rows={ollamaGpuProcs}
           adapters={adapters}
-          emptyLabel={t('resources.ollamaEmpty')}
+          emptyLabel={t('resources.backendProcessesEmpty', { backend: backendName })}
           baseFor={shareBaseFor}
           servePid={servePid}
           killingPid={killingPid}
@@ -613,7 +615,7 @@ export default function ResourceUsage(): JSX.Element {
         />
         {!perProcessOk && ollamaGpuProcs.length > 0 && (
           <p className="metric-label" style={{ marginTop: 8 }}>
-            {t('resources.ollamaNoVramHint')}
+            {t('resources.backendNoVramHint', { backend: backendName })}
           </p>
         )}
       </div>

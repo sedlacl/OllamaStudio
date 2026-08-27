@@ -711,6 +711,21 @@ button {
   transition: width 0.2s;
 }
 
+.progress-bar.indeterminate .progress-fill {
+  width: 36%;
+  transition: none;
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(380%);
+  }
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

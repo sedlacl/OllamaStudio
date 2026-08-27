@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LoadModelDialog from '../components/LoadModelDialog'
+import LoadTabbyDialog from '../components/LoadTabbyDialog'
 import ModelOverflowMenu, { type OverflowAction } from '../components/ModelOverflowMenu'
 import ModelSplitTable from '../components/ModelSplitTable'
 import ToolConfigIndicators from '../components/ToolConfigIndicators'
@@ -9,19 +10,39 @@ import { useI18n } from '../i18n/I18nProvider'
 import {
   api,
   type AppConfig,
+  type BackendCapabilities,
+  type BackendId,
   type IntegrationsStatus,
   type ModelLoadOptions,
   type ModelLoadState,
   type ModelShow,
   type ModelTag,
   type PullProgress,
-  type RunningModel
+  type RunningModel,
+  type TabbyDownloadProgress,
+  type TabbyDownloadFolderConflict,
+  type HfRevision,
+  type TabbyLoadOptions
 } from '../types/api'
 
 function formatSize(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
   return `${bytes} B`
+}
+
+function previewHfFolder(repoId: string, revision: string): string {
+  const id = repoId
+    .trim()
+    .replace(/^https?:\/\/huggingface\.co\//i, '')
+    .replace(/^(models|datasets)\//i, '')
+    .replace(/\/+$/, '')
+  const parts = id.split('/').filter(Boolean)
+  const base = parts[parts.length - 1] ?? ''
+  const rev = revision.trim()
+  if (!base) return ''
+  if (!rev || rev.toLowerCase() === 'main') return base
+  return `${base}-${rev}`
 }
 
 function emptyIntegrations(): IntegrationsStatus {
@@ -54,6 +75,23 @@ export default function Models(): JSX.Element {
   const [loadNotice, setLoadNotice] = useState<string | null>(null)
   const [integrations, setIntegrations] = useState<IntegrationsStatus>(emptyIntegrations)
   const [toolBusy, setToolBusy] = useState<string | null>(null)
+  const [activeBackend, setActiveBackend] = useState<BackendId>('ollama')
+  const [capabilities, setCapabilities] = useState<BackendCapabilities | null>(null)
+  const [hfRepoId, setHfRepoId] = useState('')
+  const [hfRevision, setHfRevision] = useState('')
+  const [hfFolderName, setHfFolderName] = useState('')
+  const [hfToken, setHfToken] = useState('')
+  const [hfDownloading, setHfDownloading] = useState(false)
+  const [hfProgress, setHfProgress] = useState<TabbyDownloadProgress | null>(null)
+  const [hfRevisions, setHfRevisions] = useState<HfRevision[]>([])
+  const [hfRevisionsLoading, setHfRevisionsLoading] = useState(false)
+  const [hfRevisionsLoaded, setHfRevisionsLoaded] = useState(false)
+  const [hfRevisionsError, setHfRevisionsError] = useState<string | null>(null)
+  const [hfConflict, setHfConflict] = useState<TabbyDownloadFolderConflict | null>(null)
+  const [hfConflictBusy, setHfConflictBusy] = useState(false)
+  const [hfConflictError, setHfConflictError] = useState<string | null>(null)
+
+  const isTabby = activeBackend === 'tabby'
 
   const refreshIntegrations = useCallback(async (names: string[]): Promise<void> => {
     try {
@@ -91,6 +129,17 @@ export default function Models(): JSX.Element {
   }, [refresh])
 
   useEffect(() => {
+    api()
+      .getServerConfig()
+      .then((cfg) => setActiveBackend(cfg.activeBackend === 'tabby' ? 'tabby' : 'ollama'))
+      .catch(() => {})
+    api()
+      .getBackendCapabilities()
+      .then(setCapabilities)
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
     api().getModelLoadStatus().then(setModelLoads).catch(() => {})
     const unsub = api().onModelLoadStatus((state) => {
       setModelLoads((prev) => {
@@ -118,6 +167,20 @@ export default function Models(): JSX.Element {
     return unsub
   }, [pulling])
 
+  useEffect(() => {
+    if (!hfDownloading) return
+    const unsub = api().onTabbyDownloadProgress((data) => {
+      setHfProgress(data)
+    })
+    return unsub
+  }, [hfDownloading])
+
+  useEffect(() => {
+    setHfRevisions([])
+    setHfRevisionsLoaded(false)
+    setHfRevisionsError(null)
+  }, [hfRepoId])
+
   const isLoading = (name: string): boolean =>
     modelLoads.some((s) => s.name === name && s.status === 'loading')
 
@@ -129,6 +192,10 @@ export default function Models(): JSX.Element {
     setLoadModelInfo(null)
     setLoadServerConfig(null)
     setLoadError(null)
+    if (isTabby) {
+      setLoadLoading(false)
+      return
+    }
     setLoadLoading(true)
     try {
       const [info, config] = await Promise.all([api().modelShow(model.name), api().getServerConfig()])
@@ -141,7 +208,10 @@ export default function Models(): JSX.Element {
     }
   }
 
-  const handleLoad = async (name: string, options?: ModelLoadOptions): Promise<void> => {
+  const handleLoad = async (
+    name: string,
+    options?: ModelLoadOptions | TabbyLoadOptions
+  ): Promise<void> => {
     const result = await api().modelLoad(name, options)
     if (!result.ok) {
       setError(result.error ?? t('models.loadStartFailed'))
@@ -159,7 +229,18 @@ export default function Models(): JSX.Element {
     void handleLoad(modelName, options).catch(() => {})
   }
 
+  const handleTabbyDialogLoad = (options: TabbyLoadOptions): void => {
+    if (!loadModel) return
+    const modelName = loadModel.name
+    setLoadModel(null)
+    setLoadError(null)
+    setLoadNotice(null)
+    setError(null)
+    void handleLoad(modelName, options).catch(() => {})
+  }
+
   const handleUnload = async (name: string): Promise<void> => {
+    if (isTabby && !confirm(t('models.unloadConfirmTabby', { name }))) return
     setBusy(name)
     try {
       await api().modelUnload(name)
@@ -206,6 +287,112 @@ export default function Models(): JSX.Element {
     } else {
       setPullName('')
       await refresh()
+    }
+  }
+
+  const handleHfLoadRevisions = async (): Promise<void> => {
+    const repoId = hfRepoId.trim()
+    if (!repoId) return
+    setHfRevisionsLoading(true)
+    setHfRevisionsError(null)
+    try {
+      const result = await api().tabbyHfRefs({
+        repoId,
+        token: hfToken.trim() || undefined
+      })
+      if (!result.ok) {
+        setHfRevisions([])
+        setHfRevisionsLoaded(true)
+        setHfRevisionsError(result.error ?? t('models.hfRevisionsFailed'))
+        return
+      }
+      setHfRevisions(result.revisions ?? [])
+      setHfRevisionsLoaded(true)
+      setHfRevisionsError(null)
+    } catch (e) {
+      setHfRevisions([])
+      setHfRevisionsLoaded(true)
+      setHfRevisionsError(e instanceof Error ? e.message : t('models.hfRevisionsFailed'))
+    } finally {
+      setHfRevisionsLoading(false)
+    }
+  }
+
+  const handleHfDownload = async (folderOverride?: string): Promise<void> => {
+    const repoId = hfRepoId.trim()
+    if (!repoId) return
+    setHfDownloading(true)
+    setHfProgress(null)
+    setError(null)
+    try {
+      const folderName = (folderOverride ?? hfFolderName).trim() || undefined
+      const result = await api().tabbyDownload({
+        repoId,
+        revision: hfRevision.trim() || undefined,
+        folderName,
+        token: hfToken.trim() || undefined
+      })
+      if (result.folderConflict) {
+        setHfConflict(result.folderConflict)
+        setHfConflictError(null)
+        return
+      }
+      if (!result.ok) {
+        setError(result.error ?? t('models.hfDownloadFailed'))
+      } else {
+        setHfRepoId('')
+        setHfRevision('')
+        setHfFolderName('')
+        setHfToken('')
+        setHfRevisions([])
+        setHfRevisionsLoaded(false)
+        setHfRevisionsError(null)
+        await refresh()
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('models.hfDownloadFailed'))
+    } finally {
+      setHfDownloading(false)
+      setHfProgress(null)
+    }
+  }
+
+  const handleHfUseExisting = async (): Promise<void> => {
+    if (!hfConflict) return
+    const folder = hfConflict.folderName
+    setHfConflict(null)
+    setHfConflictError(null)
+    setLoadNotice(t('models.hfFolderUsedExisting', { folder }))
+    await refresh()
+  }
+
+  const handleHfUseOtherFolder = async (): Promise<void> => {
+    if (!hfConflict) return
+    const name = hfConflict.suggestedFolderName
+    setHfFolderName(name)
+    setHfConflict(null)
+    setHfConflictError(null)
+    await handleHfDownload(name)
+  }
+
+  const handleHfDeleteAndRedownload = async (): Promise<void> => {
+    if (!hfConflict) return
+    if (!confirm(t('models.hfFolderDeleteConfirm', { folder: hfConflict.folderName }))) return
+    setHfConflictBusy(true)
+    setHfConflictError(null)
+    const folder = hfConflict.folderName
+    try {
+      const result = await api().tabbyDeleteDownloadFolder(folder)
+      if (!result.ok) {
+        setHfConflictError(result.error ?? t('models.hfFolderDeleteFailed'))
+        return
+      }
+      setHfConflict(null)
+      await handleHfDownload(folder)
+    } catch (e) {
+      setHfConflictError(e instanceof Error ? e.message : t('models.hfFolderDeleteFailed'))
+    } finally {
+      setHfConflictBusy(false)
     }
   }
 
@@ -308,24 +495,25 @@ export default function Models(): JSX.Element {
     const continuePresent = continueMatch?.state === 'current' || continueMatch?.state === 'stale'
     const opencodePresent = opencodeMatch?.state === 'current' || opencodeMatch?.state === 'stale'
     const busyHere = toolBusy === name
-    const items: OverflowAction[] = [
-      {
+    const items: OverflowAction[] = []
+    if (capabilities?.continueIntegration !== false) {
+      items.push({
         id: 'continue-upsert',
         label: continuePresent ? t('models.updateContinue') : t('models.toContinue'),
         title: continuePresent ? t('models.updateContinueTitle') : t('models.toContinueTitle'),
         disabled: busyHere,
         onClick: () => void handleContinueUpsert(name)
-      }
-    ]
-    if (continuePresent) {
-      items.push({
-        id: 'continue-remove',
-        label: t('models.removeContinue'),
-        title: t('models.removeContinueTitle'),
-        danger: true,
-        disabled: busyHere,
-        onClick: () => void handleContinueRemove(name)
       })
+      if (continuePresent) {
+        items.push({
+          id: 'continue-remove',
+          label: t('models.removeContinue'),
+          title: t('models.removeContinueTitle'),
+          danger: true,
+          disabled: busyHere,
+          onClick: () => void handleContinueRemove(name)
+        })
+      }
     }
     items.push({
       id: 'opencode-upsert',
@@ -357,31 +545,52 @@ export default function Models(): JSX.Element {
         id: 'detail',
         label: t('models.detail'),
         onClick: () => void handleShow(name)
-      },
-      {
+      }
+    )
+    if (capabilities?.cloneModel !== false) {
+      items.push({
         id: 'clone',
         label: t('models.clone'),
         onClick: () => {
           setCloneModal(name)
           setCloneDest(`${name}-copy`)
         }
-      },
-      {
+      })
+    }
+    if (capabilities?.deleteModel !== false) {
+      items.push({
         id: 'delete',
         label: t('models.delete'),
         danger: true,
         disabled: busy === name,
         separatorBefore: true,
         onClick: () => void handleDelete(name)
-      }
-    )
+      })
+    }
     return items
   }
+
+  const currentLoadedId = running.length > 0 ? running[0].name : null
 
   const pullPercent =
     pullProgress?.total && pullProgress.completed
       ? Math.round((pullProgress.completed / pullProgress.total) * 100)
       : null
+
+  const derivedHfFolder = previewHfFolder(hfRepoId, hfRevision)
+  const hfRevisionSelectValue = hfRevisions.some((r) => r.name === hfRevision)
+    ? hfRevision
+    : ''
+  const hfPercent =
+    hfProgress?.percent != null && Number.isFinite(hfProgress.percent)
+      ? hfProgress.percent
+      : null
+  const hfHasDeterminateProgress = hfPercent != null
+  const fieldStyle = {
+    padding: '8px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 6
+  } as const
 
   return (
     <div>
@@ -401,34 +610,160 @@ export default function Models(): JSX.Element {
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="form-field">
-          <label>{t('models.pullLabel')}</label>
-          <div className="btn-row">
+      {capabilities?.hfDownload ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="form-field">
+            <label>{t('models.hfDownloadLabel')}</label>
             <input
               type="text"
-              placeholder={t('models.pullPlaceholder')}
-              value={pullName}
-              onChange={(e) => setPullName(e.target.value)}
-              disabled={pulling}
-              style={{ flex: 1, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
+              placeholder={t('models.hfRepoPlaceholder')}
+              value={hfRepoId}
+              onChange={(e) => setHfRepoId(e.target.value)}
+              disabled={hfDownloading}
+              style={{ marginBottom: 8, width: '100%', ...fieldStyle }}
             />
-            <button className="btn btn-primary" onClick={handlePull} disabled={pulling || !pullName.trim()}>
-              {pulling ? t('models.downloading') : t('models.download')}
-            </button>
-          </div>
-        </div>
-        {pullProgress && (
-          <div style={{ marginTop: 8 }}>
-            <span className="mono">{pullProgress.status}</span>
-            {pullPercent != null && (
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${pullPercent}%` }} />
-              </div>
+            <div className="btn-row" style={{ marginBottom: 8 }}>
+              <button
+                className="btn"
+                onClick={() => void handleHfLoadRevisions()}
+                disabled={hfDownloading || hfRevisionsLoading || !hfRepoId.trim()}
+              >
+                {hfRevisionsLoading ? t('models.hfLoadingRevisions') : t('models.hfLoadRevisions')}
+              </button>
+            </div>
+            {hfRevisionsError && (
+              <p className="field-help" style={{ color: 'var(--error)', marginTop: 0 }}>
+                {hfRevisionsError}
+              </p>
             )}
+            {hfRevisionsLoaded && hfRevisions.length === 0 && !hfRevisionsError && (
+              <p className="field-help" style={{ marginTop: 0 }}>
+                {t('models.hfRevisionsEmpty')}
+              </p>
+            )}
+            <div className="btn-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {hfRevisions.length > 0 && (
+                <select
+                  value={hfRevisionSelectValue}
+                  onChange={(e) => setHfRevision(e.target.value)}
+                  disabled={hfDownloading}
+                  style={{ flex: 1, minWidth: 140, ...fieldStyle }}
+                  aria-label={t('models.hfRevisionPlaceholder')}
+                >
+                  <option value="">{t('models.hfRevisionCustom')}</option>
+                  {hfRevisions.map((r) => (
+                    <option key={`${r.type}:${r.name}`} value={r.name}>
+                      {r.type === 'tag' ? `${r.name} (tag)` : r.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input
+                type="text"
+                list="hf-revision-options"
+                placeholder={t('models.hfRevisionPlaceholder')}
+                value={hfRevision}
+                onChange={(e) => setHfRevision(e.target.value)}
+                disabled={hfDownloading}
+                style={{ flex: 1, minWidth: 120, ...fieldStyle }}
+              />
+              <input
+                type="text"
+                placeholder={derivedHfFolder || t('models.hfFolderPlaceholder')}
+                value={hfFolderName}
+                onChange={(e) => setHfFolderName(e.target.value)}
+                disabled={hfDownloading}
+                style={{ flex: 1, minWidth: 120, ...fieldStyle }}
+              />
+            </div>
+            <datalist id="hf-revision-options">
+              {hfRevisions.map((r) => (
+                <option key={`list-${r.type}:${r.name}`} value={r.name} />
+              ))}
+            </datalist>
+            <span className="field-help">
+              {t('models.hfFolderHelp', { folder: derivedHfFolder || 'repo' })}
+            </span>
+            <input
+              type="password"
+              placeholder={t('models.hfTokenPlaceholder')}
+              value={hfToken}
+              onChange={(e) => setHfToken(e.target.value)}
+              disabled={hfDownloading}
+              autoComplete="off"
+              style={{ marginTop: 8, width: '100%', ...fieldStyle }}
+            />
+            <span className="field-help">{t('models.hfTokenHelp')}</span>
+            <div className="btn-row" style={{ marginTop: 8 }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => void handleHfDownload()}
+                disabled={hfDownloading || hfConflictBusy || !hfRepoId.trim()}
+              >
+                {hfDownloading ? t('models.downloading') : t('models.download')}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+          {(hfDownloading || hfProgress) && (
+            <div style={{ marginTop: 8 }}>
+              <span className="mono">
+                {hfHasDeterminateProgress
+                  ? t('models.hfProgressPercent', { percent: hfPercent ?? 0 })
+                  : t('models.hfProgressIndeterminate')}
+              </span>
+              {hfProgress?.bytesDownloaded != null && (
+                <span className="metric-label" style={{ marginLeft: 8 }}>
+                  {hfProgress.bytesTotal != null
+                    ? `${formatSize(hfProgress.bytesDownloaded)} / ${formatSize(hfProgress.bytesTotal)}`
+                    : formatSize(hfProgress.bytesDownloaded)}
+                </span>
+              )}
+              <div
+                className={`progress-bar${hfHasDeterminateProgress ? '' : ' indeterminate'}`}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={hfHasDeterminateProgress ? hfPercent ?? 0 : undefined}
+                aria-busy={hfDownloading}
+              >
+                <div
+                  className="progress-fill"
+                  style={hfHasDeterminateProgress ? { width: `${hfPercent}%` } : undefined}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      ) : capabilities?.pullLibraryTag !== false ? (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="form-field">
+            <label>{t('models.pullLabel')}</label>
+            <div className="btn-row">
+              <input
+                type="text"
+                placeholder={t('models.pullPlaceholder')}
+                value={pullName}
+                onChange={(e) => setPullName(e.target.value)}
+                disabled={pulling}
+                style={{ flex: 1, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}
+              />
+              <button className="btn btn-primary" onClick={handlePull} disabled={pulling || !pullName.trim()}>
+                {pulling ? t('models.downloading') : t('models.download')}
+              </button>
+            </div>
+          </div>
+          {pullProgress && (
+            <div style={{ marginTop: 8 }}>
+              <span className="mono">{pullProgress.status}</span>
+              {pullPercent != null && (
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${pullPercent}%` }} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {running.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
@@ -479,7 +814,9 @@ export default function Models(): JSX.Element {
         {loading ? (
           <p className="empty-state">{t('models.loading')}</p>
         ) : tags.length === 0 ? (
-          <p className="empty-state">{t('models.empty')}</p>
+          <p className="empty-state">
+            {isTabby ? t('models.emptyTabby') : t('models.empty')}
+          </p>
         ) : (
           <table className="table">
             <thead>
@@ -539,7 +876,20 @@ export default function Models(): JSX.Element {
         )}
       </div>
 
-      {loadModel && (
+      {loadModel && isTabby && (
+        <LoadTabbyDialog
+          model={loadModel}
+          loading={loadLoading}
+          error={loadError}
+          currentLoadedId={currentLoadedId}
+          onCancel={() => {
+            if (!loadLoading) setLoadModel(null)
+          }}
+          onLoad={handleTabbyDialogLoad}
+        />
+      )}
+
+      {loadModel && !isTabby && (
         <LoadModelDialog
           model={loadModel}
           modelInfo={loadModelInfo}
@@ -555,6 +905,81 @@ export default function Models(): JSX.Element {
 
       {detailsModel && (
         <LoadedModelDetailsDialog modelName={detailsModel} onClose={() => setDetailsModel(null)} />
+      )}
+
+      {hfConflict && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (!hfConflictBusy && !hfDownloading) {
+              setHfConflict(null)
+              setHfConflictError(null)
+            }
+          }}
+        >
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 90vw)' }}>
+            <h3>{t('models.hfFolderExistsTitle')}</h3>
+            <p>
+              {hfConflict.completeness === 'complete'
+                ? t('models.hfFolderExistsComplete', {
+                    folder: hfConflict.folderName,
+                    size: formatSize(hfConflict.bytesOnDisk)
+                  })
+                : hfConflict.completeness === 'partial'
+                  ? t('models.hfFolderExistsPartial', {
+                      folder: hfConflict.folderName,
+                      size: formatSize(hfConflict.bytesOnDisk)
+                    })
+                  : t('models.hfFolderExistsUnknown', {
+                      folder: hfConflict.folderName,
+                      size: formatSize(hfConflict.bytesOnDisk)
+                    })}
+            </p>
+            {hfConflict.expectedBytes != null && (
+              <p className="field-help">
+                {t('models.hfFolderExistsExpected', { size: formatSize(hfConflict.expectedBytes) })}
+              </p>
+            )}
+            {hfConflictError && (
+              <div className="alert alert-error" style={{ marginTop: 8 }}>
+                {hfConflictError}
+              </div>
+            )}
+            <div className="modal-actions" style={{ flexWrap: 'wrap' }}>
+              <button
+                className="btn"
+                disabled={hfConflictBusy || hfDownloading}
+                onClick={() => {
+                  setHfConflict(null)
+                  setHfConflictError(null)
+                }}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                className={`btn${hfConflict.completeness === 'complete' ? ' btn-primary' : ''}`}
+                disabled={hfConflictBusy || hfDownloading}
+                onClick={() => void handleHfUseExisting()}
+              >
+                {t('models.hfFolderUseExisting')}
+              </button>
+              <button
+                className={`btn${hfConflict.completeness !== 'complete' ? ' btn-primary' : ''}`}
+                disabled={hfConflictBusy || hfDownloading}
+                onClick={() => void handleHfUseOtherFolder()}
+              >
+                {t('models.hfFolderUseOtherName', { folder: hfConflict.suggestedFolderName })}
+              </button>
+              <button
+                className="btn btn-danger"
+                disabled={hfConflictBusy || hfDownloading}
+                onClick={() => void handleHfDeleteAndRedownload()}
+              >
+                {hfConflictBusy ? t('common.loading') : t('models.hfFolderDeleteAndRedownload')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showModal && (

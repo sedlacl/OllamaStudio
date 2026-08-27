@@ -1,6 +1,8 @@
 import { getContinueConfigStatus, matchContinueModel } from './continue-config'
 import { getOpenCodeConfigStatus, matchOpenCodeModel } from './opencode-config'
+import { getActiveBackend } from './config'
 import type { ToolConfigMatch } from './tool-config-shared'
+import { toolMatch } from './tool-config-shared'
 
 export interface ToolFileStatus {
   path: string
@@ -18,18 +20,28 @@ export function getIntegrationsStatus(modelNames: string[] = []): IntegrationsSt
   const continueStatus = getContinueConfigStatus()
   const opencodeStatus = getOpenCodeConfigStatus()
   const names = modelNames.filter((name) => name.trim())
+  const backend = getActiveBackend()
 
   const continueByModel: Record<string, ToolConfigMatch> = {}
   const opencodeByModel: Record<string, ToolConfigMatch> = {}
   for (const name of names) {
-    continueByModel[name] = matchContinueModel(name)
+    if (backend === 'tabby') {
+      // Continue zůstává v 1.4.0 Ollama-only.
+      continueByModel[name] = toolMatch({
+        state: 'no-config',
+        path: continueStatus.path,
+        mismatches: []
+      })
+    } else {
+      continueByModel[name] = matchContinueModel(name)
+    }
     opencodeByModel[name] = matchOpenCodeModel(name)
   }
 
   return {
     continue: {
       path: continueStatus.path,
-      exists: continueStatus.exists,
+      exists: backend === 'tabby' ? false : continueStatus.exists,
       invalid: continueStatus.invalid,
       byModel: continueByModel
     },

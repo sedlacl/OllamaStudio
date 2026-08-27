@@ -44,6 +44,10 @@ export const cs = {
   layout: {
     killConflict: 'Ukončit konfliktní procesy a spustit'
   },
+  backend: {
+    ollama: 'Ollama',
+    tabby: 'TabbyAPI'
+  },
   dashboard: {
     title: 'Přehled',
     loadingMetrics: 'Načítání metrik…',
@@ -185,7 +189,40 @@ export const cs = {
       'PARAMETER z Modelfile (/api/show). Jsou to výchozí hodnoty zapečené v modelu, ne aktuální runtime.',
     cloneTitle: 'Klonovat model',
     cloneSource: 'Zdroj:',
-    cloneDest: 'Cílový název'
+    cloneDest: 'Cílový název',
+    hfDownloadLabel: 'Stáhnout z Hugging Face',
+    hfRepoPlaceholder: 'např. organization/model-name',
+    hfRevisionPlaceholder: 'Revize (volitelné, ručně)',
+    hfRevisionCustom: 'Vlastní / prázdná (main)',
+    hfFolderPlaceholder: 'Název složky (volitelné)',
+    hfFolderHelp: 'Prázdné pole použije {folder}. Různé revize stejného repo jdou do různých složek.',
+    hfLoadRevisions: 'Načíst revize',
+    hfLoadingRevisions: 'Načítání revizí…',
+    hfRevisionsEmpty: 'Repo nemá žádné větve ani tagy.',
+    hfRevisionsFailed: 'Revize se nepodařilo načíst',
+    hfTokenPlaceholder: 'HF token (volitelné, jednorázově)',
+    hfTokenHelp: 'Token se neukládá — použije se jen pro toto stažení a načtení revizí.',
+    hfDownloadFailed: 'Stažení z Hugging Face selhalo',
+    hfProgressIndeterminate: 'Stahování… velikost zatím není známá',
+    hfProgressPercent: '{percent} %',
+    hfFolderExistsTitle: 'Složka už existuje',
+    hfFolderExistsPartial:
+      'Složka „{folder}“ už na disku je ({size}) a vypadá neúplně — stažení bylo pravděpodobně přerušeno. Tabby do existující složky znovu stahovat neumí.',
+    hfFolderExistsComplete:
+      'Složka „{folder}“ už existuje a velikost odpovídá revizi na Hugging Face ({size}). Můžete ji použít bez stahování.',
+    hfFolderExistsUnknown:
+      'Složka „{folder}“ už existuje ({size}). Nedá se ověřit, jestli je stažení kompletní. Tabby do ní znovu stahovat neumí.',
+    hfFolderExistsExpected: 'Očekávaná velikost revize: {size}',
+    hfFolderUseExisting: 'Použít existující složku',
+    hfFolderDeleteAndRedownload: 'Smazat složku a stáhnout znovu',
+    hfFolderDeleteConfirm:
+      'Opravdu smazat složku „{folder}“ a stáhnout znovu? Soubory na disku se odstraní a akci nelze vrátit.',
+    hfFolderUseOtherName: 'Stáhnout do „{folder}“',
+    hfFolderUsedExisting: 'Použita existující složka „{folder}“ — nic se nestahovalo.',
+    hfFolderDeleteFailed: 'Složku se nepodařilo smazat',
+    emptyTabby: 'Žádné modely. Stáhněte EXL3 model z Hugging Face pomocí formuláře výše.',
+    unloadConfirmTabby:
+      'Uvolnit model „{name}"? TabbyAPI drží jen jeden model — probíhající požadavky budou přerušeny.'
   },
   server: {
     title: 'Server',
@@ -217,7 +254,41 @@ export const cs = {
     updateAvailable: 'K dispozici je Ollama {latest}, běží {current}.',
     upToDate: 'Používáte poslední vydanou verzi Ollama.',
     updateCheckFailed: 'Kontrola aktualizace se nezdařila: {error}',
-    openRelease: 'Otevřít stránku vydání'
+    openRelease: 'Otevřít stránku vydání',
+    backendLabel: 'Aktivní backend',
+    backendHint: 'Přepnutí zastaví předchozí backend spravovaný OllamaStudio.',
+    switchBackendTitle: 'Přepnout backend?',
+    switchBackendBody:
+      'Přepne se na {backend}. Předchozí spravovaný backend se zastaví a probíhající operace budou přerušeny.',
+    switching: 'Přepínám…',
+    pythonLabel: 'Python (TabbyAPI)',
+    tabbyInfo:
+      'TabbyAPI se spouští přes venv Python v installDir. Konfigurace se ukládá do userData/config.json; klíče API se nezobrazují — jen fingerprint ze souboru tokenů.',
+    tabbyInstallDir: 'Adresář instalace (main.py)',
+    tabbyPythonPath: 'Cesta k python.exe',
+    tabbyPythonPlaceholder: 'prázdné = installDir/venv/Scripts/python.exe',
+    tabbyConfigPath: 'Cesta k config.yml',
+    tabbyConfigPlaceholder: 'prázdné = installDir/config.yml',
+    tabbyHost: 'Host',
+    tabbyPort: 'Port',
+    tabbyModelDir: 'Adresář modelů',
+    tabbyModelDirPlaceholder: 'prázdné = installDir/models',
+    tabbyAutoStart: 'Automaticky spustit TabbyAPI při startu aplikace',
+    preflight: 'Preflight kontrola',
+    preflightRunning: 'Kontroluji…',
+    preflightOk: 'Preflight OK — instalace vypadá v pořádku.',
+    preflightFailed: 'Preflight selhal',
+    preflightFailedTitle: 'Preflight našel chyby',
+    preflightWarnings: 'Varování',
+    authFingerprint: 'Autentizace (fingerprint)',
+    authApiKey: 'API klíč',
+    authAdminKey: 'Admin klíč',
+    authConfigured: 'nastaven',
+    authMissing: 'chybí',
+    authDisabled: 'vypnuto (disable_auth)',
+    authDisableFlag: 'disable_auth',
+    confirmBodyTabby:
+      'Uloží se nová konfigurace TabbyAPI a proces se restartuje. Probíhající inference budou přerušeny.'
   },
   logs: {
     title: 'Logy serve',
@@ -268,9 +339,13 @@ export const cs = {
     systemRam: 'Systémová RAM (použito / celkem)',
     free: 'Volno {value}',
     ollamaProcesses: 'Procesy Ollama / llama runner',
+    backendProcesses: 'Procesy {backend}',
     ollamaEmpty: 'Žádný proces Ollama / runner (serve neběží, nebo nebyl nalezen)',
+    backendProcessesEmpty: 'Žádný proces {backend} (serve neběží, nebo nebyl nalezen)',
     ollamaNoVramHint:
       'VRAM u jednotlivých PID není z žádného zdroje dostupná — použijte kartu „VRAM načtených modelů“ výše (/api/ps).',
+    backendNoVramHint:
+      'VRAM u jednotlivých PID není z žádného zdroje dostupná — použijte kartu „VRAM načtených modelů“ výše.',
     otherApps: 'Ostatní aplikace využívající VRAM',
     otherEmpty: 'Žádné další procesy se známou VRAM',
     loadedSplit: 'Načtené modely — rozložení CPU / GPU',
@@ -463,6 +538,45 @@ export const cs = {
     errThreads: 'CPU Thread Pool Size musí být nezáporné číslo.',
     errRopeBase: 'RoPE Frequency Base musí být kladné číslo.',
     errRopeScale: 'RoPE Frequency Scale musí být kladné číslo.'
+  },
+  loadTabbyDialog: {
+    title: 'Načíst EXL3 model',
+    subtitle: 'Parametry TabbyAPI pro EXL2/EXL3',
+    sectionContext: 'Kontext a cache',
+    maxSeqLen: 'Max sequence length',
+    maxSeqLenHelp: 'max_seq_len pro načtení modelu.',
+    cacheSize: 'Cache size',
+    cacheSizeHelp: 'Velikost KV cache v tokenech.',
+    cacheMode: 'Cache mode',
+    cacheModeHelp: 'Přesnost KV cache (FP16, Q8, Q6, Q4).',
+    sectionGpu: 'GPU',
+    tensorParallel: 'Tensor parallel',
+    tensorParallelHelp: 'Rozložení modelu přes více GPU.',
+    gpuSplitAuto: 'Automatický GPU split',
+    gpuSplitAutoHelp: 'Nechat TabbyAPI rozdělit vrstvy automaticky.',
+    gpuSplit: 'GPU split',
+    gpuSplitHelp: 'Manuální rozdělení vrstev — hodnoty oddělené čárkou.',
+    gpuSplitPlaceholder: 'např. 20,20',
+    sectionAdvanced: 'Pokročilé',
+    chunkSize: 'Chunk size',
+    chunkSizeHelp: 'Velikost chunku pro načítání vah.',
+    outputChunking: 'Output chunking',
+    outputChunkingHelp: 'Chunkovaný výstup generace.',
+    vision: 'Vision',
+    visionHelp: 'Načíst vision větve modelu.',
+    sectionMtp: 'MTP (draft mode)',
+    mtpEnabled: 'Zapnout MTP',
+    mtpEnabledHelp: 'Zapíše draft_mode do tabby_config.yml před loadem.',
+    draftNumTokens: 'Draft tokens',
+    draftNumTokensHelp: 'Počet draft tokenů pro spekulativní dekódování.',
+    loadAction: 'Načíst model',
+    replaceWarning:
+      'Načtení nahradí aktuálně načtený model „{name}". TabbyAPI drží jen jeden model — probíhající požadavky budou přerušeny.',
+    errMaxSeqLen: 'Max sequence length musí být kladné číslo.',
+    errCacheSize: 'Cache size musí být kladné číslo.',
+    errChunkSize: 'Chunk size musí být kladné číslo.',
+    errGpuSplit: 'GPU split musí být nezáporná čísla oddělená čárkou.',
+    errDraftTokens: 'Draft tokens musí být kladné číslo.'
   },
   details: {
     title: 'Parametry načteného modelu',

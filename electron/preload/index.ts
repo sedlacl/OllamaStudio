@@ -1,5 +1,54 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+export interface TabbyDownloadRequest {
+  repoId: string
+  revision?: string
+  folderName?: string
+  token?: string
+}
+
+export interface TabbyDownloadProgress {
+  operationId: string
+  status: 'running' | 'success' | 'error'
+  message?: string
+  percent?: number | null
+  bytesDownloaded?: number
+  bytesTotal?: number | null
+}
+
+export interface HfRefsRequest {
+  repoId: string
+  token?: string
+}
+
+export interface HfRevision {
+  name: string
+  type: 'branch' | 'tag'
+}
+
+export interface HfRefsResult {
+  ok: boolean
+  revisions?: HfRevision[]
+  error?: string
+}
+
+export type FolderCompleteness = 'complete' | 'partial' | 'unknown'
+
+export interface TabbyDownloadFolderConflict {
+  folderName: string
+  bytesOnDisk: number
+  expectedBytes: number | null
+  completeness: FolderCompleteness
+  suggestedFolderName: string
+}
+
+export interface TabbyDownloadResult {
+  ok: boolean
+  downloadPath?: string
+  error?: string
+  folderConflict?: TabbyDownloadFolderConflict
+}
+
 export interface Api {
   getServeStatus: () => Promise<unknown>
   getAppVersion: () => Promise<string>
@@ -18,12 +67,19 @@ export interface Api {
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
+  tabbyDownload: (req: TabbyDownloadRequest) => Promise<TabbyDownloadResult>
+  tabbyDeleteDownloadFolder: (folderName: string) => Promise<{ ok: boolean; error?: string }>
+  tabbyHfRefs: (req: HfRefsRequest) => Promise<HfRefsResult>
+  onTabbyDownloadProgress: (cb: (data: TabbyDownloadProgress) => void) => () => void
   getModelLoadOptions: (name: string) => Promise<unknown>
   getModelLoadStatus: () => Promise<unknown>
   onModelLoadStatus: (cb: (state: unknown) => void) => () => void
   onPullProgress: (cb: (data: unknown) => void) => () => void
   getServerConfig: () => Promise<unknown>
   saveServerConfigAndRestart: (config: unknown) => Promise<unknown>
+  switchBackend: (backend: 'ollama' | 'tabby') => Promise<unknown>
+  getBackendCapabilities: () => Promise<unknown>
+  tabbyPreflight: () => Promise<unknown>
   startServer: (forceKillConflict?: boolean) => Promise<unknown>
   stopServer: () => Promise<unknown>
   restartServer: (forceKillConflict?: boolean) => Promise<unknown>
@@ -69,6 +125,15 @@ const api: Api = {
   modelDelete: (name) => ipcRenderer.invoke('model-delete', name),
   modelCopy: (source, destination) => ipcRenderer.invoke('model-copy', source, destination),
   modelPull: (name) => ipcRenderer.invoke('model-pull', name),
+  tabbyDownload: (req) => ipcRenderer.invoke('tabby-download', req),
+  tabbyDeleteDownloadFolder: (folderName) =>
+    ipcRenderer.invoke('tabby-delete-download-folder', folderName),
+  tabbyHfRefs: (req) => ipcRenderer.invoke('tabby-hf-refs', req),
+  onTabbyDownloadProgress: (cb) => {
+    const handler = (_: unknown, data: TabbyDownloadProgress) => cb(data)
+    ipcRenderer.on('tabby-download-progress', handler)
+    return () => ipcRenderer.removeListener('tabby-download-progress', handler)
+  },
   getModelLoadOptions: (name) => ipcRenderer.invoke('get-model-load-options', name),
   getModelLoadStatus: () => ipcRenderer.invoke('get-model-load-status'),
   onModelLoadStatus: (cb) => {
@@ -83,6 +148,9 @@ const api: Api = {
   },
   getServerConfig: () => ipcRenderer.invoke('get-server-config'),
   saveServerConfigAndRestart: (config) => ipcRenderer.invoke('save-server-config-and-restart', config),
+  switchBackend: (backend) => ipcRenderer.invoke('switch-backend', backend),
+  getBackendCapabilities: () => ipcRenderer.invoke('get-backend-capabilities'),
+  tabbyPreflight: () => ipcRenderer.invoke('tabby-preflight'),
   startServer: (force) => ipcRenderer.invoke('start-server', force),
   stopServer: () => ipcRenderer.invoke('stop-server'),
   restartServer: (force) => ipcRenderer.invoke('restart-server', force),

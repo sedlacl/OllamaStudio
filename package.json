@@ -1,7 +1,7 @@
 {
   "name": "ollamastudio",
-  "version": "1.3.3",
-  "description": "OllamaStudio — desktopový hostitel ollama serve",
+  "version": "1.4.0",
+  "description": "OllamaStudio — desktopový hostitel Ollama a TabbyAPI",
   "main": "./out/main/index.js",
   "author": "OllamaStudio",
   "license": "MIT",
@@ -14,6 +14,7 @@
     "dev": "node ./scripts/electron-vite.mjs dev",
     "build": "node ./scripts/electron-vite.mjs build",
     "preview": "node ./scripts/electron-vite.mjs preview",
+    "test": "vitest run",
     "postinstall": "electron-builder install-app-deps",
     "icons": "node ./scripts/make-icons.mjs build/icon-source.png --fit --transparent",
     "pack": "npm run build && electron-builder --dir",
@@ -33,7 +34,8 @@
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^3.2.4"
   },
   "build": {
     "appId": "com.ollamastudio.app",
@@ -50,8 +52,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.ico",
-      "signAndEditExecutable": false
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

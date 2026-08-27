@@ -46,6 +46,10 @@ export const en: MessageTree = {
   layout: {
     killConflict: 'Kill conflicting processes and start'
   },
+  backend: {
+    ollama: 'Ollama',
+    tabby: 'TabbyAPI'
+  },
   dashboard: {
     title: 'Overview',
     loadingMetrics: 'Loading metrics…',
@@ -187,7 +191,40 @@ export const en: MessageTree = {
       'PARAMETER block from the Modelfile (/api/show). These are defaults baked into the model, not the current runtime.',
     cloneTitle: 'Clone model',
     cloneSource: 'Source:',
-    cloneDest: 'Destination name'
+    cloneDest: 'Destination name',
+    hfDownloadLabel: 'Download from Hugging Face',
+    hfRepoPlaceholder: 'e.g. organization/model-name',
+    hfRevisionPlaceholder: 'Revision (optional, manual)',
+    hfRevisionCustom: 'Custom / empty (main)',
+    hfFolderPlaceholder: 'Folder name (optional)',
+    hfFolderHelp: 'Leave empty to use {folder}. Different revisions of the same repo go into different folders.',
+    hfLoadRevisions: 'Load revisions',
+    hfLoadingRevisions: 'Loading revisions…',
+    hfRevisionsEmpty: 'This repo has no branches or tags.',
+    hfRevisionsFailed: 'Could not load revisions',
+    hfTokenPlaceholder: 'HF token (optional, one-time)',
+    hfTokenHelp: 'Token is not stored — used only for this download and loading revisions.',
+    hfDownloadFailed: 'Hugging Face download failed',
+    hfProgressIndeterminate: 'Downloading… size is not known yet',
+    hfProgressPercent: '{percent} %',
+    hfFolderExistsTitle: 'Folder already exists',
+    hfFolderExistsPartial:
+      'Folder “{folder}” already exists on disk ({size}) and looks incomplete — the download was probably interrupted. Tabby cannot download into an existing folder.',
+    hfFolderExistsComplete:
+      'Folder “{folder}” already exists and its size matches the Hugging Face revision ({size}). You can use it without downloading.',
+    hfFolderExistsUnknown:
+      'Folder “{folder}” already exists ({size}). Completeness could not be verified. Tabby cannot download into it again.',
+    hfFolderExistsExpected: 'Expected revision size: {size}',
+    hfFolderUseExisting: 'Use existing folder',
+    hfFolderDeleteAndRedownload: 'Delete folder and download again',
+    hfFolderDeleteConfirm:
+      'Delete folder “{folder}” and download again? Files on disk will be removed and this cannot be undone.',
+    hfFolderUseOtherName: 'Download into “{folder}”',
+    hfFolderUsedExisting: 'Using existing folder “{folder}” — nothing was downloaded.',
+    hfFolderDeleteFailed: 'The folder could not be deleted',
+    emptyTabby: 'No models. Download an EXL3 model from Hugging Face using the form above.',
+    unloadConfirmTabby:
+      'Unload model “{name}”? TabbyAPI holds only one model — active requests will be interrupted.'
   },
   server: {
     title: 'Server',
@@ -219,7 +256,41 @@ export const en: MessageTree = {
     updateAvailable: 'Ollama {latest} is available, you are running {current}.',
     upToDate: 'You are running the latest released Ollama.',
     updateCheckFailed: 'Update check failed: {error}',
-    openRelease: 'Open release page'
+    openRelease: 'Open release page',
+    backendLabel: 'Active backend',
+    backendHint: 'Switching stops the previously managed backend owned by OllamaStudio.',
+    switchBackendTitle: 'Switch backend?',
+    switchBackendBody:
+      'Will switch to {backend}. The previously managed backend will stop and in-flight operations will be interrupted.',
+    switching: 'Switching…',
+    pythonLabel: 'Python (TabbyAPI)',
+    tabbyInfo:
+      'TabbyAPI runs via venv Python in installDir. Config is stored in userData/config.json; API keys are never shown — only a fingerprint from the token file.',
+    tabbyInstallDir: 'Install directory (main.py)',
+    tabbyPythonPath: 'Path to python.exe',
+    tabbyPythonPlaceholder: 'empty = installDir/venv/Scripts/python.exe',
+    tabbyConfigPath: 'Path to config.yml',
+    tabbyConfigPlaceholder: 'empty = installDir/config.yml',
+    tabbyHost: 'Host',
+    tabbyPort: 'Port',
+    tabbyModelDir: 'Model directory',
+    tabbyModelDirPlaceholder: 'empty = installDir/models',
+    tabbyAutoStart: 'Auto-start TabbyAPI when the app launches',
+    preflight: 'Preflight check',
+    preflightRunning: 'Checking…',
+    preflightOk: 'Preflight OK — installation looks fine.',
+    preflightFailed: 'Preflight failed',
+    preflightFailedTitle: 'Preflight found errors',
+    preflightWarnings: 'Warnings',
+    authFingerprint: 'Authentication (fingerprint)',
+    authApiKey: 'API key',
+    authAdminKey: 'Admin key',
+    authConfigured: 'configured',
+    authMissing: 'missing',
+    authDisabled: 'disabled (disable_auth)',
+    authDisableFlag: 'disable_auth',
+    confirmBodyTabby:
+      'New TabbyAPI config will be saved and the process restarted. In-flight inference will be interrupted.'
   },
   logs: {
     title: 'Serve logs',
@@ -270,9 +341,13 @@ export const en: MessageTree = {
     systemRam: 'System RAM (used / total)',
     free: 'Free {value}',
     ollamaProcesses: 'Ollama / llama runner processes',
+    backendProcesses: '{backend} processes',
     ollamaEmpty: 'No Ollama / runner process (serve not running or not found)',
+    backendProcessesEmpty: 'No {backend} process (serve not running or not found)',
     ollamaNoVramHint:
       'Per-PID VRAM is unavailable from any source — use the “Loaded models VRAM” card above (/api/ps).',
+    backendNoVramHint:
+      'Per-PID VRAM is unavailable from any source — use the “Loaded models VRAM” card above.',
     otherApps: 'Other apps using VRAM',
     otherEmpty: 'No other processes with known VRAM',
     loadedSplit: 'Loaded models — CPU / GPU split',
@@ -465,6 +540,45 @@ export const en: MessageTree = {
     errThreads: 'CPU Thread Pool Size must be a non-negative number.',
     errRopeBase: 'RoPE Frequency Base must be a positive number.',
     errRopeScale: 'RoPE Frequency Scale must be a positive number.'
+  },
+  loadTabbyDialog: {
+    title: 'Load EXL3 model',
+    subtitle: 'TabbyAPI parameters for EXL2/EXL3',
+    sectionContext: 'Context & cache',
+    maxSeqLen: 'Max sequence length',
+    maxSeqLenHelp: 'max_seq_len for model load.',
+    cacheSize: 'Cache size',
+    cacheSizeHelp: 'KV cache size in tokens.',
+    cacheMode: 'Cache mode',
+    cacheModeHelp: 'KV cache precision (FP16, Q8, Q6, Q4).',
+    sectionGpu: 'GPU',
+    tensorParallel: 'Tensor parallel',
+    tensorParallelHelp: 'Spread model across multiple GPUs.',
+    gpuSplitAuto: 'Automatic GPU split',
+    gpuSplitAutoHelp: 'Let TabbyAPI split layers automatically.',
+    gpuSplit: 'GPU split',
+    gpuSplitHelp: 'Manual layer split — comma-separated values.',
+    gpuSplitPlaceholder: 'e.g. 20,20',
+    sectionAdvanced: 'Advanced',
+    chunkSize: 'Chunk size',
+    chunkSizeHelp: 'Weight loading chunk size.',
+    outputChunking: 'Output chunking',
+    outputChunkingHelp: 'Chunked generation output.',
+    vision: 'Vision',
+    visionHelp: 'Load vision branches of the model.',
+    sectionMtp: 'MTP (draft mode)',
+    mtpEnabled: 'Enable MTP',
+    mtpEnabledHelp: 'Writes draft_mode to tabby_config.yml before load.',
+    draftNumTokens: 'Draft tokens',
+    draftNumTokensHelp: 'Number of draft tokens for speculative decoding.',
+    loadAction: 'Load model',
+    replaceWarning:
+      'Loading will replace the currently loaded model “{name}”. TabbyAPI holds only one model — active requests will be interrupted.',
+    errMaxSeqLen: 'Max sequence length must be a positive number.',
+    errCacheSize: 'Cache size must be a positive number.',
+    errChunkSize: 'Chunk size must be a positive number.',
+    errGpuSplit: 'GPU split must be non-negative numbers separated by commas.',
+    errDraftTokens: 'Draft tokens must be a positive number.'
   },
   details: {
     title: 'Loaded model parameters',

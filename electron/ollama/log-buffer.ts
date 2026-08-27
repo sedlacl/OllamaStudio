@@ -1,3 +1,5 @@
+import { parseTabbyLogLine } from '../tabby/log-parser'
+
 export type LogLevel = 'info' | 'error' | 'warn' | 'debug'
 
 export type LogCategory = 'general' | 'error' | 'load' | 'unload' | 'request'
@@ -165,6 +167,8 @@ export interface LogBufferOptions {
   maxHistory?: number
 }
 
+export type LogVendor = 'ollama' | 'tabby'
+
 export class LogBuffer {
   private entries: LogEntry[] = []
   private nextId = 1
@@ -178,12 +182,24 @@ export class LogBuffer {
   private pendingRequestKind: { kind: RequestKind; at: number } | null = null
   /** Negative ids so they never collide with Ollama runner task ids (or task -1). */
   private nextManagedTaskId = -2
+  private vendor: LogVendor = 'ollama'
+  private tabbyRequestIds = new Map<string, number>()
   private readonly nowFn: () => number
   private readonly maxHistory: number
 
   constructor(options?: LogBufferOptions) {
     this.nowFn = options?.now ?? (() => Date.now())
     this.maxHistory = options?.maxHistory ?? MAX_HISTORY
+  }
+
+  setVendor(vendor: LogVendor): void {
+    if (this.vendor === vendor) return
+    this.vendor = vendor
+    this.clear()
+  }
+
+  getVendor(): LogVendor {
+    return this.vendor
   }
 
   private now(): number {
@@ -267,13 +283,16 @@ export class LogBuffer {
     this.requestHistory = []
     this.pendingRequestKind = null
     this.nextManagedTaskId = -2
+    this.tabbyRequestIds.clear()
   }
 
   private createEntry(stream: 'stdout' | 'stderr', line: string): LogEntry {
-    const parsed = parseLine(line)
+    const parsed =
+      this.vendor === 'tabby' ? this.parseTabbyLine(line) : parseLine(line)
     const explicitLevel = parseExplicitLevel(line)
     // Runner slot lines arrive on stderr without level=; they are not errors.
     const stderrIsError =
+      this.vendor !== 'tabby' &&
       stream === 'stderr' &&
       explicitLevel !== 'debug' &&
       explicitLevel !== 'info' &&
@@ -298,7 +317,7 @@ export class LogBuffer {
         ? 'info'
         : category === 'error'
           ? 'error'
-          : stream === 'stderr'
+          : stream === 'stderr' && this.vendor !== 'tabby'
             ? 'warn'
             : 'info')
 
@@ -311,6 +330,32 @@ export class LogBuffer {
       category,
       parsed
     }
+  }
+
+  private parseTabbyLine(line: string): ParsedLogEvent {
+    const t = parseTabbyLogLine(line)
+    return {
+      isLoad: t.isLoad,
+      isUnload: t.isUnload,
+      isError: t.isError,
+      isRequest: t.isRequest,
+      isTaskComplete: t.isComplete,
+      generationTokensPerSec: t.generationTokensPerSec,
+      promptTokensPerSec: t.promptTokensPerSec,
+      elapsedSeconds: t.elapsedSeconds,
+      nTokens: t.generationTokens,
+      tokenKind: t.generationTokens != null ? 'generation' : undefined,
+      taskId: t.requestId ? this.tabbyTaskId(t.requestId) : undefined
+    }
+  }
+
+  private tabbyTaskId(requestId: string): number {
+    const existing = this.tabbyRequestIds.get(requestId)
+    if (existing != null) return existing
+    const id = this.nextManagedTaskId
+    this.nextManagedTaskId -= 1
+    this.tabbyRequestIds.set(requestId, id)
+    return id
   }
 
   private updateMetrics(entry: LogEntry): void {
@@ -368,6 +413,52 @@ export class LogBuffer {
 
   private updateActiveRequests(entry: LogEntry, pruneNow?: number): void {
     const p = entry.parsed
+
+    if (this.vendor === 'tabby' && p?.taskId != null && p.isRequest) {
+      const now = entry.timestamp
+      const existing = this.activeRequests.get(p.taskId)
+      const req: ActiveRequest = existing ?? {
+        taskId: p.taskId,
+        slotId: null,
+        kind: 'chat',
+        model: null,
+        phase: 'generation',
+        progressPercent: null,
+        nTokens: null,
+        promptTokens: null,
+        generationTokens: null,
+        elapsedSeconds: null,
+        tokensPerSec: null,
+        promptTokensPerSec: null,
+        generationTokensPerSec: null,
+        firstSeenAt: now,
+        updatedAt: now,
+        status: 'active',
+        completionReason: null
+      }
+      if (p.nTokens != null) {
+        req.nTokens = p.nTokens
+        req.generationTokens = p.nTokens
+      }
+      if (p.elapsedSeconds != null) req.elapsedSeconds = p.elapsedSeconds
+      if (p.generationTokensPerSec != null) {
+        req.generationTokensPerSec = p.generationTokensPerSec
+        req.tokensPerSec = p.generationTokensPerSec
+      }
+      if (p.promptTokensPerSec != null) req.promptTokensPerSec = p.promptTokensPerSec
+      req.updatedAt = now
+      if (p.isTaskComplete) {
+        req.status = 'completed'
+        req.phase = 'done'
+        req.progressPercent = 100
+        this.activeRequests.set(p.taskId, req)
+        this.archiveRequest(req, 'done', now, null)
+      } else {
+        this.activeRequests.set(p.taskId, req)
+      }
+      this.pruneActiveRequests(pruneNow ?? this.now())
+      return
+    }
 
     if (p?.requestKind && !p.isSlotActivity) {
       this.pendingRequestKind = { kind: p.requestKind, at: entry.timestamp }
@@ -431,13 +522,13 @@ export class LogBuffer {
     if (p.isTaskComplete || p.phase === 'done') {
       req.status = 'completed'
       req.phase = 'done'
-      // `slot release` proves the task ran to the end; the last logged prefill
-      // progress line stops short of 1.00, so reporting it would understate.
+      // Live badge může ukázat 100 %; historie si drží naposledy pozorovaný progress z logů.
+      const observedProgress = req.progressPercent
       req.progressPercent = 100
       this.activeRequests.set(p.taskId, req)
       // Archive only on live append — sync replay must not re-insert evicted history rows.
       if (pruneNow == null) {
-        this.archiveRequest(req, 'done', now, req.completionReason)
+        this.archiveRequest(req, 'done', now, req.completionReason, observedProgress)
       }
     } else {
       req.status = 'active'

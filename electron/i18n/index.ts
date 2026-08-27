@@ -40,7 +40,22 @@ const csMessages = {
     stopServeFailed: 'Ukončení serve selhalo',
     processGone: 'Proces {pid} už neběží',
     notOllamaProcess: 'PID {pid} ({name}) není Ollama / llama runner — ukončení odmítnuto',
-    killPidFailed: 'Ukončení PID {pid} selhalo'
+    killPidFailed: 'Ukončení PID {pid} selhalo',
+    hfRepoIdEmpty: 'Zadejte Hugging Face Repo ID',
+    hfUnauthorized: 'Hugging Face vyžaduje token (gated/private repo)',
+    hfForbidden: 'Přístup k Hugging Face repozitáři byl odepřen',
+    hfNotFound: 'Hugging Face repo nebylo nalezeno',
+    hfRateLimited: 'Hugging Face dočasně odmítá požadavky (rate limit)',
+    hfInvalidResponse: 'Hugging Face vrátilo neplatnou odpověď',
+    hfNetwork: 'Hugging Face API je nedostupné',
+    hfHttpError: 'Hugging Face API chyba (HTTP {status})',
+    hfDownloadPathMissing: 'Stažení skončilo, ale cílovou složku se nepodařilo ověřit',
+    hfFolderExists:
+      'Složka „{folder}“ už existuje. Tabby do ní znovu stahovat neumí — smažte ji, nebo zvolte jiný název.',
+    hfDeleteUnsafe: 'Mazání bylo odmítnuto — cesta není složka uvnitř adresáře modelů.',
+    hfDeleteBusy:
+      'Složku nelze smazat, protože je zamčená. Uvolněte model a zkuste to znovu.',
+    hfDeleteFailed: 'Složku se nepodařilo smazat'
   }
 } as const
 
@@ -88,7 +103,21 @@ const enMessages: MainMessages = {
     stopServeFailed: 'Stopping serve failed',
     processGone: 'Process {pid} is no longer running',
     notOllamaProcess: 'PID {pid} ({name}) is not an Ollama / llama runner — kill refused',
-    killPidFailed: 'Killing PID {pid} failed'
+    killPidFailed: 'Killing PID {pid} failed',
+    hfRepoIdEmpty: 'Enter a Hugging Face repo ID',
+    hfUnauthorized: 'Hugging Face requires a token (gated/private repo)',
+    hfForbidden: 'Access to the Hugging Face repository was denied',
+    hfNotFound: 'Hugging Face repo was not found',
+    hfRateLimited: 'Hugging Face is temporarily rate-limiting requests',
+    hfInvalidResponse: 'Hugging Face returned an invalid response',
+    hfNetwork: 'Hugging Face API is unreachable',
+    hfHttpError: 'Hugging Face API error (HTTP {status})',
+    hfDownloadPathMissing: 'Download finished but the target folder could not be verified',
+    hfFolderExists:
+      'Folder “{folder}” already exists. Tabby cannot download into it again — delete it or choose a different name.',
+    hfDeleteUnsafe: 'Delete refused — the path is not a folder inside the models directory.',
+    hfDeleteBusy: 'The folder cannot be deleted because it is locked. Unload the model and try again.',
+    hfDeleteFailed: 'The folder could not be deleted'
   }
 }
 

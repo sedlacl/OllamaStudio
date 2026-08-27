@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
-import { api, type ServeState } from '../types/api'
+import { api, type BackendId, type ServeState } from '../types/api'
 
 function statusClass(status: string): string {
   if (status === 'running') return 'status-running'
@@ -14,14 +14,25 @@ export default function Layout(): JSX.Element {
   const { t, locale, setLocale } = useI18n()
   const [serve, setServe] = useState<ServeState | null>(null)
   const [version, setVersion] = useState<string | null>(null)
+  const [activeBackend, setActiveBackend] = useState<BackendId>('ollama')
 
   useEffect(() => {
     api().getAppVersion().then(setVersion).catch(() => {})
+    api()
+      .getServerConfig()
+      .then((cfg) => setActiveBackend(cfg.activeBackend === 'tabby' ? 'tabby' : 'ollama'))
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
     const refresh = (): void => {
-      api().getServeStatus().then(setServe).catch(() => {})
+      api()
+        .getServeStatus()
+        .then((state) => {
+          setServe(state)
+          if (state.backend) setActiveBackend(state.backend)
+        })
+        .catch(() => {})
     }
     refresh()
     const id = setInterval(refresh, 8000)
@@ -39,12 +50,16 @@ export default function Layout(): JSX.Element {
     return map[status] ?? status
   }
 
+  const backendLabel =
+    (serve?.backend ?? activeBackend) === 'tabby' ? t('backend.tabby') : t('backend.ollama')
+
   return (
     <div className="app-shell">
       <header className="app-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <span className="app-title">OllamaStudio</span>
           {version && <span className="app-version">v{version}</span>}
+          <span className="status-badge status-backend">{backendLabel}</span>
           {serve && (
             <span className={`status-badge ${statusClass(serve.status)}`}>
               <span className="status-dot" />

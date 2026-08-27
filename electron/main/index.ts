@@ -15,7 +15,14 @@ import {
   type ModelSpeedTestResult,
   type ServeConnectionStatus
 } from '../ollama/client'
-import { loadConfig, saveConfig, type AppConfig } from '../ollama/config'
+import {
+  getActiveBackend,
+  loadConfig,
+  resolveTabbyModelDir,
+  saveConfig,
+  DEFAULT_TABBY_CONFIG,
+  type AppConfig
+} from '../ollama/config'
 import {
   clearAllLoadOptions,
   getLoadOptions,
@@ -54,6 +61,23 @@ import {
   type PresetKind
 } from '../ollama/presets'
 import { serveManager } from '../ollama/serve-manager'
+import {
+  getActiveCapabilities,
+  getUnifiedServeState,
+  preflightTabby,
+  restartActiveBackend,
+  saveConfigAndRestartActive,
+  shutdownAllBackends,
+  startActiveBackend,
+  stopActiveBackend,
+  switchActiveBackend
+} from '../tabby/active-backend'
+import { tabbyClient, type TabbyLoadOptions } from '../tabby/client'
+import { hfErrorToMessage, runTabbyHfDownload, deleteTabbyDownloadFolder, type TabbyDownloadProgressEvent } from '../tabby/hf-download'
+import { fetchHfRevisions } from '../tabby/hf-hub'
+import { writeModelMtpConfig } from '../tabby/model-config'
+import { tabbyServeManager } from '../tabby/serve-manager'
+import { type BackendId } from '../backends/types'
 import { isLocale, setMainLocale, tMain, type Locale } from '../i18n'
 
 let mainWindow: BrowserWindow | null = null
@@ -64,13 +88,21 @@ let isQuitting = false
 /** Testy rychlosti běžící právě teď — dva naráz by si na runneru překážely. */
 const speedTestsInFlight = new Set<string>()
 
+function syncLogVendor(): void {
+  logBuffer.setVendor(getActiveBackend() === 'tabby' ? 'tabby' : 'ollama')
+}
+
 async function runSpeedTest(name: string): Promise<ModelSpeedTestResult> {
   if (speedTestsInFlight.has(name)) {
     throw new Error(tMain('errors.speedTestRunning', { name }))
   }
   speedTestsInFlight.add(name)
   try {
-    const result = await ollamaClient.testSpeed(name, getLoadOptions(name)?.options ?? null)
+    const backend = getActiveBackend()
+    const result =
+      backend === 'tabby'
+        ? ((await tabbyClient.testSpeed(name)) as unknown as ModelSpeedTestResult)
+        : await ollamaClient.testSpeed(name, getLoadOptions(name)?.options ?? null)
     recordSpeedTest(name, result)
     mainWindow?.webContents.send('speed-tests-changed')
     return result
@@ -176,10 +208,12 @@ function showMainWindow(): void {
 
 function updateTrayMenu(): void {
   if (!tray) return
-  const state = serveManager.getState()
+  const state = getUnifiedServeState()
+  const backend = getActiveBackend()
   const statusLabel = statusText(state.status)
+  const backendLabel = backend === 'tabby' ? 'TabbyAPI' : 'Ollama'
   tray.setToolTip(
-    tMain('tray.tooltip', { status: statusLabel, count: loadedModelCount })
+    tMain('tray.tooltip', { status: `${backendLabel}: ${statusLabel}`, count: loadedModelCount })
   )
 
   const menu = Menu.buildFromTemplate([
@@ -189,16 +223,16 @@ function updateTrayMenu(): void {
       label: state.status === 'running' ? tMain('tray.stopServe') : tMain('tray.startServe'),
       enabled: state.status !== 'starting' && state.status !== 'stopping',
       click: async () => {
-        if (state.status === 'running') await serveManager.stop()
-        else await serveManager.start()
+        if (state.status === 'running') await stopActiveBackend()
+        else await startActiveBackend()
         updateTrayMenu()
       }
     },
     {
       label: tMain('tray.restartServe'),
-      enabled: state.status === 'running',
+      enabled: state.status === 'running' && (state.ownedByStudio !== false),
       click: async () => {
-        await serveManager.restart()
+        await restartActiveBackend()
         updateTrayMenu()
       }
     },
@@ -238,27 +272,204 @@ function statusText(status: string): string {
   }
 }
 
+function tagsFromTabby(
+  models: Awaited<ReturnType<typeof tabbyClient.listModels>>
+): Array<{
+  name: string
+  model: string
+  modified_at: string
+  size: number
+  digest: string
+  details?: Record<string, string>
+}> {
+  return models.map((m) => ({
+    name: m.modelId,
+    model: m.modelId,
+    modified_at: m.modifiedAt ?? new Date().toISOString(),
+    size: m.sizeBytes ?? 0,
+    digest: m.digest ?? '',
+    details: {
+      format: m.format ?? 'exl3',
+      family: m.family ?? '',
+      parameter_size: m.parameterSize ?? '',
+      quantization_level: m.quantization ?? ''
+    }
+  }))
+}
+
+async function startTabbyModelLoad(
+  options: TabbyLoadOptions & {
+    mtp?: { enabled: boolean; draftNumTokens?: number; dynamicDraft?: boolean }
+  }
+): Promise<{ ok: boolean; error?: string }> {
+  const name = options.modelName
+  try {
+    if (options.mtp?.enabled) {
+      writeModelMtpConfig(name, {
+        draftMode: 'mtp',
+        draftNumTokens: options.mtp.draftNumTokens,
+        dynamicDraft: options.mtp.dynamicDraft
+      })
+    }
+
+    const current = await tabbyClient.getCurrentModel()
+    if (current && current.modelId !== name) {
+      await tabbyClient.unloadModel()
+    }
+
+    for await (const progress of tabbyClient.loadModel(options)) {
+      mainWindow?.webContents.send('model-load-status', {
+        name,
+        status: 'loading',
+        startedAt: Date.now(),
+        error: undefined,
+        progress
+      })
+    }
+
+    mainWindow?.webContents.send('model-load-status', {
+      name,
+      status: 'success',
+      startedAt: Date.now()
+    })
+    return { ok: true }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    mainWindow?.webContents.send('model-load-status', {
+      name,
+      status: 'error',
+      error,
+      startedAt: Date.now()
+    })
+    return { ok: false, error }
+  }
+}
+
 function registerIpc(): void {
-  ipcMain.handle('get-serve-status', () => serveManager.getState())
+  ipcMain.handle('get-serve-status', () => getUnifiedServeState())
 
   ipcMain.handle('get-app-version', () => app.getVersion())
 
+  ipcMain.handle('get-backend-capabilities', () => getActiveCapabilities())
+
+  ipcMain.handle('switch-backend', async (_e, backend: BackendId) => {
+    const state = await switchActiveBackend(backend === 'tabby' ? 'tabby' : 'ollama')
+    syncLogVendor()
+    updateTrayMenu()
+    return state
+  })
+
+  ipcMain.handle('tabby-preflight', () => preflightTabby())
+
   ipcMain.handle('get-resource-usage', async () => {
-    const state = serveManager.getState()
-    return collectResourceUsage(ollamaClient, serveManager.getPid(), state.status)
+    const backend = getActiveBackend()
+    const state = getUnifiedServeState()
+    if (backend === 'tabby') {
+      const managedPids = await tabbyServeManager.getManagedPids()
+      const usage = await collectResourceUsage(
+        {
+          getPs: async () => {
+            const current = await tabbyClient.getCurrentModel().catch(() => null)
+            if (!current) return []
+            return [
+              {
+                name: current.modelId,
+                model: current.modelId,
+                size: current.sizeBytes ?? 0,
+                size_vram: current.sizeVramBytes ?? 0,
+                digest: '',
+                expires_at: ''
+              }
+            ]
+          }
+        } as never,
+        state.pid,
+        state.status,
+        { backend: 'tabby', managedPids }
+      )
+      return {
+        ...usage,
+        backendProcesses: usage.ollamaProcesses,
+        backendId: 'tabby' as const
+      }
+    }
+    const usage = await collectResourceUsage(ollamaClient, serveManager.getPid(), state.status)
+    return {
+      ...usage,
+      backendProcesses: usage.ollamaProcesses,
+      backendId: 'ollama' as const
+    }
   })
 
   ipcMain.handle('kill-ollama-process', async (_e, pid: number) => {
+    const backend = getActiveBackend()
+    if (backend === 'tabby') {
+      const managed = await tabbyServeManager.getManagedPids()
+      if (!managed.includes(pid) && pid !== tabbyServeManager.getPid()) {
+        return { ok: false, error: tMain('errors.notOllamaProcess', { pid, name: 'python' }) }
+      }
+      if (pid === tabbyServeManager.getPid()) {
+        await stopActiveBackend()
+        return { ok: true }
+      }
+      return killOllamaRelatedProcess(pid, {
+        servePid: tabbyServeManager.getPid(),
+        stopServe: () => stopActiveBackend(),
+        allowAnyName: true,
+        allowedPids: managed
+      })
+    }
     return killOllamaRelatedProcess(pid, {
       servePid: serveManager.getPid(),
-      stopServe: () => serveManager.stop()
+      stopServe: () => stopActiveBackend()
     })
   })
 
   ipcMain.handle('get-model-load-status', () => getActiveModelLoads())
 
   ipcMain.handle('get-dashboard', async () => {
-    const state = serveManager.getState()
+    const backend = getActiveBackend()
+    const state = getUnifiedServeState()
+
+    if (backend === 'tabby') {
+      const current = await tabbyClient.getCurrentModel().catch(() => null)
+      const health = await tabbyClient.getHealth().catch(() => null)
+      const loadedModels = current
+        ? [
+            {
+              name: current.modelId,
+              sizeVram: current.sizeVramBytes ?? 0,
+              size: current.sizeBytes ?? 0
+            }
+          ]
+        : []
+      loadedModelCount = loadedModels.length
+      updateTrayMenu()
+      const metrics = await collectMetrics(
+        {
+          getPs: async () =>
+            loadedModels.map((m) => ({
+              name: m.name,
+              model: m.name,
+              size: m.size,
+              size_vram: m.sizeVram,
+              digest: '',
+              expires_at: ''
+            })),
+          getVersion: async () => (health ? 'TabbyAPI' : null)
+        } as never,
+        state.pid,
+        state.spawnTime,
+        () => logBuffer.getRollingTokensPerSec(),
+        () => logBuffer.getActiveRequestEstimate(),
+        () => logBuffer.getActiveRequests(),
+        () => logBuffer.getRequestHistory(),
+        state.status
+      )
+      const connection = deriveConnectionStatus(state.status, metrics.version)
+      return { ...metrics, connection, backend: 'tabby' }
+    }
+
     const metrics = await collectMetrics(
       ollamaClient,
       serveManager.getPid(),
@@ -272,33 +483,104 @@ function registerIpc(): void {
     loadedModelCount = metrics.loadedCount
     updateTrayMenu()
     const connection = deriveConnectionStatus(state.status, metrics.version)
-    return { ...metrics, connection }
+    return { ...metrics, connection, backend: 'ollama' }
   })
 
-  ipcMain.handle('get-models-tags', () => ollamaClient.getTags())
-  ipcMain.handle('get-models-ps', () => ollamaClient.getPs())
-  ipcMain.handle('model-show', (_e, name: string) => ollamaClient.show(name))
-  ipcMain.handle('model-load', (_e, name: string, options?: ModelLoadOptions) =>
-    // Po načtení rovnou změříme rychlost, ať je v tabulce bez dalšího klikání.
-    startModelLoad(ollamaClient, name, options, (loaded) => {
-      void runSpeedTest(loaded).catch(() => {
-        /* test je doplněk načtení, chybu uživateli nehlásíme */
+  ipcMain.handle('get-models-tags', async () => {
+    if (getActiveBackend() === 'tabby') {
+      tabbyClient.refresh()
+      return tagsFromTabby(await tabbyClient.listModels())
+    }
+    return ollamaClient.getTags()
+  })
+
+  ipcMain.handle('get-models-ps', async () => {
+    if (getActiveBackend() === 'tabby') {
+      const current = await tabbyClient.getCurrentModel()
+      if (!current) return []
+      return [
+        {
+          name: current.modelId,
+          model: current.modelId,
+          size: current.sizeBytes ?? 0,
+          size_vram: current.sizeVramBytes ?? 0,
+          digest: '',
+          expires_at: '',
+          context_length: current.contextLength,
+          details: {
+            format: 'exl3',
+            family: current.cacheMode ?? '',
+            parameter_size: current.draftMode ?? '',
+            quantization_level: current.draftModelId ?? ''
+          }
+        }
+      ]
+    }
+    return ollamaClient.getPs()
+  })
+
+  ipcMain.handle('model-show', async (_e, name: string) => {
+    if (getActiveBackend() === 'tabby') {
+      return {
+        details: { format: 'exl3' },
+        model_info: { 'general.architecture': 'exl3' },
+        capabilities: ['completion']
+      }
+    }
+    return ollamaClient.show(name)
+  })
+
+  ipcMain.handle(
+    'model-load',
+    async (_e, name: string, options?: ModelLoadOptions | TabbyLoadOptions) => {
+      if (getActiveBackend() === 'tabby') {
+        const tabbyOpts =
+          options && 'modelName' in (options as object)
+            ? (options as TabbyLoadOptions)
+            : ({
+                modelName: name,
+                ...(options as object)
+              } as TabbyLoadOptions)
+        if (!tabbyOpts.modelName) tabbyOpts.modelName = name
+        return startTabbyModelLoad(tabbyOpts)
+      }
+      return startModelLoad(ollamaClient, name, options as ModelLoadOptions | undefined, (loaded) => {
+        void runSpeedTest(loaded).catch(() => {
+          /* test je doplněk načtení, chybu uživateli nehlásíme */
+        })
       })
-    })
+    }
   )
+
   ipcMain.handle('model-unload', async (_e, name: string) => {
+    if (getActiveBackend() === 'tabby') {
+      await tabbyClient.unloadModel()
+      removeSpeedTest(name)
+      mainWindow?.webContents.send('speed-tests-changed')
+      clearModelLoadState(name)
+      return
+    }
     await ollamaClient.unload(name)
     removeLoadOptions(name)
     removeSpeedTest(name)
     mainWindow?.webContents.send('speed-tests-changed')
     clearModelLoadState(name)
   })
+
   ipcMain.handle('model-test-speed', (_e, name: string) => runSpeedTest(name))
 
   ipcMain.handle('get-speed-tests', () => getSpeedTests())
 
   ipcMain.handle('check-ollama-update', (_e, force?: boolean) =>
-    ollamaClient.checkForUpdate({ force: force === true })
+    getActiveBackend() === 'tabby'
+      ? {
+          current: 'TabbyAPI',
+          latest: null,
+          updateAvailable: false,
+          releaseUrl: 'https://github.com/theroyallab/tabbyAPI/releases',
+          checkedAt: Date.now()
+        }
+      : ollamaClient.checkForUpdate({ force: force === true })
   )
 
   // Jen https odkazy, ať z rendereru nejde spustit lokální soubor ani jiný protokol.
@@ -309,16 +591,27 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('model-delete', async (_e, name: string) => {
+    if (getActiveBackend() === 'tabby') {
+      throw new Error('Tabby katalog nepodporuje delete ze Studia')
+    }
     await ollamaClient.delete(name)
     removeLoadOptions(name)
     removeSpeedTest(name)
   })
-  ipcMain.handle('model-copy', (_e, source: string, destination: string) =>
-    ollamaClient.copy(source, destination)
-  )
+
+  ipcMain.handle('model-copy', (_e, source: string, destination: string) => {
+    if (getActiveBackend() === 'tabby') {
+      throw new Error('Tabby katalog nepodporuje clone ze Studia')
+    }
+    return ollamaClient.copy(source, destination)
+  })
+
   ipcMain.handle('get-model-load-options', (_e, name: string) => getLoadOptions(name))
 
   ipcMain.handle('model-pull', async (event, name: string) => {
+    if (getActiveBackend() === 'tabby') {
+      return { ok: false, error: 'Použijte HF download (tabbyDownload)' }
+    }
     try {
       for await (const progress of ollamaClient.pull(name)) {
         event.sender.send('pull-progress', { name, progress })
@@ -329,6 +622,73 @@ function registerIpc(): void {
     }
   })
 
+  ipcMain.handle(
+    'tabby-hf-refs',
+    async (
+      _e,
+      req: {
+        repoId?: string
+        token?: string
+      }
+    ) => {
+      const repoId = typeof req?.repoId === 'string' ? req.repoId.trim() : ''
+      if (!repoId) return { ok: false, error: tMain('errors.hfRepoIdEmpty') }
+      const token =
+        typeof req?.token === 'string' && req.token.trim() ? req.token.trim() : undefined
+      try {
+        const revisions = await fetchHfRevisions(repoId, token)
+        return { ok: true, revisions }
+      } catch (err) {
+        return { ok: false, error: hfErrorToMessage(err) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'tabby-download',
+    async (
+      event,
+      req: {
+        repoId: string
+        revision?: string
+        folderName?: string
+        token?: string
+      }
+    ) => {
+      const operationId = `dl-${Date.now().toString(36)}`
+      const cfg = loadConfig()
+      const modelDir = resolveTabbyModelDir(cfg.tabby ?? DEFAULT_TABBY_CONFIG)
+      const emit = (payload: TabbyDownloadProgressEvent): void => {
+        try {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('tabby-download-progress', payload)
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      return runTabbyHfDownload({
+        req: {
+          repoId: typeof req?.repoId === 'string' ? req.repoId : '',
+          revision: typeof req?.revision === 'string' ? req.revision : undefined,
+          folderName: typeof req?.folderName === 'string' ? req.folderName : undefined,
+          token: typeof req?.token === 'string' ? req.token : undefined
+        },
+        operationId,
+        modelDir,
+        emit,
+        download: (downloadReq) => tabbyClient.downloadModel(downloadReq)
+      })
+    }
+  )
+
+  ipcMain.handle('tabby-delete-download-folder', async (_e, folderName: unknown) => {
+    const name = typeof folderName === 'string' ? folderName : ''
+    const cfg = loadConfig()
+    const modelDir = resolveTabbyModelDir(cfg.tabby ?? DEFAULT_TABBY_CONFIG)
+    return deleteTabbyDownloadFolder(modelDir, name)
+  })
+
   ipcMain.handle('get-server-config', () => loadConfig())
   ipcMain.handle('save-server-config-and-restart', async (_e, config: AppConfig) => {
     const existing = loadConfig()
@@ -337,14 +697,18 @@ function registerIpc(): void {
       language:
         config.language === 'en' || config.language === 'cs'
           ? config.language
-          : existing.language ?? 'cs'
+          : existing.language ?? 'cs',
+      activeBackend:
+        config.activeBackend === 'tabby' ? 'tabby' : existing.activeBackend ?? 'ollama',
+      tabby: config.tabby ?? existing.tabby
     }
     syncLocaleFromConfig(merged)
     clearAllLoadOptions()
     clearAllSpeedTests()
-    await serveManager.saveConfigAndRestart(merged)
+    const state = await saveConfigAndRestartActive(merged)
+    syncLogVendor()
     updateTrayMenu()
-    return serveManager.getState()
+    return state
   })
 
   ipcMain.handle('get-app-language', () => syncLocaleFromConfig())
@@ -359,22 +723,21 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('start-server', async (_e, forceKillConflict?: boolean) => {
-    await serveManager.start(forceKillConflict ?? false)
-    return serveManager.getState()
+    const state = await startActiveBackend(forceKillConflict ?? false)
+    updateTrayMenu()
+    return state
   })
 
   ipcMain.handle('stop-server', async () => {
-    await serveManager.stop()
-    clearAllLoadOptions()
-    clearAllSpeedTests()
-    return serveManager.getState()
+    const state = await stopActiveBackend()
+    updateTrayMenu()
+    return state
   })
 
   ipcMain.handle('restart-server', async (_e, forceKillConflict?: boolean) => {
-    clearAllLoadOptions()
-    clearAllSpeedTests()
-    await serveManager.restart(forceKillConflict ?? false)
-    return serveManager.getState()
+    const state = await restartActiveBackend(forceKillConflict ?? false)
+    updateTrayMenu()
+    return state
   })
 
   ipcMain.handle('get-logs', (_e, limit?: number) => logBuffer.getEntries(limit ?? 500))
@@ -383,7 +746,13 @@ function registerIpc(): void {
     return true
   })
 
-  ipcMain.handle('detect-ollama-binary', () => serveManager.detectBinary())
+  ipcMain.handle('detect-ollama-binary', () => {
+    if (getActiveBackend() === 'tabby') {
+      const pre = preflightTabby()
+      return pre.pythonPath
+    }
+    return serveManager.detectBinary()
+  })
 
   ipcMain.handle('presets-list', (_e, kind: PresetKind) => listPresets(kind))
   ipcMain.handle(
@@ -397,7 +766,12 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('continue-status', () => getContinueConfigStatus())
-  ipcMain.handle('continue-upsert-model', (_e, modelName: string) => upsertContinueModel(modelName))
+  ipcMain.handle('continue-upsert-model', (_e, modelName: string) => {
+    if (getActiveBackend() === 'tabby') {
+      throw new Error('Continue je v této verzi jen pro Ollamu')
+    }
+    return upsertContinueModel(modelName)
+  })
   ipcMain.handle('continue-remove-model', (_e, modelName: string) => removeContinueModel(modelName))
   ipcMain.handle('integrations-status', (_e, modelNames?: string[]) =>
     getIntegrationsStatus(Array.isArray(modelNames) ? modelNames : [])
@@ -408,17 +782,17 @@ function registerIpc(): void {
 
 app.whenReady().then(async () => {
   syncLocaleFromConfig()
+  syncLogVendor()
   createWindow()
   initModelLoadManager(() => mainWindow)
   createTray()
   registerIpc()
 
-  serveManager.subscribe((state) => {
-    updateTrayMenu()
-    if (state.status === 'stopped' || state.status === 'error') {
-      clearAllLoadOptions()
-      clearAllSpeedTests()
-    }
+  serveManager.subscribe(() => {
+    if (getActiveBackend() === 'ollama') updateTrayMenu()
+  })
+  tabbyServeManager.subscribe(() => {
+    if (getActiveBackend() === 'tabby') updateTrayMenu()
   })
 
   logBuffer.subscribe((entry: LogEntry) => {
@@ -429,8 +803,14 @@ app.whenReady().then(async () => {
   })
 
   const config = loadConfig()
-  if (config.autoStartServe) {
-    await serveManager.start()
+  const backend = getActiveBackend(config)
+  const autoStart =
+    backend === 'tabby' ? Boolean(config.tabby?.autoStartServe) : config.autoStartServe
+  if (autoStart) {
+    await startActiveBackend()
+    updateTrayMenu()
+  } else if (backend === 'tabby') {
+    await tabbyServeManager.detectExternal()
     updateTrayMenu()
   }
 })
@@ -446,7 +826,7 @@ app.on('before-quit', (event) => {
   if (quittingAfterShutdown) return
   event.preventDefault()
   quittingAfterShutdown = true
-  void serveManager.shutdown().finally(() => {
+  void shutdownAllBackends().finally(() => {
     app.quit()
   })
 })

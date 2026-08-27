@@ -17,12 +17,26 @@ export interface OllamaEnvConfig {
 
 export type AppLanguage = 'cs' | 'en'
 
+export type BackendId = 'ollama' | 'tabby'
+
+export interface TabbyConfig {
+  installDir: string
+  pythonPath: string
+  configPath: string
+  host: string
+  port: number
+  modelDir: string
+  autoStartServe: boolean
+}
+
 export interface AppConfig {
   ollamaEnv: OllamaEnvConfig
   autoStartServe: boolean
   /** UI + tray jazyk; chybí ve starších configech → cs. */
   language?: AppLanguage
   configVersion?: number
+  activeBackend?: BackendId
+  tabby?: TabbyConfig
 }
 
 export interface ModelLoadOptions {
@@ -55,6 +69,13 @@ export interface ModelSpeedTestResult {
   loadMs: number
   /** false = model se kvůli testu musel načíst (načtení se do TTFT nepočítá). */
   wasLoaded: boolean
+  /** Tabby: kde jednotlivé metriky vznikly. */
+  metricSource?: {
+    ttft: 'client'
+    generationTps: 'client' | 'usage'
+    promptTps: 'unavailable' | 'estimate'
+    tokens: 'usage' | 'tokenizer' | 'estimate'
+  }
 }
 
 export interface OllamaUpdateInfo {
@@ -73,6 +94,146 @@ export interface ServeState {
   binaryPath: string | null
   error: string | null
   portConflict: boolean
+  backend?: BackendId
+  processStatus?:
+    | 'external'
+    | 'stopped'
+    | 'starting'
+    | 'running'
+    | 'stopping'
+    | 'failed'
+  endpointStatus?:
+    | 'unreachable'
+    | 'healthy'
+    | 'unauthorized'
+    | 'incompatible'
+    | 'degraded'
+  ownedByStudio?: boolean
+  auth?: {
+    hasApiKey: boolean
+    hasAdminKey: boolean
+    disableAuth: boolean
+  }
+}
+
+export interface BackendCapabilities {
+  pullLibraryTag: boolean
+  cloneModel: boolean
+  deleteModel: boolean
+  keepAlive: boolean
+  multiLoaded: boolean
+  hfDownload: boolean
+  mtp: boolean
+  speedTestAutoAfterLoad: boolean
+  continueIntegration: boolean
+  opencodeIntegration: boolean
+}
+
+export interface TabbyLoadOptions {
+  modelName: string
+  maxSeqLen?: number
+  cacheSize?: number
+  cacheMode?: string
+  tensorParallel?: boolean
+  gpuSplitAuto?: boolean
+  gpuSplit?: number[]
+  autosplitReserve?: number[]
+  ropeScale?: number
+  ropeAlpha?: number | 'auto'
+  chunkSize?: number
+  outputChunking?: boolean
+  vision?: boolean
+  promptTemplate?: string
+  /** Zapíše draft_mode do tabby_config.yml před loadem. */
+  mtp?: {
+    enabled: boolean
+    draftNumTokens?: number
+    dynamicDraft?: boolean
+  }
+  draftModel?: {
+    draftModelName?: string
+    draftRopeScale?: number
+    draftRopeAlpha?: number | 'auto'
+    draftGpuSplit?: number[]
+  }
+}
+
+export interface TabbyDownloadRequest {
+  repoId: string
+  revision?: string
+  folderName?: string
+  /** Jednorázový HF token — main proces ho neukládá. */
+  token?: string
+}
+
+export type FolderCompleteness = 'complete' | 'partial' | 'unknown'
+
+export interface TabbyDownloadFolderConflict {
+  folderName: string
+  bytesOnDisk: number
+  expectedBytes: number | null
+  completeness: FolderCompleteness
+  suggestedFolderName: string
+}
+
+export interface TabbyDownloadResult {
+  ok: boolean
+  downloadPath?: string
+  error?: string
+  folderConflict?: TabbyDownloadFolderConflict
+}
+
+export type TabbyDownloadProgressStatus = 'running' | 'success' | 'error'
+
+export interface TabbyDownloadProgress {
+  operationId: string
+  status: TabbyDownloadProgressStatus
+  message?: string
+  /** null = indeterminate (total nebo složka nejsou spolehlivě známé). */
+  percent?: number | null
+  bytesDownloaded?: number
+  bytesTotal?: number | null
+}
+
+export interface HfRevision {
+  name: string
+  type: 'branch' | 'tag'
+}
+
+export interface HfRefsRequest {
+  repoId: string
+  /** Jednorázový HF token — main proces ho neukládá. */
+  token?: string
+}
+
+export interface HfRefsResult {
+  ok: boolean
+  revisions?: HfRevision[]
+  error?: string
+}
+
+export interface TabbyPreflightResult {
+  ok: boolean
+  installDir: string
+  pythonPath: string
+  configPath: string
+  mainPy: string
+  errors: string[]
+  warnings: string[]
+}
+
+export interface TabbyLoadPresetData {
+  maxSeqLen: string
+  cacheSize: string
+  cacheMode: string
+  tensorParallel: boolean
+  gpuSplitAuto: boolean
+  gpuSplit: string
+  chunkSize: string
+  outputChunking: boolean
+  vision: boolean
+  mtpEnabled: boolean
+  draftNumTokens: string
 }
 
 export interface ModelTag {
@@ -258,7 +419,10 @@ export interface ResourceUsageData {
   perProcessSource: GpuMemorySource | null
   perProcessVramTotalMb: number | null
   gpuProcesses: GpuProcessInfo[]
+  /** Alias: procesy aktivního backendu (Ollama nebo Tabby). */
   ollamaProcesses: GpuProcessInfo[]
+  backendProcesses: GpuProcessInfo[]
+  backendId?: BackendId
   vramFallbackMb: number | null
   loadedModels: Array<{ name: string; sizeVram: number; size: number }>
   serveMemory: { workingSetMb: number; pid: number | null }
@@ -281,7 +445,7 @@ export interface ModelLoadResult {
   error?: string
 }
 
-export type PresetKind = 'load' | 'serve'
+export type PresetKind = 'load' | 'serve' | 'tabby-load'
 
 /**
  * Volba `use_mmap` při načtení. `auto` znamená hodnotu vůbec neposlat — Ollama si
@@ -312,6 +476,7 @@ export interface ServePresetData {
 export type PresetDataMap = {
   load: LoadPresetData
   serve: ServePresetData
+  'tabby-load': TabbyLoadPresetData
 }
 
 export interface Preset<K extends PresetKind = PresetKind> {
@@ -385,7 +550,10 @@ export interface Api {
   getModelsTags: () => Promise<ModelTag[]>
   getModelsPs: () => Promise<RunningModel[]>
   modelShow: (name: string) => Promise<ModelShow>
-  modelLoad: (name: string, options?: ModelLoadOptions) => Promise<ModelLoadResult>
+  modelLoad: (
+    name: string,
+    options?: ModelLoadOptions | TabbyLoadOptions
+  ) => Promise<ModelLoadResult>
   modelUnload: (name: string) => Promise<void>
   modelTestSpeed: (name: string) => Promise<ModelSpeedTestResult>
   getSpeedTests: () => Promise<Record<string, ModelSpeedTestResult>>
@@ -396,12 +564,19 @@ export interface Api {
   modelDelete: (name: string) => Promise<void>
   modelCopy: (source: string, destination: string) => Promise<void>
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
+  tabbyDownload: (req: TabbyDownloadRequest) => Promise<TabbyDownloadResult>
+  tabbyDeleteDownloadFolder: (folderName: string) => Promise<{ ok: boolean; error?: string }>
+  tabbyHfRefs: (req: HfRefsRequest) => Promise<HfRefsResult>
+  onTabbyDownloadProgress: (cb: (data: TabbyDownloadProgress) => void) => () => void
   getModelLoadOptions: (name: string) => Promise<RecordedLoadOptions | null>
   getModelLoadStatus: () => Promise<ModelLoadState[]>
   onModelLoadStatus: (cb: (state: ModelLoadState) => void) => () => void
   onPullProgress: (cb: (data: { name: string; progress: PullProgress }) => void) => () => void
   getServerConfig: () => Promise<AppConfig>
   saveServerConfigAndRestart: (config: AppConfig) => Promise<ServeState>
+  switchBackend: (backend: BackendId) => Promise<ServeState>
+  getBackendCapabilities: () => Promise<BackendCapabilities>
+  tabbyPreflight: () => Promise<TabbyPreflightResult>
   startServer: (forceKillConflict?: boolean) => Promise<ServeState>
   stopServer: () => Promise<ServeState>
   restartServer: (forceKillConflict?: boolean) => Promise<ServeState>
