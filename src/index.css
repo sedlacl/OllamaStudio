@@ -539,6 +539,14 @@ button {
   border-color: var(--danger-border);
 }
 
+.alert-error-text {
+  margin-bottom: 8px;
+}
+
+.alert-error-actions {
+  margin-top: 4px;
+}
+
 .empty-state {
   color: var(--text-muted);
   padding: 24px;

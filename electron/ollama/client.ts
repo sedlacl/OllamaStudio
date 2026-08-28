@@ -1,4 +1,5 @@
 import { loadConfig, parseHostPort } from './config'
+import { studioFetch } from './fetch-error'
 
 export interface ModelTag {
   name: string
@@ -263,7 +264,7 @@ export class OllamaClient {
   }
 
   private async fetchVersion(): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/version`, { signal: AbortSignal.timeout(5000) })
+    const res = await studioFetch(`${this.baseUrl}/api/version`, { signal: AbortSignal.timeout(5000) })
     if (!res.ok) throw await httpError(res)
     const data = (await res.json()) as { version?: string }
     return data.version ?? 'unknown'
@@ -299,7 +300,7 @@ export class OllamaClient {
     }
 
     try {
-      const res = await fetch('https://api.github.com/repos/ollama/ollama/releases/latest', {
+      const res = await studioFetch('https://api.github.com/repos/ollama/ollama/releases/latest', {
         headers: { Accept: 'application/vnd.github+json' },
         signal: AbortSignal.timeout(10000)
       })
@@ -319,21 +320,21 @@ export class OllamaClient {
   }
 
   async getTags(): Promise<ModelTag[]> {
-    const res = await fetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(30000) })
+    const res = await studioFetch(`${this.baseUrl}/api/tags`, { signal: AbortSignal.timeout(30000) })
     if (!res.ok) throw await httpError(res)
     const data = (await res.json()) as { models?: ModelTag[] }
     return data.models ?? []
   }
 
   async getPs(): Promise<RunningModel[]> {
-    const res = await fetch(`${this.baseUrl}/api/ps`, { signal: AbortSignal.timeout(10000) })
+    const res = await studioFetch(`${this.baseUrl}/api/ps`, { signal: AbortSignal.timeout(10000) })
     if (!res.ok) throw await httpError(res)
     const data = (await res.json()) as { models?: RunningModel[] }
     return data.models ?? []
   }
 
   async show(name: string): Promise<ModelShow> {
-    const res = await fetch(`${this.baseUrl}/api/show`, {
+    const res = await studioFetch(`${this.baseUrl}/api/show`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: name }),
@@ -346,7 +347,7 @@ export class OllamaClient {
   async load(name: string, loadOptions: ModelLoadOptions = { keepAlive: '-1' }): Promise<void> {
     const options = buildRunnerOptions(loadOptions)
 
-    const res = await fetch(`${this.baseUrl}/api/generate`, {
+    const res = await studioFetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -362,7 +363,7 @@ export class OllamaClient {
   }
 
   async unload(name: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/generate`, {
+    const res = await studioFetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: name, prompt: '', keep_alive: 0 }),
@@ -490,7 +491,7 @@ export class OllamaClient {
     final: GenerateMetrics
   }> {
     const startedAt = performance.now()
-    const res = await fetch(`${this.baseUrl}/api/generate`, {
+    const res = await studioFetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -555,7 +556,7 @@ export class OllamaClient {
   }
 
   async delete(name: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/delete`, {
+    const res = await studioFetch(`${this.baseUrl}/api/delete`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
@@ -565,7 +566,7 @@ export class OllamaClient {
   }
 
   async copy(source: string, destination: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/copy`, {
+    const res = await studioFetch(`${this.baseUrl}/api/copy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source, destination }),
@@ -575,7 +576,7 @@ export class OllamaClient {
   }
 
   async *pull(name: string): AsyncGenerator<PullProgress> {
-    const res = await fetch(`${this.baseUrl}/api/pull`, {
+    const res = await studioFetch(`${this.baseUrl}/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, stream: true })

@@ -6,6 +6,8 @@ import {
   completeDownloadProgress,
   deriveFolderName,
   describeExistingFolder,
+  describeInterruptedDownload,
+  formatByteCount,
   hfApiRepoPath,
   hfErrorCodeFromStatus,
   isPathStrictlyInside,
@@ -230,12 +232,29 @@ describe('calculateDownloadProgress', () => {
   })
 })
 
+describe('interrupted download sizes', () => {
+  it('formats bytes and leaves unknown total as ?', () => {
+    expect(formatByteCount(2.46 * 1e9)).toBe('2.46 GB')
+    expect(formatByteCount(12.56 * 1e9)).toBe('12.56 GB')
+    expect(describeInterruptedDownload({ downloaded: 2_460_000_000, total: 12_560_000_000 })).toEqual({
+      downloaded: '2.46 GB',
+      total: '12.56 GB'
+    })
+    expect(describeInterruptedDownload({ downloaded: 1024, total: null })).toEqual({
+      downloaded: '1 kB',
+      total: '?'
+    })
+  })
+})
+
 describe('redactSecrets / status mapping', () => {
   it('never leaves a token in error text', () => {
     expect(redactSecrets('Bearer hf_abc123xyz Authorization failed')).toBe(
       'Bearer *** Authorization failed'
     )
-    expect(redactSecrets('token=hf_secret_value')).toBe('token=hf_***')
+    expect(redactSecrets('token=hf_secret_value')).not.toContain('hf_secret_value')
+    expect(redactSecrets('https://example/?token=abc123&x=1')).toContain('token=***')
+    expect(redactSecrets('https://example/?token=abc123&x=1')).not.toContain('abc123')
   })
 
   it('maps Hub HTTP statuses', () => {

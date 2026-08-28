@@ -1,6 +1,14 @@
 import { execFile, type ChildProcess } from 'child_process'
-import { createWriteStream, existsSync, mkdirSync } from 'fs'
-import { join } from 'path'
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from 'fs'
+import { dirname, join } from 'path'
 import net from 'net'
 import { promisify } from 'util'
 import { app } from 'electron'
@@ -14,14 +22,20 @@ import {
   type TabbyConfig
 } from '../ollama/config'
 import { logBuffer } from '../ollama/log-buffer'
-import {
-  attachServeProcessTree,
-  type ServeProcessTree
-} from '../ollama/process-tree'
 import { tabbyClient } from './client'
+import { noteBackendLost } from './download-session'
 import { getTabbyAuthFingerprint, readTabbyAuth } from './auth'
 import type { BackendServeState, EndpointStatus, ProcessStatus } from '../backends/types'
 import { spawn } from 'child_process'
+import {
+  classifyListenerProbe,
+  decideTabbyStart,
+  parseOwnedPidRecord,
+  validateStoredPid,
+  type LiveProcessInfo,
+  type StoredOwnedPid,
+  type TabbyStartAction
+} from './adopt-helpers'
 
 const execFileAsync = promisify(execFile)
 
@@ -29,6 +43,61 @@ type StatusListener = (state: BackendServeState) => void
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? String((err as NodeJS.ErrnoException).code)
+        : ''
+    return code === 'EPERM'
+  }
+}
+
+function ownedPidPath(): string {
+  return join(app.getPath('userData'), 'tabby-owned.json')
+}
+
+async function queryLiveProcess(pid: number): Promise<LiveProcessInfo | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null
+  if (!pidAlive(pid)) {
+    return { pid, alive: false, commandLine: null, creationTimeMs: null }
+  }
+  if (process.platform !== 'win32') {
+    return { pid, alive: true, commandLine: null, creationTimeMs: null }
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `$p=Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue; if(-not $p){ '' } else { $ms=[int64]([DateTimeOffset]$p.CreationDate.ToUniversalTime()).ToUnixTimeMilliseconds(); @{ pid=$p.ProcessId; commandLine=$p.CommandLine; startedAtMs=$ms } | ConvertTo-Json -Compress }`
+      ],
+      { windowsHide: true, timeout: 8000 }
+    )
+    const trimmed = stdout.trim()
+    if (!trimmed) return { pid, alive: true, commandLine: null, creationTimeMs: null }
+    const parsed = JSON.parse(trimmed) as {
+      commandLine?: unknown
+      startedAtMs?: unknown
+    }
+    return {
+      pid,
+      alive: true,
+      commandLine: typeof parsed.commandLine === 'string' ? parsed.commandLine : null,
+      creationTimeMs:
+        typeof parsed.startedAtMs === 'number' && Number.isFinite(parsed.startedAtMs)
+          ? parsed.startedAtMs
+          : null
+    }
+  } catch {
+    return { pid, alive: true, commandLine: null, creationTimeMs: null }
+  }
 }
 
 export interface TabbyPreflightResult {
@@ -75,7 +144,6 @@ export function preflightTabby(tabby?: TabbyConfig): TabbyPreflightResult {
 
 export class TabbyServeManager {
   private process: ChildProcess | null = null
-  private processTree: ServeProcessTree | null = null
   private processStatus: ProcessStatus = 'stopped'
   private endpointStatus: EndpointStatus = 'unreachable'
   private pid: number | null = null
@@ -84,6 +152,7 @@ export class TabbyServeManager {
   private error: string | null = null
   private portConflict = false
   private ownedByStudio = false
+  private adoptedExisting = false
   private listeners = new Set<StatusListener>()
   private logFile: ReturnType<typeof createWriteStream> | null = null
 
@@ -138,6 +207,7 @@ export class TabbyServeManager {
   }
 
   getState(): BackendServeState {
+    this.reconcileAdoptedLiveness()
     const auth = getTabbyAuthFingerprint()
     const status =
       this.processStatus === 'failed'
@@ -159,6 +229,7 @@ export class TabbyServeManager {
       error: this.error,
       portConflict: this.portConflict,
       ownedByStudio: this.ownedByStudio,
+      adoptedExisting: this.adoptedExisting,
       auth: {
         hasApiKey: auth.hasApiKey,
         hasAdminKey: auth.hasAdminKey,
@@ -181,6 +252,7 @@ export class TabbyServeManager {
     error?: string | null
     portConflict?: boolean
     ownedByStudio?: boolean
+    adoptedExisting?: boolean
   }): void {
     if (partial.processStatus !== undefined) this.processStatus = partial.processStatus
     if (partial.endpointStatus !== undefined) this.endpointStatus = partial.endpointStatus
@@ -190,6 +262,7 @@ export class TabbyServeManager {
     if (partial.error !== undefined) this.error = partial.error
     if (partial.portConflict !== undefined) this.portConflict = partial.portConflict
     if (partial.ownedByStudio !== undefined) this.ownedByStudio = partial.ownedByStudio
+    if (partial.adoptedExisting !== undefined) this.adoptedExisting = partial.adoptedExisting
     this.emit()
   }
 
@@ -205,19 +278,19 @@ export class TabbyServeManager {
     })
   }
 
-  /** Rozpozná již běžící Tabby — nepřivlastní si cizí proces. */
+  /**
+   * Při startu Studia / zapnutí backendu: převeď osiřelou Tabby, připoj cizí
+   * Tabby jako external, nebo ohlas konflikt. Nespawnuje nový proces.
+   */
+  async adoptOrDetect(): Promise<void> {
+    if (this.processStatus === 'starting' || this.processStatus === 'running') return
+    await this.resolveStartDecision()
+  }
+
+  /** @deprecated použij adoptOrDetect — ponecháno pro stávající volání. */
   async detectExternal(): Promise<boolean> {
-    tabbyClient.refresh()
-    if (!(await tabbyClient.ping())) return false
-    this.setPartial({
-      processStatus: 'external',
-      endpointStatus: 'healthy',
-      ownedByStudio: false,
-      error: null,
-      portConflict: false,
-      binaryPath: resolveTabbyPython(loadConfig().tabby!)
-    })
-    return true
+    await this.adoptOrDetect()
+    return this.processStatus === 'external' || this.processStatus === 'running'
   }
 
   async refreshEndpoint(): Promise<void> {
@@ -237,9 +310,8 @@ export class TabbyServeManager {
   async start(_forceKillConflict = false): Promise<void> {
     if (this.processStatus === 'starting' || this.processStatus === 'running') return
 
-    if (await this.detectExternal()) {
-      return
-    }
+    const action = await this.resolveStartDecision()
+    if (action !== 'spawn') return
 
     const pre = preflightTabby()
     if (!pre.ok) {
@@ -253,20 +325,14 @@ export class TabbyServeManager {
 
     const portBusy = await this.checkPortInUse()
     if (portBusy) {
-      // Zkus znovu health — může to být Tabby, které ping krátce selhal
-      if (await tabbyClient.ping()) {
-        await this.detectExternal()
-        return
-      }
-      this.setPartial({
-        processStatus: 'failed',
-        error: tMain('errors.portBusy'),
-        portConflict: true,
-        binaryPath: pre.pythonPath
-      })
+      const retry = await this.resolveStartDecision()
+      if (retry !== 'spawn') return
+      const cfg = loadConfig().tabby!
+      this.applyConflict(cfg.host, cfg.port)
       return
     }
 
+    this.clearOwnedPid()
     this.setPartial({
       processStatus: 'starting',
       endpointStatus: 'unreachable',
@@ -275,7 +341,8 @@ export class TabbyServeManager {
       binaryPath: pre.pythonPath,
       pid: null,
       spawnTime: null,
-      ownedByStudio: true
+      ownedByStudio: true,
+      adoptedExisting: false
     })
 
     try {
@@ -288,9 +355,13 @@ export class TabbyServeManager {
       })
 
       const pid = this.process.pid ?? null
-      this.processTree?.dispose()
-      this.processTree = pid ? attachServeProcessTree(pid) : null
-      this.setPartial({ pid, spawnTime: Date.now() })
+      const startedAt = Date.now()
+      // Tabby se záměrně nepřipojuje k Job Object KILL_ON_JOB_CLOSE
+      // (process-tree.ts). Ten je pro Ollama llama-server sirotky. Kdybychom
+      // Tabby do jobu dali, electron-vite restart main procesu (dev) by při
+      // probíhajícím HF stahování Tabby i download zabil.
+      this.setPartial({ pid, spawnTime: startedAt })
+      if (pid != null) this.writeOwnedPid(pid, startedAt, pre.pythonPath, pre.installDir)
 
       this.process.stdout?.on('data', (chunk: Buffer) => {
         logBuffer.append('stdout', chunk.toString('utf-8'))
@@ -300,32 +371,37 @@ export class TabbyServeManager {
       })
 
       this.process.on('error', (err) => {
+        this.clearOwnedPid()
         this.setPartial({
           processStatus: 'failed',
           error: err.message,
           pid: null,
           spawnTime: null,
-          ownedByStudio: false
+          ownedByStudio: false,
+          adoptedExisting: false
         })
-        this.disposeProcessTree()
         this.process = null
       })
 
       this.process.on('exit', (code, signal) => {
+        this.clearOwnedPid()
         if (this.processStatus !== 'stopping') {
           const msg =
             code !== null && code !== 0
               ? tMain('errors.processExitedCode', { code })
               : signal
                 ? tMain('errors.processExitedSignal', { signal })
-                : null
+                : tMain('errors.tabbyStoppedUnexpectedly')
+          logBuffer.appendApp('error', `[studio] tabby-serve: ${msg}`)
+          noteBackendLost()
           this.setPartial({
             processStatus: msg ? 'failed' : 'stopped',
             endpointStatus: 'unreachable',
             error: msg,
             pid: null,
             spawnTime: null,
-            ownedByStudio: false
+            ownedByStudio: false,
+            adoptedExisting: false
           })
         } else {
           this.setPartial({
@@ -334,10 +410,10 @@ export class TabbyServeManager {
             pid: null,
             spawnTime: null,
             error: null,
-            ownedByStudio: false
+            ownedByStudio: false,
+            adoptedExisting: false
           })
         }
-        this.disposeProcessTree()
         this.process = null
       })
 
@@ -351,13 +427,15 @@ export class TabbyServeManager {
       })
     } catch (err) {
       await this.killProcess()
+      this.clearOwnedPid()
       this.setPartial({
         processStatus: 'failed',
         endpointStatus: 'unreachable',
         error: err instanceof Error ? err.message : String(err),
         pid: null,
         spawnTime: null,
-        ownedByStudio: false
+        ownedByStudio: false,
+        adoptedExisting: false
       })
     }
   }
@@ -365,37 +443,39 @@ export class TabbyServeManager {
   async stop(): Promise<void> {
     if (this.processStatus === 'external') {
       this.setPartial({
-        error: 'Externí TabbyAPI nelze zastavit ze Studia (proces nevlastníme).'
+        error: tMain('errors.tabbyExternalStop')
       })
       return
     }
-    if (!this.process) {
-      this.disposeProcessTree()
+    if (!this.process && !(this.ownedByStudio && this.pid != null)) {
       this.setPartial({
         processStatus: 'stopped',
         endpointStatus: 'unreachable',
         pid: null,
         spawnTime: null,
-        ownedByStudio: false
+        ownedByStudio: false,
+        adoptedExisting: false
       })
       return
     }
     this.setPartial({ processStatus: 'stopping' })
     await this.killProcess()
+    this.clearOwnedPid()
     this.setPartial({
       processStatus: 'stopped',
       endpointStatus: 'unreachable',
       pid: null,
       spawnTime: null,
       error: null,
-      ownedByStudio: false
+      ownedByStudio: false,
+      adoptedExisting: false
     })
   }
 
   async restart(forceKillConflict = false): Promise<void> {
     if (this.processStatus === 'external') {
       this.setPartial({
-        error: 'Externí TabbyAPI nelze restartovat ze Studia.'
+        error: tMain('errors.tabbyExternalRestart')
       })
       return
     }
@@ -417,6 +497,160 @@ export class TabbyServeManager {
     this.logFile = null
   }
 
+  private async resolveStartDecision(): Promise<TabbyStartAction> {
+    const cfg = loadConfig().tabby!
+    const pythonPath = resolveTabbyPython(cfg)
+    const endpoint = `${cfg.host}:${cfg.port}`
+    tabbyClient.refresh()
+    const portBusy = await this.checkPortInUse()
+    if (!portBusy) return 'spawn'
+
+    const probe = await tabbyClient.probeListener()
+    const listener = classifyListenerProbe({
+      portBusy,
+      healthReached: probe.healthReached,
+      healthHttpStatus: probe.healthHttpStatus,
+      healthJson: probe.healthJson,
+      modelReached: probe.modelReached,
+      modelHttpStatus: probe.modelHttpStatus,
+      modelJson: probe.modelJson
+    })
+    const stored = this.readOwnedPid()
+    const live = stored ? await queryLiveProcess(stored.pid) : null
+    const pidCheck = validateStoredPid(stored, live, {
+      host: cfg.host,
+      port: cfg.port,
+      installDir: cfg.installDir,
+      pythonPath
+    })
+    const action = decideTabbyStart({ listener, pidCheck })
+
+    if (action === 'adopt' && stored) {
+      this.applyAdopt(stored, pythonPath, endpoint)
+    } else if (action === 'attach-external') {
+      this.clearOwnedPid()
+      this.applyExternal(pythonPath, endpoint)
+    } else if (action === 'conflict') {
+      if (pidCheck !== 'match') this.clearOwnedPid()
+      this.applyConflict(cfg.host, cfg.port)
+    }
+    return action
+  }
+
+  private applyAdopt(stored: StoredOwnedPid, pythonPath: string, endpoint: string): void {
+    this.process = null
+    this.setPartial({
+      processStatus: 'running',
+      endpointStatus: 'healthy',
+      ownedByStudio: true,
+      adoptedExisting: true,
+      pid: stored.pid,
+      spawnTime: stored.startedAtMs,
+      binaryPath: pythonPath,
+      error: null,
+      portConflict: false
+    })
+    logBuffer.appendApp(
+      'info',
+      `[studio] tabby-serve: ${tMain('errors.tabbyAdopted', { pid: stored.pid, endpoint })}`
+    )
+  }
+
+  private applyExternal(pythonPath: string, endpoint: string): void {
+    this.process = null
+    this.setPartial({
+      processStatus: 'external',
+      endpointStatus: 'healthy',
+      ownedByStudio: false,
+      adoptedExisting: false,
+      pid: null,
+      spawnTime: null,
+      error: null,
+      portConflict: false,
+      binaryPath: pythonPath
+    })
+    logBuffer.appendApp(
+      'warn',
+      `[studio] tabby-serve: ${tMain('errors.tabbyExternal', { endpoint })}`
+    )
+  }
+
+  private applyConflict(host: string, port: number): void {
+    this.setPartial({
+      processStatus: 'failed',
+      endpointStatus: 'unreachable',
+      ownedByStudio: false,
+      adoptedExisting: false,
+      pid: null,
+      spawnTime: null,
+      // Žádný kill — Layout tlačítko „ukončit konflikt“ se u Tabby nesmí objevit.
+      portConflict: false,
+      error: tMain('errors.tabbyPortBusy', { host, port })
+    })
+    logBuffer.appendApp(
+      'error',
+      `[studio] tabby-serve: ${tMain('errors.tabbyPortBusy', { host, port })}`
+    )
+  }
+
+  private readOwnedPid(): StoredOwnedPid | null {
+    try {
+      const raw = JSON.parse(readFileSync(ownedPidPath(), 'utf-8')) as unknown
+      return parseOwnedPidRecord(raw)
+    } catch {
+      return null
+    }
+  }
+
+  private writeOwnedPid(
+    pid: number,
+    startedAtMs: number,
+    pythonPath: string,
+    installDir: string
+  ): void {
+    const cfg = loadConfig().tabby!
+    const record: StoredOwnedPid = {
+      pid,
+      host: cfg.host,
+      port: cfg.port,
+      pythonPath,
+      installDir,
+      startedAtMs
+    }
+    try {
+      const path = ownedPidPath()
+      const dir = dirname(path)
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+      const tmp = `${path}.tmp`
+      writeFileSync(tmp, JSON.stringify(record), 'utf-8')
+      renameSync(tmp, path)
+    } catch {
+      /* persistence is best-effort — next start will treat Tabby as external */
+    }
+  }
+
+  private clearOwnedPid(): void {
+    try {
+      unlinkSync(ownedPidPath())
+    } catch {
+      /* missing is fine */
+    }
+  }
+
+  private reconcileAdoptedLiveness(): void {
+    if (!this.ownedByStudio || this.process != null || this.pid == null) return
+    if (this.processStatus !== 'running' && this.processStatus !== 'starting') return
+    if (pidAlive(this.pid)) return
+    this.clearOwnedPid()
+    this.processStatus = 'stopped'
+    this.endpointStatus = 'unreachable'
+    this.pid = null
+    this.spawnTime = null
+    this.ownedByStudio = false
+    this.adoptedExisting = false
+    this.error = null
+  }
+
   private async waitForReady(timeoutMs: number): Promise<void> {
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
@@ -431,47 +665,51 @@ export class TabbyServeManager {
 
   private async killProcess(): Promise<void> {
     const proc = this.process
-    if (!proc || proc.killed) {
-      this.disposeProcessTree()
+    const pid = proc?.pid ?? this.pid
+    if ((!proc || proc.killed) && pid == null) {
       this.process = null
       return
     }
 
-    const pid = proc.pid
     if (process.platform === 'win32' && pid) {
       try {
         await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
           windowsHide: true
         })
       } catch {
-        proc.kill('SIGTERM')
-      }
-    } else {
-      proc.kill('SIGTERM')
-    }
-
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
         try {
-          if (!proc.killed) proc.kill('SIGKILL')
+          proc?.kill('SIGTERM')
         } catch {
           /* already gone */
         }
-        resolve()
-      }, 8000)
-      proc.once('exit', () => {
-        clearTimeout(timer)
-        resolve()
+      }
+    } else {
+      proc?.kill('SIGTERM')
+    }
+
+    if (proc) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          try {
+            if (!proc.killed) proc.kill('SIGKILL')
+          } catch {
+            /* already gone */
+          }
+          resolve()
+        }, 8000)
+        proc.once('exit', () => {
+          clearTimeout(timer)
+          resolve()
+        })
       })
-    })
+    } else if (pid != null) {
+      const deadline = Date.now() + 8000
+      while (Date.now() < deadline && pidAlive(pid)) {
+        await sleep(200)
+      }
+    }
 
-    this.disposeProcessTree()
     this.process = null
-  }
-
-  private disposeProcessTree(): void {
-    this.processTree?.dispose()
-    this.processTree = null
   }
 
   private setupLogFile(): void {

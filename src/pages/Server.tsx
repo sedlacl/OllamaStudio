@@ -94,8 +94,12 @@ export default function Server(): JSX.Element {
       })
       .catch(() => {})
     api().getServeStatus().then(setServe).catch(() => {})
+    const servePoll = window.setInterval(() => {
+      api().getServeStatus().then(setServe).catch(() => {})
+    }, 8000)
     refreshBinary()
     api().checkOllamaUpdate().then(setUpdate).catch(() => {})
+    return () => window.clearInterval(servePoll)
   }, [])
 
   const checkUpdate = async (): Promise<void> => {
@@ -220,6 +224,17 @@ export default function Server(): JSX.Element {
         {serve?.pid && (
           <div className="metric-label" style={{ marginTop: 8 }}>
             {t('server.pidServe', { pid: serve.pid })}
+          </div>
+        )}
+
+        {isTabby && serve?.adoptedExisting && (
+          <div className="alert alert-info" style={{ marginTop: 12, marginBottom: 0 }}>
+            {t('server.tabbyAdopted', { pid: serve.pid ?? '—' })}
+          </div>
+        )}
+        {isTabby && serve?.processStatus === 'external' && (
+          <div className="alert alert-info" style={{ marginTop: 12, marginBottom: 0 }}>
+            {t('server.tabbyExternal')}
           </div>
         )}
 

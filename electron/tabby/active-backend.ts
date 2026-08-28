@@ -4,6 +4,7 @@ import {
   saveConfig,
   type AppConfig
 } from '../ollama/config'
+import { ollamaClient } from '../ollama/client'
 import { serveManager as ollamaServeManager } from '../ollama/serve-manager'
 import { tabbyServeManager, preflightTabby } from './serve-manager'
 import { tabbyClient } from './client'
@@ -44,6 +45,9 @@ export async function switchActiveBackend(next: BackendId): Promise<BackendServe
 
   if (next === 'tabby') {
     tabbyClient.refresh()
+    const auto = Boolean(loadConfig().tabby?.autoStartServe)
+    if (auto) await tabbyServeManager.start()
+    else await tabbyServeManager.adoptOrDetect()
   } else {
     ollamaClient.refreshBaseUrl()
   }

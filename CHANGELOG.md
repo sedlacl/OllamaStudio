@@ -6,6 +6,18 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-08-28
+
+### Added
+
+- Při startu Studio pozná už běžící TabbyAPI na nakonfigurované adrese a osiřelou instanci z předchozího běhu převezme (včetně PID). Cizí službu na portu nepřivlastní ani neukončí — na stránce Server i v logu je stav vidět
+
+### Fixed
+
+- Po přerušeném stažení z Hugging Face šlo znovu stáhnout jen ručním smazáním složky. Studio teď pozná existující složku, nabídne smazání, jiný název, nebo použití kompletního modelu — Tabby hlášku „path already exists“ už neukazuje jako syrové HTTP 400
+- Selhání spojení s backendem už neukáže jen `fetch failed`. Banner na stránce Modely zůstane, dokud ho nezavřete (u stažení ho neumaže ani obnovení katalogu), řekne lidsky že server neběží / neposlouchá, a stejný záznam (včetně adresy) je v panelu logů
+- Restart main procesu ve vývoji (electron-vite) už TabbyAPI nezabíjí přes Windows Job Object — probíhající stažení tím nespadne
+
 ## [1.4.0] — 2026-08-27
 
 ### Added
@@ -23,10 +35,11 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ### Fixed
 
+- Když Tabby během stahování z Hugging Face přestane odpovídat, Studio napíše, že server zmizel a stahování se přerušilo, včetně toho, kolik už je na disku
+- Při ukončení aplikace se falešná chyba z pollingu (katalog, když serve už neběží) neukáže v UI ani v logu
 - Při přepnutí backendu se korektně zastaví jen Studiem vlastněný proces; cizí `python.exe` na portu se neukončuje
 - Zástupce v nabídce Start a `OllamaStudio.exe` měly výchozí ikonu Electronu a hlásily se jako Electron 33.4.11; instalátor teď do binárky zapisuje ikonu i verzi aplikace
 - Katalog modelů a admin operace Tabby končily chybou `401 Please provide an API key`. TabbyAPI ověřuje admin endpointy nejdřív API klíčem, takže Studio posílá `x-api-key` i `x-admin-key`
-- Po přerušeném stažení z Hugging Face šlo znovu stáhnout jen ručním smazáním složky. Studio teď pozná existující složku, nabídne smazání, jiný název, nebo použití kompletního modelu — Tabby hlášku „path already exists“ už neukazuje jako syrové HTTP 400
 
 ## [1.3.3] — 2026-08-25
 

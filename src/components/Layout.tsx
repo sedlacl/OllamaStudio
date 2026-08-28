@@ -66,6 +66,12 @@ export default function Layout(): JSX.Element {
               {statusLabel(serve.status)}
             </span>
           )}
+          {serve?.adoptedExisting && (
+            <span className="status-badge status-backend">{t('status.adopted')}</span>
+          )}
+          {serve?.processStatus === 'external' && (
+            <span className="status-badge status-backend">{t('status.external')}</span>
+          )}
         </div>
         <div className="app-header-right">
           <nav className="app-nav">
@@ -103,7 +109,7 @@ export default function Layout(): JSX.Element {
         {serve?.error && (
           <div className="alert alert-error">
             {serve.error}
-            {serve.portConflict && (
+            {serve.portConflict && serve.backend !== 'tabby' && (
               <div className="btn-row" style={{ marginTop: 8 }}>
                 <button
                   className="btn btn-primary"

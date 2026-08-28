@@ -22,11 +22,29 @@ export class HfApiError extends Error {
   readonly code: HfErrorCode
   readonly status?: number
 
-  constructor(code: HfErrorCode, status?: number) {
-    super(code)
+  constructor(code: HfErrorCode, status?: number, options?: ErrorOptions) {
+    super(code, options)
     this.name = 'HfApiError'
     this.code = code
     this.status = status
+  }
+}
+
+export function formatByteCount(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '?'
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
+  if (bytes >= 1e3) return `${Math.round(bytes / 1e3)} kB`
+  return `${Math.round(bytes)} B`
+}
+
+export function describeInterruptedDownload(opts: {
+  downloaded: number
+  total: number | null
+}): { downloaded: string; total: string } {
+  return {
+    downloaded: formatByteCount(opts.downloaded),
+    total: opts.total == null ? '?' : formatByteCount(opts.total)
   }
 }
 
@@ -43,6 +61,10 @@ export function redactSecrets(text: string): string {
   return text
     .replace(/Bearer\s+\S+/gi, 'Bearer ***')
     .replace(/\bhf_[A-Za-z0-9._-]+/g, 'hf_***')
+    .replace(
+      /((?:[?&]|^)(?:token|key|api[_-]?key|access[_-]?token|authorization|admin[_-]?key|hf[_-]?token|password|secret)=)[^&\s]*/gi,
+      '$1***'
+    )
 }
 
 export function normalizeRepoId(input: string): string {

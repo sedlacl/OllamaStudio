@@ -1,5 +1,6 @@
 import { readdir, stat } from 'fs/promises'
 import { join } from 'path'
+import { studioFetch } from '../ollama/fetch-error'
 import {
   HfApiError,
   hfApiRepoPath,
@@ -32,12 +33,12 @@ async function hfFetchJson(
 ): Promise<unknown> {
   let res: Response
   try {
-    res = await fetch(url, {
+    res = await studioFetch(url, {
       headers: authHeaders(token),
       signal: AbortSignal.timeout(timeoutMs)
     })
-  } catch {
-    throw new HfApiError('network')
+  } catch (cause) {
+    throw new HfApiError('network', undefined, { cause })
   }
   if (!res.ok) {
     throw new HfApiError(hfErrorCodeFromStatus(res.status), res.status)

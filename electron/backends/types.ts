@@ -69,6 +69,8 @@ export interface BackendServeState {
   error: string | null
   portConflict: boolean
   ownedByStudio: boolean
+  /** Studio převzalo osiřelý proces z předchozího běhu (ne čerstvý spawn). */
+  adoptedExisting?: boolean
   auth: {
     hasApiKey: boolean
     hasAdminKey: boolean

@@ -14,7 +14,9 @@ export const cs = {
     off: 'vypnuto',
     auto: 'Auto',
     copyFailed: 'Kopírování selhalo',
-    copied: 'Zkopírováno'
+    copied: 'Zkopírováno',
+    openLogs: 'Otevřít logy',
+    dismissError: 'Zavřít hlášku'
   },
   lang: {
     cs: 'CZ',
@@ -33,7 +35,9 @@ export const cs = {
     starting: 'Spouští se',
     stopping: 'Zastavuje se',
     stopped: 'Zastaveno',
-    error: 'Chyba'
+    error: 'Chyba',
+    adopted: 'Převzato',
+    external: 'Externí'
   },
   connection: {
     connected: 'Připojeno',
@@ -109,6 +113,7 @@ export const cs = {
     unknownError: 'neznámá chyba',
     loadStartFailed: 'Načtení se nepodařilo spustit',
     fetchFailed: 'Nepodařilo se načíst modely',
+    fetchFailedDetail: 'Nepodařilo se načíst modely: {detail}',
     settingsFailed: 'Nepodařilo se načíst nastavení modelu',
     unloadFailed: 'Uvolnění selhalo',
     deleteFailed: 'Smazání selhalo',
@@ -203,6 +208,8 @@ export const cs = {
     hfTokenPlaceholder: 'HF token (volitelné, jednorázově)',
     hfTokenHelp: 'Token se neukládá — použije se jen pro toto stažení a načtení revizí.',
     hfDownloadFailed: 'Stažení z Hugging Face selhalo',
+    hfDownloadBackendLost:
+      'Tabby server přestal odpovídat, stahování bylo přerušeno ({downloaded} z {total})',
     hfProgressIndeterminate: 'Stahování… velikost zatím není známá',
     hfProgressPercent: '{percent} %',
     hfFolderExistsTitle: 'Složka už existuje',
@@ -288,12 +295,16 @@ export const cs = {
     authDisabled: 'vypnuto (disable_auth)',
     authDisableFlag: 'disable_auth',
     confirmBodyTabby:
-      'Uloží se nová konfigurace TabbyAPI a proces se restartuje. Probíhající inference budou přerušeny.'
+      'Uloží se nová konfigurace TabbyAPI a proces se restartuje. Probíhající inference budou přerušeny.',
+    tabbyAdopted:
+      'Studio převzalo už běžící TabbyAPI (PID {pid}). Stop i ukončení aplikace ji zastaví.',
+    tabbyExternal:
+      'TabbyAPI běží mimo Studio. Přepnutí backendu ani ukončení aplikace ji nezastaví.'
   },
   logs: {
     title: 'Logy serve',
     description:
-      'Živý stream stdout/stderr procesu ollama serve. Historie se ukládá také do userData/logs/ollama-serve.log.'
+      'Živý stream stdout/stderr procesu serve. Historie se ukládá do userData/logs. Při převzetí osiřelé TabbyAPI se sem zapíše záznam Studia.'
   },
   resources: {
     title: 'GPU a paměť',

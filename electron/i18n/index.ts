@@ -55,7 +55,25 @@ const csMessages = {
     hfDeleteUnsafe: 'Mazání bylo odmítnuto — cesta není složka uvnitř adresáře modelů.',
     hfDeleteBusy:
       'Složku nelze smazat, protože je zamčená. Uvolněte model a zkuste to znovu.',
-    hfDeleteFailed: 'Složku se nepodařilo smazat'
+    hfDeleteFailed: 'Složku se nepodařilo smazat',
+    connRefused: 'Server neběží nebo neposlouchá na {target}',
+    timedOut: 'Spojení na {target} vypršelo',
+    connReset: 'Spojení na {target} bylo přerušeno',
+    dnsFailed: 'Adresu {target} se nepodařilo přeložit',
+    aborted: 'Požadavek na {target} byl přerušen',
+    httpStatus: 'Server {target} odpověděl HTTP {status}',
+    networkFailed: 'Síťové volání selhalo ({detail})',
+    ipcRepeat: ' (opakováno {count}×)',
+    tabbyStoppedUnexpectedly: 'Proces TabbyAPI se neočekávaně ukončil',
+    hfDownloadBackendLost:
+      'Tabby server přestal odpovídat, stahování bylo přerušeno ({downloaded} z {total})',
+    tabbyPortBusy:
+      'Na {host}:{port} poslouchá jiná služba, ne TabbyAPI. Studio ji neukončí a Tabby nespouští.',
+    tabbyAdopted: 'Převzata běžící TabbyAPI (PID {pid}) na {endpoint}',
+    tabbyExternal:
+      'TabbyAPI už běží na {endpoint}, ale nejde o instanci Studia — proces se nepřebírá ani se při ukončení nezastaví',
+    tabbyExternalStop: 'Externí TabbyAPI nelze zastavit ze Studia (proces nevlastníme).',
+    tabbyExternalRestart: 'Externí TabbyAPI nelze restartovat ze Studia.'
   }
 } as const
 
@@ -117,7 +135,25 @@ const enMessages: MainMessages = {
       'Folder “{folder}” already exists. Tabby cannot download into it again — delete it or choose a different name.',
     hfDeleteUnsafe: 'Delete refused — the path is not a folder inside the models directory.',
     hfDeleteBusy: 'The folder cannot be deleted because it is locked. Unload the model and try again.',
-    hfDeleteFailed: 'The folder could not be deleted'
+    hfDeleteFailed: 'The folder could not be deleted',
+    connRefused: 'The server is not running or not listening on {target}',
+    timedOut: 'Connection to {target} timed out',
+    connReset: 'Connection to {target} was reset',
+    dnsFailed: 'Could not resolve {target}',
+    aborted: 'Request to {target} was aborted',
+    httpStatus: 'Server {target} responded with HTTP {status}',
+    networkFailed: 'Network request failed ({detail})',
+    ipcRepeat: ' (repeated {count}×)',
+    tabbyStoppedUnexpectedly: 'The TabbyAPI process exited unexpectedly',
+    hfDownloadBackendLost:
+      'The Tabby server stopped responding; the download was interrupted ({downloaded} of {total})',
+    tabbyPortBusy:
+      'Another service is listening on {host}:{port}, not TabbyAPI. Studio will not stop it or start Tabby.',
+    tabbyAdopted: 'Adopted a running TabbyAPI (PID {pid}) at {endpoint}',
+    tabbyExternal:
+      'TabbyAPI is already running at {endpoint}, but this is not a Studio instance — it will not be adopted or stopped on exit',
+    tabbyExternalStop: 'External TabbyAPI cannot be stopped from Studio (process is not owned).',
+    tabbyExternalRestart: 'External TabbyAPI cannot be restarted from Studio.'
   }
 }
 

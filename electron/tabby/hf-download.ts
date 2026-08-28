@@ -2,11 +2,19 @@ import { existsSync } from 'fs'
 import { lstat, readdir, realpath, rmdir, unlink } from 'fs/promises'
 import { isAbsolute, join, resolve } from 'path'
 import { tMain } from '../i18n'
+import {
+  formatFetchErrorUserText,
+  inspectFetchError,
+  isBackendLostError
+} from '../ollama/fetch-error'
+import { logIpcError } from '../ollama/ipc-error'
+import { logBuffer } from '../ollama/log-buffer'
 import type { TabbyDownloadRequest } from './client'
 import {
   calculateDownloadProgress,
   completeDownloadProgress,
   describeExistingFolder,
+  describeInterruptedDownload,
   HfApiError,
   isPathStrictlyInside,
   parseTabbyFolderExistsError,
@@ -16,6 +24,12 @@ import {
   type DownloadProgressSample,
   type FolderConflictInfo
 } from './hf-download-helpers'
+import {
+  finishDownloadSession,
+  startDownloadSession,
+  updateDownloadSession,
+  wasDownloadInterruptedByBackend
+} from './download-session'
 import { directoryByteSize, fetchHfExpectedBytes } from './hf-hub'
 
 export type TabbyDownloadProgressStatus = 'running' | 'success' | 'error'
@@ -53,8 +67,12 @@ export function hfErrorToMessage(err: unknown): string {
         return tMain('errors.hfRateLimited')
       case 'invalid_json':
         return tMain('errors.hfInvalidResponse')
-      case 'network':
-        return tMain('errors.hfNetwork')
+      case 'network': {
+        const info = inspectFetchError(err)
+        const detail = formatFetchErrorUserText(info, tMain)
+        const base = tMain('errors.hfNetwork')
+        return detail && detail !== base ? `${base}: ${detail}` : base
+      }
       case 'http_error':
         return tMain('errors.hfHttpError', { status: err.status ?? 0 })
     }
@@ -336,6 +354,10 @@ export async function runTabbyHfDownload(opts: {
     })
     maxBytes = next.bytesDownloaded
     percent = next.percent
+    updateDownloadSession({
+      bytesDownloaded: next.bytesDownloaded,
+      bytesTotal: next.bytesTotal
+    })
     return next
   }
 
@@ -347,6 +369,13 @@ export async function runTabbyHfDownload(opts: {
       bytesTotal: progress.bytesTotal
     })
   }
+
+  startDownloadSession({
+    operationId: opts.operationId,
+    folderName,
+    bytesDownloaded: baseline,
+    bytesTotal
+  })
 
   try {
     const initial = calculateDownloadProgress({
@@ -395,7 +424,18 @@ export async function runTabbyHfDownload(opts: {
     })
     return { ok: true, downloadPath: verified }
   } catch (err) {
-    const error = hfErrorToMessage(err)
+    logIpcError('tabby-download', err)
+    const sizes = describeInterruptedDownload({
+      downloaded: maxBytes,
+      total: bytesTotal
+    })
+    const error =
+      wasDownloadInterruptedByBackend() || isBackendLostError(err)
+        ? tMain('errors.hfDownloadBackendLost', sizes)
+        : hfErrorToMessage(err)
+    if (error === tMain('errors.hfDownloadBackendLost', sizes)) {
+      logBuffer.appendApp('error', `[studio] tabby-download: ${error}`)
+    }
     emit({
       status: 'error',
       message: error,
@@ -405,6 +445,7 @@ export async function runTabbyHfDownload(opts: {
     })
     return { ok: false, error }
   } finally {
+    finishDownloadSession()
     cancelled = true
     if (pollTimer != null) {
       clearInterval(pollTimer)

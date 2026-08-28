@@ -49,6 +49,30 @@ describe('parseTabbyLogLine', () => {
   })
 })
 
+describe('LogBuffer appendApp', () => {
+  it('records an error without inventing Tabby request metrics', () => {
+    const buf = new LogBuffer({ now: () => 2_000 })
+    buf.setVendor('tabby')
+    buf.appendApp(
+      'error',
+      '[studio] get-models-tags: http://127.0.0.1:5000/v1/model/list — connect ECONNREFUSED 127.0.0.1:5000'
+    )
+    const entries = buf.getEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.level).toBe('error')
+    expect(entries[0]?.category).toBe('error')
+    expect(entries[0]?.text).toContain('ECONNREFUSED')
+    expect(buf.getActiveRequests()).toEqual([])
+  })
+
+  it('setVendor still clears app-originated lines', () => {
+    const buf = new LogBuffer({ now: () => 3_000 })
+    buf.appendApp('error', '[studio] leftover')
+    buf.setVendor('tabby')
+    expect(buf.getEntries()).toEqual([])
+  })
+})
+
 describe('LogBuffer tabby vendor', () => {
   it('tracks requests by Tabby request id and rolls TPS', () => {
     const buf = new LogBuffer({ now: () => 1_000 })

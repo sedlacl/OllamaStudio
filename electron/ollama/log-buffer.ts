@@ -215,6 +215,35 @@ export class LogBuffer {
     return () => this.listeners.delete(listener)
   }
 
+  /**
+   * App-originated line (IPC / HF failures). Does not run Ollama or Tabby
+   * parsers, so it cannot invent slot/request metrics.
+   */
+  appendApp(level: LogLevel, text: string): void {
+    const line = text.replace(/\r?\n/g, ' ').trim()
+    if (!line) return
+    const entry: LogEntry = {
+      id: this.nextId++,
+      timestamp: this.now(),
+      stream: 'stderr',
+      text: line,
+      level,
+      category: level === 'error' || level === 'warn' ? 'error' : 'general',
+      parsed: { isError: level === 'error' }
+    }
+    this.entries.push(entry)
+    if (this.entries.length > MAX_ENTRIES) {
+      this.entries.splice(0, this.entries.length - MAX_ENTRIES)
+    }
+    if (this.fileStream) {
+      const ts = new Date(entry.timestamp).toISOString()
+      this.fileStream.write(`[${ts}] [studio] ${line}\n`)
+    }
+    for (const listener of this.listeners) {
+      listener(entry)
+    }
+  }
+
   append(stream: 'stdout' | 'stderr', text: string): void {
     const lines = text.split(/\r?\n/)
     for (const line of lines) {

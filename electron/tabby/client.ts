@@ -4,6 +4,7 @@ import {
   tabbyBaseUrl,
   type TabbyConfig
 } from '../ollama/config'
+import { studioFetch } from '../ollama/fetch-error'
 import { adminAuthHeaders, apiAuthHeaders } from './auth'
 import type { LoadedModelSummary, ModelSummary } from '../backends/types'
 
@@ -120,7 +121,7 @@ export class TabbyClient {
 
   async ping(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.baseUrl}/health`, {
+      const res = await studioFetch(`${this.baseUrl}/health`, {
         signal: AbortSignal.timeout(5000)
       })
       return res.ok
@@ -129,8 +130,56 @@ export class TabbyClient {
     }
   }
 
+  /**
+   * Sonda identity listeneru. Tělo odpovědi se neukládá do logu —
+   * volající smí použít jen strukturu (status/issues, přítomnost id).
+   */
+  async probeListener(): Promise<{
+    healthReached: boolean
+    healthHttpStatus: number | null
+    healthJson: unknown | null
+    modelReached: boolean
+    modelHttpStatus: number | null
+    modelJson: unknown | null
+  }> {
+    const [health, model] = await Promise.all([
+      this.probeJsonPath('/health'),
+      this.probeJsonPath('/v1/model', this.apiHeaders())
+    ])
+    return {
+      healthReached: health.reached,
+      healthHttpStatus: health.status,
+      healthJson: health.json,
+      modelReached: model.reached,
+      modelHttpStatus: model.status,
+      modelJson: model.json
+    }
+  }
+
+  private async probeJsonPath(
+    path: string,
+    headers?: Record<string, string>
+  ): Promise<{ reached: boolean; status: number | null; json: unknown | null }> {
+    try {
+      const res = await studioFetch(`${this.baseUrl}${path}`, {
+        headers,
+        signal: AbortSignal.timeout(5000)
+      })
+      let json: unknown = null
+      try {
+        const text = await res.text()
+        if (text) json = JSON.parse(text) as unknown
+      } catch {
+        json = null
+      }
+      return { reached: true, status: res.status, json }
+    } catch {
+      return { reached: false, status: null, json: null }
+    }
+  }
+
   async getHealth(): Promise<{ status: string; issues: unknown[] }> {
-    const res = await fetch(`${this.baseUrl}/health`, {
+    const res = await studioFetch(`${this.baseUrl}/health`, {
       signal: AbortSignal.timeout(5000)
     })
     if (!res.ok) throw await httpError(res)
@@ -138,7 +187,7 @@ export class TabbyClient {
   }
 
   async listModels(): Promise<ModelSummary[]> {
-    const res = await fetch(`${this.baseUrl}/v1/model/list`, {
+    const res = await studioFetch(`${this.baseUrl}/v1/model/list`, {
       headers: this.adminHeaders(),
       signal: AbortSignal.timeout(30000)
     })
@@ -158,7 +207,7 @@ export class TabbyClient {
   }
 
   async getCurrentModel(): Promise<LoadedModelSummary | null> {
-    const res = await fetch(`${this.baseUrl}/v1/model`, {
+    const res = await studioFetch(`${this.baseUrl}/v1/model`, {
       headers: this.apiHeaders(),
       signal: AbortSignal.timeout(15000)
     })
@@ -225,7 +274,7 @@ export class TabbyClient {
       }
     }
 
-    const res = await fetch(`${this.baseUrl}/v1/model/load`, {
+    const res = await studioFetch(`${this.baseUrl}/v1/model/load`, {
       method: 'POST',
       headers: this.adminHeaders(),
       body: JSON.stringify(body),
@@ -280,7 +329,7 @@ export class TabbyClient {
   }
 
   async unloadModel(): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/v1/model/unload`, {
+    const res = await studioFetch(`${this.baseUrl}/v1/model/unload`, {
       method: 'POST',
       headers: this.adminHeaders(),
       signal: AbortSignal.timeout(120000)
@@ -298,7 +347,7 @@ export class TabbyClient {
     if (req.include?.length) body.include = req.include
     if (req.exclude?.length) body.exclude = req.exclude
 
-    const res = await fetch(`${this.baseUrl}/v1/download`, {
+    const res = await studioFetch(`${this.baseUrl}/v1/download`, {
       method: 'POST',
       headers: this.adminHeaders(),
       body: JSON.stringify(body),
@@ -311,7 +360,7 @@ export class TabbyClient {
 
   async encodeTokenCount(text: string): Promise<number | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/v1/token/encode`, {
+      const res = await studioFetch(`${this.baseUrl}/v1/token/encode`, {
         method: 'POST',
         headers: this.apiHeaders(),
         body: JSON.stringify({ text }),
@@ -392,7 +441,7 @@ export class TabbyClient {
     usageCompletionTokens: number | null
   }> {
     const startedAt = performance.now()
-    const res = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+    const res = await studioFetch(`${this.baseUrl}/v1/chat/completions`, {
       method: 'POST',
       headers: this.apiHeaders(),
       body: JSON.stringify({

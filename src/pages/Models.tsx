@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import ErrorBanner from '../components/ErrorBanner'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LoadModelDialog from '../components/LoadModelDialog'
 import LoadTabbyDialog from '../components/LoadTabbyDialog'
@@ -58,6 +59,7 @@ export default function Models(): JSX.Element {
   const [running, setRunning] = useState<RunningModel[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const errorSourceRef = useRef<'fetch' | 'action' | null>(null)
   const [pullName, setPullName] = useState('')
   const [pullProgress, setPullProgress] = useState<PullProgress | null>(null)
   const [pulling, setPulling] = useState(false)
@@ -107,10 +109,23 @@ export default function Models(): JSX.Element {
       const [tagsList, ps] = await Promise.all([api().getModelsTags(), api().getModelsPs()])
       setTags(tagsList)
       setRunning(ps)
-      setError(null)
+      if (errorSourceRef.current !== 'action') {
+        errorSourceRef.current = null
+        setError(null)
+      }
       await refreshIntegrations(tagsList.map((tag) => tag.name))
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('models.fetchFailed'))
+      const raw = e instanceof Error ? e.message.trim() : ''
+      const detail =
+        raw && raw.toLowerCase() !== 'fetch failed' ? raw : t('models.fetchFailed')
+      if (errorSourceRef.current !== 'action') {
+        errorSourceRef.current = 'fetch'
+        setError(
+          detail === t('models.fetchFailed')
+            ? detail
+            : t('models.fetchFailedDetail', { detail })
+        )
+      }
     } finally {
       setLoading(false)
     }
@@ -323,6 +338,7 @@ export default function Models(): JSX.Element {
     if (!repoId) return
     setHfDownloading(true)
     setHfProgress(null)
+    errorSourceRef.current = null
     setError(null)
     try {
       const folderName = (folderOverride ?? hfFolderName).trim() || undefined
@@ -338,6 +354,7 @@ export default function Models(): JSX.Element {
         return
       }
       if (!result.ok) {
+        errorSourceRef.current = 'action'
         setError(result.error ?? t('models.hfDownloadFailed'))
       } else {
         setHfRepoId('')
@@ -350,6 +367,7 @@ export default function Models(): JSX.Element {
         await refresh()
       }
     } catch (e) {
+      errorSourceRef.current = 'action'
       setError(e instanceof Error ? e.message : t('models.hfDownloadFailed'))
     } finally {
       setHfDownloading(false)
@@ -597,7 +615,15 @@ export default function Models(): JSX.Element {
       <h1 className="page-title">{t('models.title')}</h1>
 
       {loadNotice && <div className="alert alert-info">{loadNotice}</div>}
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && (
+        <ErrorBanner
+          message={error}
+          onDismiss={() => {
+            errorSourceRef.current = null
+            setError(null)
+          }}
+        />
+      )}
 
       {modelLoads.some((s) => s.status === 'loading') && (
         <div className="alert alert-info" style={{ marginBottom: 16 }}>

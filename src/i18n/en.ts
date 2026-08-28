@@ -16,7 +16,9 @@ export const en: MessageTree = {
     off: 'off',
     auto: 'Auto',
     copyFailed: 'Copy failed',
-    copied: 'Copied'
+    copied: 'Copied',
+    openLogs: 'Open logs',
+    dismissError: 'Dismiss'
   },
   lang: {
     cs: 'CZ',
@@ -35,7 +37,9 @@ export const en: MessageTree = {
     starting: 'Starting',
     stopping: 'Stopping',
     stopped: 'Stopped',
-    error: 'Error'
+    error: 'Error',
+    adopted: 'Adopted',
+    external: 'External'
   },
   connection: {
     connected: 'Connected',
@@ -111,6 +115,7 @@ export const en: MessageTree = {
     unknownError: 'unknown error',
     loadStartFailed: 'Could not start loading',
     fetchFailed: 'Failed to load models',
+    fetchFailedDetail: 'Failed to load models: {detail}',
     settingsFailed: 'Failed to load model settings',
     unloadFailed: 'Unload failed',
     deleteFailed: 'Delete failed',
@@ -205,6 +210,8 @@ export const en: MessageTree = {
     hfTokenPlaceholder: 'HF token (optional, one-time)',
     hfTokenHelp: 'Token is not stored — used only for this download and loading revisions.',
     hfDownloadFailed: 'Hugging Face download failed',
+    hfDownloadBackendLost:
+      'The Tabby server stopped responding; the download was interrupted ({downloaded} of {total})',
     hfProgressIndeterminate: 'Downloading… size is not known yet',
     hfProgressPercent: '{percent} %',
     hfFolderExistsTitle: 'Folder already exists',
@@ -290,12 +297,16 @@ export const en: MessageTree = {
     authDisabled: 'disabled (disable_auth)',
     authDisableFlag: 'disable_auth',
     confirmBodyTabby:
-      'New TabbyAPI config will be saved and the process restarted. In-flight inference will be interrupted.'
+      'New TabbyAPI config will be saved and the process restarted. In-flight inference will be interrupted.',
+    tabbyAdopted:
+      'Studio adopted an already running TabbyAPI (PID {pid}). Stop and quitting the app will stop it.',
+    tabbyExternal:
+      'TabbyAPI is running outside Studio. Switching backend or quitting the app will not stop it.'
   },
   logs: {
     title: 'Serve logs',
     description:
-      'Live stdout/stderr stream from the ollama serve process. History is also written to userData/logs/ollama-serve.log.'
+      'Live stdout/stderr stream from the serve process. History is written to userData/logs. Adopting an orphaned TabbyAPI adds a Studio log line here.'
   },
   resources: {
     title: 'GPU & memory',

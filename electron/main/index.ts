@@ -79,14 +79,24 @@ import { writeModelMtpConfig } from '../tabby/model-config'
 import { tabbyServeManager } from '../tabby/serve-manager'
 import { type BackendId } from '../backends/types'
 import { isLocale, setMainLocale, tMain, type Locale } from '../i18n'
+import { isAppQuitting, markAppQuitting } from '../ollama/app-lifecycle'
+import {
+  isQuietBackendPoll,
+  logAndFormatIpcError,
+  logIpcError,
+  serializeIpcError,
+  shouldIgnorePollFailure
+} from '../ollama/ipc-error'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let loadedModelCount = 0
-/** true = zavření okna aplikaci ukončí místo skrytí do tray. */
-let isQuitting = false
 /** Testy rychlosti běžící právě teď — dva naráz by si na runneru překážely. */
 const speedTestsInFlight = new Set<string>()
+
+function activeBackendUrl(): string {
+  return getActiveBackend() === 'tabby' ? tabbyClient.getBaseUrl() : ollamaClient.getBaseUrl()
+}
 
 function syncLogVendor(): void {
   logBuffer.setVendor(getActiveBackend() === 'tabby' ? 'tabby' : 'ollama')
@@ -159,7 +169,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('close', (event) => {
-    if (!isQuitting) {
+    if (!isAppQuitting()) {
       event.preventDefault()
       mainWindow?.hide()
     }
@@ -240,7 +250,7 @@ function updateTrayMenu(): void {
     {
       label: tMain('tray.quit'),
       click: () => {
-        isQuitting = true
+        markAppQuitting()
         app.quit()
       }
     }
@@ -430,10 +440,11 @@ function registerIpc(): void {
   ipcMain.handle('get-dashboard', async () => {
     const backend = getActiveBackend()
     const state = getUnifiedServeState()
+    const skipHttp = isQuietBackendPoll(state.status)
 
     if (backend === 'tabby') {
-      const current = await tabbyClient.getCurrentModel().catch(() => null)
-      const health = await tabbyClient.getHealth().catch(() => null)
+      const current = skipHttp ? null : await tabbyClient.getCurrentModel().catch(() => null)
+      const health = skipHttp ? null : await tabbyClient.getHealth().catch(() => null)
       const loadedModels = current
         ? [
             {
@@ -487,36 +498,48 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('get-models-tags', async () => {
-    if (getActiveBackend() === 'tabby') {
-      tabbyClient.refresh()
-      return tagsFromTabby(await tabbyClient.listModels())
+    if (isQuietBackendPoll(getUnifiedServeState().status)) return []
+    try {
+      if (getActiveBackend() === 'tabby') {
+        tabbyClient.refresh()
+        return tagsFromTabby(await tabbyClient.listModels())
+      }
+      return ollamaClient.getTags()
+    } catch (err) {
+      if (shouldIgnorePollFailure(getUnifiedServeState().status)) return []
+      throw serializeIpcError('get-models-tags', err, activeBackendUrl())
     }
-    return ollamaClient.getTags()
   })
 
   ipcMain.handle('get-models-ps', async () => {
-    if (getActiveBackend() === 'tabby') {
-      const current = await tabbyClient.getCurrentModel()
-      if (!current) return []
-      return [
-        {
-          name: current.modelId,
-          model: current.modelId,
-          size: current.sizeBytes ?? 0,
-          size_vram: current.sizeVramBytes ?? 0,
-          digest: '',
-          expires_at: '',
-          context_length: current.contextLength,
-          details: {
-            format: 'exl3',
-            family: current.cacheMode ?? '',
-            parameter_size: current.draftMode ?? '',
-            quantization_level: current.draftModelId ?? ''
+    if (isQuietBackendPoll(getUnifiedServeState().status)) return []
+    try {
+      if (getActiveBackend() === 'tabby') {
+        const current = await tabbyClient.getCurrentModel()
+        if (!current) return []
+        return [
+          {
+            name: current.modelId,
+            model: current.modelId,
+            size: current.sizeBytes ?? 0,
+            size_vram: current.sizeVramBytes ?? 0,
+            digest: '',
+            expires_at: '',
+            context_length: current.contextLength,
+            details: {
+              format: 'exl3',
+              family: current.cacheMode ?? '',
+              parameter_size: current.draftMode ?? '',
+              quantization_level: current.draftModelId ?? ''
+            }
           }
-        }
-      ]
+        ]
+      }
+      return ollamaClient.getPs()
+    } catch (err) {
+      if (shouldIgnorePollFailure(getUnifiedServeState().status)) return []
+      throw serializeIpcError('get-models-ps', err, activeBackendUrl())
     }
-    return ollamaClient.getPs()
   })
 
   ipcMain.handle('model-show', async (_e, name: string) => {
@@ -527,7 +550,11 @@ function registerIpc(): void {
         capabilities: ['completion']
       }
     }
-    return ollamaClient.show(name)
+    try {
+      return await ollamaClient.show(name)
+    } catch (err) {
+      throw serializeIpcError('model-show', err, activeBackendUrl())
+    }
   })
 
   ipcMain.handle(
@@ -553,18 +580,22 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('model-unload', async (_e, name: string) => {
-    if (getActiveBackend() === 'tabby') {
-      await tabbyClient.unloadModel()
+    try {
+      if (getActiveBackend() === 'tabby') {
+        await tabbyClient.unloadModel()
+        removeSpeedTest(name)
+        mainWindow?.webContents.send('speed-tests-changed')
+        clearModelLoadState(name)
+        return
+      }
+      await ollamaClient.unload(name)
+      removeLoadOptions(name)
       removeSpeedTest(name)
       mainWindow?.webContents.send('speed-tests-changed')
       clearModelLoadState(name)
-      return
+    } catch (err) {
+      throw serializeIpcError('model-unload', err, activeBackendUrl())
     }
-    await ollamaClient.unload(name)
-    removeLoadOptions(name)
-    removeSpeedTest(name)
-    mainWindow?.webContents.send('speed-tests-changed')
-    clearModelLoadState(name)
   })
 
   ipcMain.handle('model-test-speed', (_e, name: string) => runSpeedTest(name))
@@ -594,16 +625,24 @@ function registerIpc(): void {
     if (getActiveBackend() === 'tabby') {
       throw new Error('Tabby katalog nepodporuje delete ze Studia')
     }
-    await ollamaClient.delete(name)
-    removeLoadOptions(name)
-    removeSpeedTest(name)
+    try {
+      await ollamaClient.delete(name)
+      removeLoadOptions(name)
+      removeSpeedTest(name)
+    } catch (err) {
+      throw serializeIpcError('model-delete', err, activeBackendUrl())
+    }
   })
 
-  ipcMain.handle('model-copy', (_e, source: string, destination: string) => {
+  ipcMain.handle('model-copy', async (_e, source: string, destination: string) => {
     if (getActiveBackend() === 'tabby') {
       throw new Error('Tabby katalog nepodporuje clone ze Studia')
     }
-    return ollamaClient.copy(source, destination)
+    try {
+      return await ollamaClient.copy(source, destination)
+    } catch (err) {
+      throw serializeIpcError('model-copy', err, activeBackendUrl())
+    }
   })
 
   ipcMain.handle('get-model-load-options', (_e, name: string) => getLoadOptions(name))
@@ -618,7 +657,7 @@ function registerIpc(): void {
       }
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: logAndFormatIpcError('model-pull', err, activeBackendUrl()) }
     }
   })
 
@@ -639,6 +678,7 @@ function registerIpc(): void {
         const revisions = await fetchHfRevisions(repoId, token)
         return { ok: true, revisions }
       } catch (err) {
+        logIpcError('tabby-hf-refs', err)
         return { ok: false, error: hfErrorToMessage(err) }
       }
     }
@@ -810,7 +850,7 @@ app.whenReady().then(async () => {
     await startActiveBackend()
     updateTrayMenu()
   } else if (backend === 'tabby') {
-    await tabbyServeManager.detectExternal()
+    await tabbyServeManager.adoptOrDetect()
     updateTrayMenu()
   }
 })
@@ -822,7 +862,7 @@ app.on('window-all-closed', () => {
 let quittingAfterShutdown = false
 
 app.on('before-quit', (event) => {
-  isQuitting = true
+  markAppQuitting()
   if (quittingAfterShutdown) return
   event.preventDefault()
   quittingAfterShutdown = true
