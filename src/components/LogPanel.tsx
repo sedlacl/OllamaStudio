@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
-import { api, type LogEntry } from '../types/api'
+import { api, type LogEntry, type ServeState } from '../types/api'
 
 type FilterCategory = 'filtered' | 'all' | 'error' | 'load' | 'request'
 
@@ -49,6 +49,13 @@ function matchesCategory(entry: LogEntry, category: FilterCategory): boolean {
   return entry.category === category
 }
 
+function tabbyStoppedForScrub(state: ServeState | null): boolean {
+  if (!state) return false
+  if (state.backend !== 'tabby') return false
+  const ps = state.processStatus ?? state.status
+  return ps !== 'running' && ps !== 'starting' && ps !== 'external'
+}
+
 export interface LogPanelProps {
   compact?: boolean
   fill?: boolean
@@ -72,6 +79,9 @@ export default function LogPanel({
   const [category, setCategory] = useState<FilterCategory>(readStoredFilter)
   const [paused, setPaused] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [serveState, setServeState] = useState<ServeState | null>(null)
+  const [pendingZipPaths, setPendingZipPaths] = useState<string[]>([])
+  const [logActionMessage, setLogActionMessage] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const pausedRef = useRef(paused)
   const copyResetRef = useRef<number | null>(null)
@@ -82,10 +92,14 @@ export default function LogPanel({
 
   useEffect(() => {
     api().getLogs(initialLimit).then(setEntries).catch(() => {})
+    api()
+      .getServeStatus()
+      .then((state) => setServeState(state as ServeState))
+      .catch(() => {})
 
     const unsub = api().subscribeLogs((entry) => {
       if (pausedRef.current) return
-      setEntries((prev) => [...prev.slice(-4999), entry])
+      setEntries((prev) => [...prev.slice(-4999), entry as LogEntry])
     })
     return unsub
   }, [initialLimit])
@@ -119,6 +133,77 @@ export default function LogPanel({
   const selectCategory = (id: FilterCategory): void => {
     setCategory(id)
     writeStoredFilter(id)
+  }
+
+  const tabbyInstallDir =
+    serveState?.backend === 'tabby' && serveState.binaryPath
+      ? serveState.binaryPath.replace(/[/\\][^/\\]+$/, '')
+      : 'D:\\AI\\Tabby'
+
+  const scrubTabbyAllowed = tabbyStoppedForScrub(serveState)
+
+  const scrubTabbyLogs = (): void => {
+    if (!scrubTabbyAllowed) {
+      window.alert(t('logPanel.scrubTabbyBlocked'))
+      return
+    }
+    if (
+      !window.confirm(
+        `${t('logPanel.scrubTabbyConfirmTitle')}\n\n${t('logPanel.scrubTabbyConfirm', { installDir: tabbyInstallDir })}`
+      )
+    ) {
+      return
+    }
+    void api()
+      .scrubTabbyRuntimeLogs()
+      .then((result) => {
+        const changed = result.scrubbed.reduce((sum, row) => sum + row.linesChanged, 0)
+        setPendingZipPaths(result.zipFiles)
+        setLogActionMessage(t('logPanel.scrubTabbyDone', { changed: String(changed) }))
+        if (result.zipFiles.length > 0) {
+          setLogActionMessage(
+            (prev) =>
+              `${prev ?? ''}\n${t('logPanel.scrubTabbyZipList')}\n${result.zipFiles.map((p) => p.split(/[/\\]/).pop()).join('\n')}`
+          )
+        }
+      })
+      .catch((err: unknown) => {
+        window.alert(err instanceof Error ? err.message : String(err))
+      })
+  }
+
+  const deleteTabbyZipLogs = (): void => {
+    if (!scrubTabbyAllowed) {
+      window.alert(t('logPanel.scrubTabbyBlocked'))
+      return
+    }
+    if (pendingZipPaths.length === 0) {
+      void api()
+        .scrubTabbyRuntimeLogs()
+        .then((result) => setPendingZipPaths(result.zipFiles))
+        .catch(() => {})
+      window.alert(t('logPanel.scrubTabbyZipList'))
+      return
+    }
+    if (
+      !window.confirm(
+        `${t('logPanel.deleteTabbyZipConfirmTitle')}\n\n${t('logPanel.deleteTabbyZipConfirm', { count: pendingZipPaths.length })}`
+      )
+    ) {
+      return
+    }
+    void api()
+      .deleteTabbyRuntimeZipLogs(pendingZipPaths)
+      .then((result) => {
+        setPendingZipPaths((prev) => prev.filter((p) => !result.deleted.includes(p)))
+        setLogActionMessage(t('logPanel.deleteTabbyZipDone', { count: result.deleted.length }))
+        if (result.errors.length > 0) {
+          setLogActionMessage((prev) => `${prev ?? ''}\n${result.errors.join('\n')}`)
+        }
+      })
+      .catch((err: unknown) => {
+        window.alert(err instanceof Error ? err.message : String(err))
+      })
   }
 
   /** Kopírují se řádky, které jsou zrovna vidět — s úrovní, o kterou by se barvou přišlo. */
@@ -178,11 +263,42 @@ export default function LogPanel({
           {copied ? t('logPanel.copied') : t('logPanel.copy')}
         </button>
         {showClear && (
-          <button className="btn" onClick={() => api().clearLogs().then(() => setEntries([]))}>
+          <button
+            className="btn"
+            onClick={() => {
+              if (!window.confirm(`${t('logPanel.clearConfirmTitle')}\n\n${t('logPanel.clearConfirm')}`)) {
+                return
+              }
+              api()
+                .clearLogs({ disk: true })
+                .then(() => setEntries([]))
+            }}
+          >
             {t('logPanel.clear')}
           </button>
         )}
+        {serveState?.backend === 'tabby' && (
+          <>
+            <button className="btn" onClick={scrubTabbyLogs} disabled={!scrubTabbyAllowed} title={t('logPanel.scrubTabby')}>
+              {t('logPanel.scrubTabby')}
+            </button>
+            <button
+              className="btn"
+              onClick={deleteTabbyZipLogs}
+              disabled={!scrubTabbyAllowed}
+              title={t('logPanel.deleteTabbyZip')}
+            >
+              {t('logPanel.deleteTabbyZip')}
+            </button>
+          </>
+        )}
       </div>
+
+      {logActionMessage && (
+        <div className="log-action-banner" style={{ whiteSpace: 'pre-wrap', marginBottom: '0.5rem' }}>
+          {logActionMessage}
+        </div>
+      )}
 
       <div
         className="log-panel"

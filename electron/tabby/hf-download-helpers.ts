@@ -1,6 +1,7 @@
 /** Čisté helpery pro HF download — bez I/O, tokenu a logování. */
 
 import { isAbsolute, relative, resolve } from 'path'
+import { sanitizeSecrets } from '../security/secret-redactor'
 
 export type HfRefType = 'branch' | 'tag'
 
@@ -58,13 +59,7 @@ export function hfErrorCodeFromStatus(status: number): HfErrorCode {
 
 /** Odstraní Bearer i hf_ tokeny z libovolného textu (chybové hlášky, URL). */
 export function redactSecrets(text: string): string {
-  return text
-    .replace(/Bearer\s+\S+/gi, 'Bearer ***')
-    .replace(/\bhf_[A-Za-z0-9._-]+/g, 'hf_***')
-    .replace(
-      /((?:[?&]|^)(?:token|key|api[_-]?key|access[_-]?token|authorization|admin[_-]?key|hf[_-]?token|password|secret)=)[^&\s]*/gi,
-      '$1***'
-    )
+  return sanitizeSecrets(text)
 }
 
 export function normalizeRepoId(input: string): string {

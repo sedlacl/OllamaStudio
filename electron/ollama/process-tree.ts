@@ -1,4 +1,5 @@
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'child_process'
+import { sanitizeErrorMessage } from '../security/secret-redactor'
 import { existsSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -219,7 +220,7 @@ export function attachServeProcessTree(pid: number): ServeProcessTree {
     }
   }
   holder.stderr?.on('data', (chunk: Buffer) => {
-    const msg = chunk.toString('utf-8').trim()
+    const msg = sanitizeErrorMessage(chunk.toString('utf-8').trim())
     if (msg) console.warn('[process-tree]', msg)
   })
   holder.on('exit', (code) => {

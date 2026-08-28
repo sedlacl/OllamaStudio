@@ -67,6 +67,19 @@ const csMessages = {
     tabbyStoppedUnexpectedly: 'Proces TabbyAPI se neočekávaně ukončil',
     hfDownloadBackendLost:
       'Tabby server přestal odpovídat, stahování bylo přerušeno ({downloaded} z {total})',
+    hfDownloadAlreadyRunning: 'Stažení z Hugging Face už probíhá.',
+    hfDownloadIncomplete:
+      'Hugging Face přerušil přenos souboru dříve, než dorazila očekávaná data. Soubor byl omezeně zopakován, ale stažení se nepodařilo dokončit.',
+    hfDownloadCleanupBusy:
+      'Částečnou složku stále drží jiný proces. Po uvolnění ji bezpečně smažte a spusťte nový pokus.',
+    tabbyDownloadNotReady:
+      'TabbyAPI není po spuštění připravené. Stažení nebylo zahájeno; zkontrolujte stav serveru a log.',
+    tabbyPatchUnsupported:
+      'Tato verze TabbyAPI neodpovídá podporované opravě downloaderu. Studio ji kvůli bezpečnosti nezměnilo.',
+    tabbyPatchFailed:
+      'Opravu TabbyAPI downloaderu se nepodařilo bezpečně nainstalovat. Tabby nebylo spuštěno.',
+    tabbyPatchRestartRequired:
+      'Externí TabbyAPI musí jeho správce restartovat, aby načetlo opravený downloader. Stažení nebylo zahájeno.',
     tabbyPortBusy:
       'Na {host}:{port} poslouchá jiná služba, ne TabbyAPI. Studio ji neukončí a Tabby nespouští.',
     tabbyAdopted: 'Převzata běžící TabbyAPI (PID {pid}) na {endpoint}',
@@ -147,6 +160,19 @@ const enMessages: MainMessages = {
     tabbyStoppedUnexpectedly: 'The TabbyAPI process exited unexpectedly',
     hfDownloadBackendLost:
       'The Tabby server stopped responding; the download was interrupted ({downloaded} of {total})',
+    hfDownloadAlreadyRunning: 'A Hugging Face download is already running.',
+    hfDownloadIncomplete:
+      'Hugging Face ended a file transfer before all expected data arrived. The file was retried a bounded number of times, but the download could not complete.',
+    hfDownloadCleanupBusy:
+      'Another process still holds the partial folder. Safely delete it after the lock is released, then start a new attempt.',
+    tabbyDownloadNotReady:
+      'TabbyAPI did not become ready after startup. No download was started; check the server status and log.',
+    tabbyPatchUnsupported:
+      'This TabbyAPI version does not match the supported downloader patch. Studio left it unchanged for safety.',
+    tabbyPatchFailed:
+      'The TabbyAPI downloader patch could not be installed safely. Tabby was not started.',
+    tabbyPatchRestartRequired:
+      'The external TabbyAPI must be restarted by its owner to load the patched downloader. No download was started.',
     tabbyPortBusy:
       'Another service is listening on {host}:{port}, not TabbyAPI. Studio will not stop it or start Tabby.',
     tabbyAdopted: 'Adopted a running TabbyAPI (PID {pid}) at {endpoint}',

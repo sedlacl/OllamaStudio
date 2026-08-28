@@ -2,13 +2,17 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
 import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deleteTabbyDownloadFolder, hfErrorToMessage, runTabbyHfDownload } from './hf-download'
+import { resetDownloadSessionForTests } from './download-session'
+import { setTabbyPatchReadiness } from './patch-readiness'
 
 const dirs: string[] = []
 
 afterEach(async () => {
   vi.unstubAllGlobals()
+  resetDownloadSessionForTests()
+  setTabbyPatchReadiness({ externalProcess: false, runtimePatchValid: true })
   while (dirs.length) {
     const dir = dirs.pop() as string
     await rm(dir, { recursive: true, force: true })
@@ -88,9 +92,27 @@ describe('hfErrorToMessage', () => {
     expect(message).not.toContain('hf_secret_value')
     expect(message).toContain('foo')
   })
+
+  it('translates truncated payload and Windows lock errors without raw JSON', () => {
+    const truncated = hfErrorToMessage(
+      new Error(
+        'HTTP 400: {"detail":"ClientPayloadError: Response payload is not completed: ContentLengthError"}'
+      )
+    )
+    expect(truncated).not.toMatch(/HTTP|ClientPayload|ContentLength|JSON/i)
+    expect(truncated).toMatch(/Hugging Face/i)
+
+    const locked = hfErrorToMessage(
+      new Error('PermissionError: [WinError 32] file is being used by another process')
+    )
+    expect(locked).not.toMatch(/WinError|PermissionError/i)
+  })
 })
 
 describe('runTabbyHfDownload preflight', () => {
+  beforeEach(() => {
+    setTabbyPatchReadiness({ externalProcess: false, runtimePatchValid: true })
+  })
   it('returns a folder conflict and does not call Tabby when the target exists', async () => {
     vi.stubGlobal('fetch', async () => {
       throw new Error('offline')
@@ -141,5 +163,77 @@ describe('runTabbyHfDownload preflight', () => {
     expect(called).toBe(true)
     expect(result.ok).toBe(true)
     expect(result.folderConflict).toBeUndefined()
+  })
+
+  it('allows only one POST-equivalent download during rapid concurrent calls', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('offline')
+    })
+    const modelDir = await tempModelDir()
+    let called = 0
+    let release!: () => void
+    let entered!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const download = async (): Promise<{ downloadPath: string }> => {
+      called += 1
+      entered()
+      await blocked
+      mkdirSync(join(modelDir, 'my-model'))
+      return { downloadPath: join(modelDir, 'my-model') }
+    }
+
+    const first = runTabbyHfDownload({
+      req: { repoId: 'org/my-model' },
+      operationId: 'rapid-1',
+      modelDir,
+      emit: () => {},
+      download
+    })
+    const second = runTabbyHfDownload({
+      req: { repoId: 'org/my-model' },
+      operationId: 'rapid-2',
+      modelDir,
+      emit: () => {},
+      download
+    })
+
+    await started
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(called).toBe(1)
+    release()
+    const results = await Promise.all([first, second])
+    expect(results.filter((result) => result.ok)).toHaveLength(1)
+    expect(results.filter((result) => result.alreadyRunning)).toHaveLength(1)
+  })
+
+  it('keeps a leftover partial folder attached to the error session', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('offline')
+    })
+    const modelDir = await tempModelDir()
+    const result = await runTabbyHfDownload({
+      req: { repoId: 'org/my-model' },
+      operationId: 'partial-1',
+      modelDir,
+      emit: () => {},
+      download: async () => {
+        const folder = join(modelDir, 'my-model')
+        mkdirSync(folder)
+        writeFileSync(join(folder, 'weights.safetensors.part'), 'partial')
+        throw new Error('ClientPayloadError: Response payload is not completed')
+      }
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error).not.toMatch(/ClientPayloadError/i)
+    expect(result.folderConflict).toMatchObject({
+      folderName: 'my-model',
+      completeness: 'unknown'
+    })
   })
 })

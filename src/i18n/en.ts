@@ -209,6 +209,8 @@ export const en: MessageTree = {
     hfRevisionsFailed: 'Could not load revisions',
     hfTokenPlaceholder: 'HF token (optional, one-time)',
     hfTokenHelp: 'Token is not stored — used only for this download and loading revisions.',
+    hfDownloadRetrySemantics:
+      'An interrupted file is retried at most twice from byte zero. Range resume and partial-folder continuation are not used.',
     hfDownloadFailed: 'Hugging Face download failed',
     hfDownloadBackendLost:
       'The Tabby server stopped responding; the download was interrupted ({downloaded} of {total})',
@@ -229,6 +231,24 @@ export const en: MessageTree = {
     hfFolderUseOtherName: 'Download into “{folder}”',
     hfFolderUsedExisting: 'Using existing folder “{folder}” — nothing was downloaded.',
     hfFolderDeleteFailed: 'The folder could not be deleted',
+    hfDownloadStatusTitle: 'Download status',
+    hfDownloadStatusRunning: 'Downloading',
+    hfDownloadStatusSuccess: 'Downloaded',
+    hfDownloadStatusError: 'Download failed',
+    hfDownloadStatusInterrupted: 'Download interrupted',
+    hfDownloadStatusConflict: 'Target folder already exists',
+    hfDownloadStartedAt: 'Started: {time}',
+    hfDownloadUpdatedAt: 'Updated: {time}',
+    hfDownloadDismiss: 'Dismiss record',
+    hfDownloadNoResume:
+      'TabbyAPI can only start a new download — it cannot resume a partial folder.',
+    hfDownloadCleanupComplete:
+      'Partial files were safely removed after the error. The form remains filled in for a new attempt.',
+    hfDownloadInterruptedHint:
+      'The download did not finish. Disk has {downloaded} of {total}. Delete the partial folder and download again, or choose a different name.',
+    hfDownloadRepo: 'Repo: {repo}',
+    hfDownloadRevision: 'Revision: {revision}',
+    hfDownloadFolder: 'Folder: {folder}',
     emptyTabby: 'No models. Download an EXL3 model from Hugging Face using the form above.',
     unloadConfirmTabby:
       'Unload model “{name}”? TabbyAPI holds only one model — active requests will be interrupted.'
@@ -437,6 +457,21 @@ export const en: MessageTree = {
     copied: 'Copied',
     copyTitle: 'Copy the visible lines to the clipboard ({count})',
     clear: 'Clear',
+    clearConfirm:
+      'Clear in-app logs and the on-disk log file (%APPDATA%\\OllamaStudio\\logs)? Any historical key material will be removed.',
+    clearConfirmTitle: 'Clear logs',
+    scrubTabby: 'Scrub Tabby logs',
+    scrubTabbyConfirm:
+      'Safely rewrite text logs in {installDir}\\logs? ZIP archives are not deleted automatically.',
+    scrubTabbyConfirmTitle: 'Scrub Tabby runtime logs',
+    scrubTabbyBlocked: 'TabbyAPI must be stopped (including external instance).',
+    scrubTabbyDone: 'Tabby text logs scrubbed ({changed} lines changed).',
+    scrubTabbyZipList: 'ZIP archives found (not read):',
+    deleteTabbyZip: 'Delete Tabby ZIP logs',
+    deleteTabbyZipConfirm:
+      'Permanently delete {count} ZIP archive(s) in Tabby logs? Contents are not extracted — files only.',
+    deleteTabbyZipConfirmTitle: 'Delete Tabby ZIP logs',
+    deleteTabbyZipDone: 'Deleted ZIP files: {count}',
     empty: 'No logs',
     emptyFiltered: 'No logs (filtered)'
   },

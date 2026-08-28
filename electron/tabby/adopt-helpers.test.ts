@@ -256,4 +256,13 @@ describe('parseOwnedPidRecord', () => {
     expect(parseOwnedPidRecord('4242')).toBeNull()
     expect(parseOwnedPidRecord(null)).toBeNull()
   })
+
+  it('keeps an optional runtime patch marker for safe adoption', () => {
+    expect(
+      parseOwnedPidRecord({
+        ...stored,
+        runtimePatchVersion: 'ollamastudio-1.4.1-v1'
+      })?.runtimePatchVersion
+    ).toBe('ollamastudio-1.4.1-v1')
+  })
 })

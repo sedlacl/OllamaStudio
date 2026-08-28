@@ -1,5 +1,5 @@
 import { execFile, type ChildProcess } from 'child_process'
-import { createWriteStream, existsSync, mkdirSync } from 'fs'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import net from 'net'
 import { promisify } from 'util'
@@ -12,7 +12,9 @@ import {
   saveConfig,
   type AppConfig
 } from './config'
-import { logBuffer } from './log-buffer'
+import { logBuffer } from '../ollama/log-buffer'
+import { openStudioLogWriter, closeStudioLogWriter } from '../security/studio-log-persistence'
+import { sanitizeOptionalError } from '../security/sanitize-state'
 import { ollamaClient } from './client'
 import {
   attachServeProcessTree,
@@ -47,10 +49,9 @@ export class ServeManager {
     portConflict: false
   }
   private listeners = new Set<StatusListener>()
-  private logFile: ReturnType<typeof createWriteStream> | null = null
 
   constructor() {
-    this.setupLogFile()
+    /* log writer se otevře až po registraci secretů a dokončeném scrubu (start) */
   }
 
   getState(): ServeState {
@@ -157,6 +158,7 @@ export class ServeManager {
     const env = buildSpawnEnv(config)
 
     try {
+      await openStudioLogWriter(join(app.getPath('userData'), 'logs'), 'ollama-serve.log')
       this.process = spawnOllamaServe(binary, env)
 
       const pid = this.process.pid ?? null
@@ -165,17 +167,17 @@ export class ServeManager {
       this.setState({ pid, spawnTime: Date.now() })
 
       this.process.stdout?.on('data', (chunk: Buffer) => {
-        logBuffer.append('stdout', chunk.toString('utf-8'))
+        logBuffer.appendChunk('stdout', chunk)
       })
 
       this.process.stderr?.on('data', (chunk: Buffer) => {
-        logBuffer.append('stderr', chunk.toString('utf-8'))
+        logBuffer.appendChunk('stderr', chunk)
       })
 
       this.process.on('error', (err) => {
         this.setState({
           status: 'error',
-          error: err.message,
+          error: sanitizeOptionalError(err.message) ?? tMain('errors.ollamaMissing'),
           pid: null,
           spawnTime: null
         })
@@ -184,6 +186,7 @@ export class ServeManager {
       })
 
       this.process.on('exit', (code, signal) => {
+        logBuffer.flushAll()
         if (this.state.status !== 'stopping') {
           const msg =
             code !== null && code !== 0
@@ -211,7 +214,7 @@ export class ServeManager {
       await this.killProcess()
       this.setState({
         status: 'error',
-        error: err instanceof Error ? err.message : String(err),
+        error: sanitizeOptionalError(err instanceof Error ? err.message : String(err)) ?? null,
         pid: null,
         spawnTime: null
       })
@@ -244,8 +247,7 @@ export class ServeManager {
 
   async shutdown(): Promise<void> {
     await this.stop()
-    this.logFile?.end()
-    this.logFile = null
+    closeStudioLogWriter()
   }
 
   private async waitForReady(timeoutMs: number): Promise<void> {
@@ -337,21 +339,13 @@ export class ServeManager {
     }
   }
 
-  private setupLogFile(): void {
-    try {
-      const logsDir = join(app.getPath('userData'), 'logs')
-      const logPath = join(logsDir, 'ollama-serve.log')
-      if (!existsSync(logsDir)) {
-        mkdirSync(logsDir, { recursive: true })
-      }
-      this.logFile = createWriteStream(logPath, { flags: 'a' })
-      logBuffer.setFileWriter(this.logFile)
-    } catch {
-      logBuffer.setFileWriter(null)
-    }
-  }
-
   private setState(partial: Partial<ServeState>): void {
+    if (partial.error !== undefined) {
+      partial = {
+        ...partial,
+        error: sanitizeOptionalError(partial.error) ?? null
+      }
+    }
     this.state = { ...this.state, ...partial }
     for (const listener of this.listeners) {
       listener(this.getState())

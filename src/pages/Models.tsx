@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import ErrorBanner from '../components/ErrorBanner'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LoadModelDialog from '../components/LoadModelDialog'
@@ -20,8 +21,8 @@ import {
   type ModelTag,
   type PullProgress,
   type RunningModel,
-  type TabbyDownloadProgress,
   type TabbyDownloadFolderConflict,
+  type TabbyDownloadStatusSnapshot,
   type HfRevision,
   type TabbyLoadOptions
 } from '../types/api'
@@ -54,7 +55,8 @@ function emptyIntegrations(): IntegrationsStatus {
 }
 
 export default function Models(): JSX.Element {
-  const { t } = useI18n()
+  const { t, formatDateTime } = useI18n()
+  const navigate = useNavigate()
   const [tags, setTags] = useState<ModelTag[]>([])
   const [running, setRunning] = useState<RunningModel[]>([])
   const [loading, setLoading] = useState(true)
@@ -83,8 +85,9 @@ export default function Models(): JSX.Element {
   const [hfRevision, setHfRevision] = useState('')
   const [hfFolderName, setHfFolderName] = useState('')
   const [hfToken, setHfToken] = useState('')
-  const [hfDownloading, setHfDownloading] = useState(false)
-  const [hfProgress, setHfProgress] = useState<TabbyDownloadProgress | null>(null)
+  const [downloadSnap, setDownloadSnap] = useState<TabbyDownloadStatusSnapshot | null>(null)
+  const downloadSeqRef = useRef(-1)
+  const formHydratedRef = useRef(false)
   const [hfRevisions, setHfRevisions] = useState<HfRevision[]>([])
   const [hfRevisionsLoading, setHfRevisionsLoading] = useState(false)
   const [hfRevisionsLoaded, setHfRevisionsLoaded] = useState(false)
@@ -94,6 +97,23 @@ export default function Models(): JSX.Element {
   const [hfConflictError, setHfConflictError] = useState<string | null>(null)
 
   const isTabby = activeBackend === 'tabby'
+  const hfSession = downloadSnap?.session ?? null
+  const hfDownloading = hfSession?.status === 'running'
+
+  const applyDownloadSnap = useCallback((incoming: TabbyDownloadStatusSnapshot): void => {
+    if (incoming.sequence <= downloadSeqRef.current) return
+    downloadSeqRef.current = incoming.sequence
+    setDownloadSnap(incoming)
+    if (!formHydratedRef.current) {
+      formHydratedRef.current = true
+      setHfRepoId(incoming.form.repoId)
+      setHfRevision(incoming.form.revision)
+      setHfFolderName(incoming.form.folderName)
+      if (incoming.session?.folderConflict) {
+        setHfConflict(incoming.session.folderConflict)
+      }
+    }
+  }, [])
 
   const refreshIntegrations = useCallback(async (names: string[]): Promise<void> => {
     try {
@@ -183,12 +203,24 @@ export default function Models(): JSX.Element {
   }, [pulling])
 
   useEffect(() => {
-    if (!hfDownloading) return
-    const unsub = api().onTabbyDownloadProgress((data) => {
-      setHfProgress(data)
-    })
+    const unsub = api().onTabbyDownloadStatus((snap) => applyDownloadSnap(snap))
+    void api().getTabbyDownloadStatus().then(applyDownloadSnap).catch(() => {})
     return unsub
-  }, [hfDownloading])
+  }, [applyDownloadSnap])
+
+  useEffect(() => {
+    if (!formHydratedRef.current) return
+    const id = setTimeout(() => {
+      void api()
+        .rememberTabbyDownloadForm({
+          repoId: hfRepoId,
+          revision: hfRevision,
+          folderName: hfFolderName
+        })
+        .catch(() => {})
+    }, 400)
+    return () => clearTimeout(id)
+  }, [hfRepoId, hfRevision, hfFolderName])
 
   useEffect(() => {
     setHfRevisions([])
@@ -336,8 +368,7 @@ export default function Models(): JSX.Element {
   const handleHfDownload = async (folderOverride?: string): Promise<void> => {
     const repoId = hfRepoId.trim()
     if (!repoId) return
-    setHfDownloading(true)
-    setHfProgress(null)
+    if (hfDownloading) return
     errorSourceRef.current = null
     setError(null)
     try {
@@ -348,6 +379,7 @@ export default function Models(): JSX.Element {
         folderName,
         token: hfToken.trim() || undefined
       })
+      if (result.alreadyRunning) return
       if (result.folderConflict) {
         setHfConflict(result.folderConflict)
         setHfConflictError(null)
@@ -356,37 +388,33 @@ export default function Models(): JSX.Element {
       if (!result.ok) {
         errorSourceRef.current = 'action'
         setError(result.error ?? t('models.hfDownloadFailed'))
-      } else {
-        setHfRepoId('')
-        setHfRevision('')
-        setHfFolderName('')
+        return
+      }
+      if (result.ok) {
         setHfToken('')
-        setHfRevisions([])
-        setHfRevisionsLoaded(false)
-        setHfRevisionsError(null)
         await refresh()
       }
     } catch (e) {
       errorSourceRef.current = 'action'
       setError(e instanceof Error ? e.message : t('models.hfDownloadFailed'))
-    } finally {
-      setHfDownloading(false)
-      setHfProgress(null)
     }
   }
 
   const handleHfUseExisting = async (): Promise<void> => {
-    if (!hfConflict) return
-    const folder = hfConflict.folderName
+    const conflict = hfConflict ?? hfSession?.folderConflict
+    if (!conflict) return
+    const folder = conflict.folderName
     setHfConflict(null)
     setHfConflictError(null)
     setLoadNotice(t('models.hfFolderUsedExisting', { folder }))
+    await api().dismissTabbyDownload().then(applyDownloadSnap).catch(() => {})
     await refresh()
   }
 
   const handleHfUseOtherFolder = async (): Promise<void> => {
-    if (!hfConflict) return
-    const name = hfConflict.suggestedFolderName
+    const conflict = hfConflict ?? hfSession?.folderConflict
+    if (!conflict) return
+    const name = conflict.suggestedFolderName
     setHfFolderName(name)
     setHfConflict(null)
     setHfConflictError(null)
@@ -394,11 +422,12 @@ export default function Models(): JSX.Element {
   }
 
   const handleHfDeleteAndRedownload = async (): Promise<void> => {
-    if (!hfConflict) return
-    if (!confirm(t('models.hfFolderDeleteConfirm', { folder: hfConflict.folderName }))) return
+    const conflict = hfConflict ?? hfSession?.folderConflict
+    if (!conflict) return
+    if (!confirm(t('models.hfFolderDeleteConfirm', { folder: conflict.folderName }))) return
     setHfConflictBusy(true)
     setHfConflictError(null)
-    const folder = hfConflict.folderName
+    const folder = conflict.folderName
     try {
       const result = await api().tabbyDeleteDownloadFolder(folder)
       if (!result.ok) {
@@ -600,10 +629,28 @@ export default function Models(): JSX.Element {
     ? hfRevision
     : ''
   const hfPercent =
-    hfProgress?.percent != null && Number.isFinite(hfProgress.percent)
-      ? hfProgress.percent
+    hfSession?.percent != null && Number.isFinite(hfSession.percent)
+      ? hfSession.percent
       : null
   const hfHasDeterminateProgress = hfPercent != null
+  const hfStatusLabel =
+    hfSession?.status === 'running'
+      ? t('models.hfDownloadStatusRunning')
+      : hfSession?.status === 'success'
+        ? t('models.hfDownloadStatusSuccess')
+        : hfSession?.status === 'interrupted'
+          ? t('models.hfDownloadStatusInterrupted')
+          : hfSession?.status === 'conflict'
+            ? t('models.hfDownloadStatusConflict')
+            : hfSession?.status === 'error'
+              ? t('models.hfDownloadStatusError')
+              : null
+  const hfTerminal =
+    hfSession != null &&
+    (hfSession.status === 'success' ||
+      hfSession.status === 'error' ||
+      hfSession.status === 'interrupted' ||
+      hfSession.status === 'conflict')
   const fieldStyle = {
     padding: '8px 10px',
     border: '1px solid var(--border)',
@@ -720,6 +767,7 @@ export default function Models(): JSX.Element {
               style={{ marginTop: 8, width: '100%', ...fieldStyle }}
             />
             <span className="field-help">{t('models.hfTokenHelp')}</span>
+            <span className="field-help">{t('models.hfDownloadRetrySemantics')}</span>
             <div className="btn-row" style={{ marginTop: 8 }}>
               <button
                 className="btn btn-primary"
@@ -730,20 +778,40 @@ export default function Models(): JSX.Element {
               </button>
             </div>
           </div>
-          {(hfDownloading || hfProgress) && (
-            <div style={{ marginTop: 8 }}>
-              <span className="mono">
-                {hfHasDeterminateProgress
-                  ? t('models.hfProgressPercent', { percent: hfPercent ?? 0 })
-                  : t('models.hfProgressIndeterminate')}
-              </span>
-              {hfProgress?.bytesDownloaded != null && (
-                <span className="metric-label" style={{ marginLeft: 8 }}>
-                  {hfProgress.bytesTotal != null
-                    ? `${formatSize(hfProgress.bytesDownloaded)} / ${formatSize(hfProgress.bytesTotal)}`
-                    : formatSize(hfProgress.bytesDownloaded)}
+          {hfSession && (
+            <div
+              className="download-status-panel"
+              data-status={hfSession.status}
+              role="status"
+              aria-live="polite"
+            >
+              <strong>{t('models.hfDownloadStatusTitle')}</strong>
+              <div className="download-status-meta">
+                <span className="mono">{hfStatusLabel}</span>
+                <span className="metric-label">
+                  {t('models.hfDownloadRepo', { repo: hfSession.repoId || '—' })}
                 </span>
-              )}
+                <span className="metric-label">
+                  {t('models.hfDownloadRevision', {
+                    revision: hfSession.revision || 'main'
+                  })}
+                </span>
+                <span className="metric-label">
+                  {t('models.hfDownloadFolder', { folder: hfSession.folderName })}
+                </span>
+              </div>
+              <div className="download-status-meta">
+                <span className="mono">
+                  {hfHasDeterminateProgress
+                    ? t('models.hfProgressPercent', { percent: hfPercent ?? 0 })
+                    : t('models.hfProgressIndeterminate')}
+                </span>
+                <span className="metric-label">
+                  {hfSession.totalBytes != null
+                    ? `${formatSize(hfSession.downloadedBytes)} / ${formatSize(hfSession.totalBytes)}`
+                    : formatSize(hfSession.downloadedBytes)}
+                </span>
+              </div>
               <div
                 className={`progress-bar${hfHasDeterminateProgress ? '' : ' indeterminate'}`}
                 role="progressbar"
@@ -756,6 +824,73 @@ export default function Models(): JSX.Element {
                   className="progress-fill"
                   style={hfHasDeterminateProgress ? { width: `${hfPercent}%` } : undefined}
                 />
+              </div>
+              <div className="download-status-meta">
+                <span className="metric-label">
+                  {t('models.hfDownloadStartedAt', { time: formatDateTime(hfSession.startedAt) })}
+                </span>
+                <span className="metric-label">
+                  {t('models.hfDownloadUpdatedAt', { time: formatDateTime(hfSession.updatedAt) })}
+                </span>
+              </div>
+              {hfSession.error && hfSession.status !== 'running' && (
+                <p className="download-status-hint" style={{ color: 'var(--error)' }}>
+                  {hfSession.error}
+                </p>
+              )}
+              {(hfSession.status === 'interrupted' || hfSession.status === 'error') && (
+                <p className="download-status-hint">
+                  {hfSession.folderConflict
+                    ? t('models.hfDownloadInterruptedHint', {
+                        downloaded: formatSize(hfSession.folderConflict.bytesOnDisk),
+                        total:
+                          hfSession.folderConflict.expectedBytes != null
+                            ? formatSize(hfSession.folderConflict.expectedBytes)
+                            : '?'
+                      })
+                    : t('models.hfDownloadCleanupComplete')}
+                </p>
+              )}
+              {hfSession.folderConflict && hfSession.status !== 'running' && (
+                <p className="download-status-hint">{t('models.hfDownloadNoResume')}</p>
+              )}
+              <div className="btn-row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+                <button className="btn" onClick={() => navigate('/logs')}>
+                  {t('common.openLogs')}
+                </button>
+                {hfTerminal && (
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      void api()
+                        .dismissTabbyDownload()
+                        .then(applyDownloadSnap)
+                        .catch(() => {})
+                    }}
+                  >
+                    {t('models.hfDownloadDismiss')}
+                  </button>
+                )}
+                {hfSession.folderConflict && hfSession.status !== 'running' && (
+                  <>
+                    <button
+                      className="btn"
+                      disabled={hfConflictBusy}
+                      onClick={() => void handleHfUseOtherFolder()}
+                    >
+                      {t('models.hfFolderUseOtherName', {
+                        folder: hfSession.folderConflict.suggestedFolderName
+                      })}
+                    </button>
+                    <button
+                      className="btn btn-danger"
+                      disabled={hfConflictBusy}
+                      onClick={() => void handleHfDeleteAndRedownload()}
+                    >
+                      {hfConflictBusy ? t('common.loading') : t('models.hfFolderDeleteAndRedownload')}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}

@@ -6,17 +6,34 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
-## [1.4.1] — 2026-08-28
+## [1.4.2] — 2026-08-28
 
-### Added
+### Security
 
-- Při startu Studio pozná už běžící TabbyAPI na nakonfigurované adrese a osiřelou instanci z předchozího běhu převezme (včetně PID). Cizí službu na portu nepřivlastní ani neukončí — na stránce Server i v logu je stav vidět
+- Redakce tajemství v logu: percent-encoded query parametry, YAML s jednoduchými uvozovkami u klíče i hodnoty, ANSI reset/timestamp za labelem Tabby klíče a řádky nad 64 KiB (fail-closed marker bez úniku payloadu, včetně více chunků)
+- Hash-guarded runtime patch bundle (`common/auth.py`, `common/downloader.py`): reprodukovatelný LF manifest, legacy CRLF patched hash zůstává platný na disku, neznámý hash fail-close; ověření disk hash pro spawned/adopted/external proces
+- Auth watcher: při změně `api_tokens.yml` okamžitá fail-closed redakce a synchronní registrace klíčů (debounce jen pro stabilizační re-read); po swapu re-sanitizace RAM session stavů
+- Centralizovaná Studio log persistence: jednorázový scrub historických logů až po registraci auth secretů, sdílený mutex pro writer/start/scrub/delete/clear, realpath guard před open/rename/delete
+- Historické logy Studio lze bezpečně vyčistit tlačítkem Vymazat (včetně souboru na disku po potvrzení); textové logy Tabby runtime jdou scrubnout při zastaveném serveru (externí instance odmítnuta); ZIP archivy jen po explicitním potvrzení smazání
+- Chybové stavy serve/model-load/download/HTTP/update/kill/scrub a cesty ve stavu/IPC se sanitizují před prvním uložením (včetně konfliktu HF downloadu a kill výsledků)
 
 ### Fixed
 
 - Po přerušeném stažení z Hugging Face šlo znovu stáhnout jen ručním smazáním složky. Studio teď pozná existující složku, nabídne smazání, jiný název, nebo použití kompletního modelu — Tabby hlášku „path already exists“ už neukazuje jako syrové HTTP 400
 - Selhání spojení s backendem už neukáže jen `fetch failed`. Banner na stránce Modely zůstane, dokud ho nezavřete (u stažení ho neumaže ani obnovení katalogu), řekne lidsky že server neběží / neposlouchá, a stejný záznam (včetně adresy) je v panelu logů
 - Restart main procesu ve vývoji (electron-vite) už TabbyAPI nezabíjí přes Windows Job Object — probíhající stažení tím nespadne
+- Průběh stažení z Hugging Face je v panelu logů (`[studio] tabby-download`) od startu po dokončení, přerušení i chybu — včetně obnovy nedokončené session po restartu. Token se do logu nezapisuje
+- Stav stažení už není jen na stránce Modely: po přepnutí na jinou záložku a zpět panel pokračuje z aktuálního snapshotu v main procesu
+- Když stažení neskončí úspěchem (chyba, přerušení, existující složka) nebo aplikace spadne uprostřed, Studio si pamatuje formulář i stav — po restartu nabídne smazání částečné složky nebo jiný název. TabbyAPI umí jen nové stažení, ne resume. Úspěšné stažení se po restartu neobnovuje jako aktivní panel; poslední vyplněné Repo ID / revize / složka zůstanou
+- Přerušený více-souborový HF download už na Windows nepřekryje původní síťovou chybu zamčenou složkou: Studio instaluje hashovanou opravu downloaderu, která ukončí a dočká paralelní úlohy před cleanupem, zamčené mazání omezeně zopakuje a konkrétní přerušený soubor nejvýše dvakrát stáhne znovu od začátku
+- Stažení počká na skutečně zdravé TabbyAPI a souběžná rychlá kliknutí sdílejí jeden start; první požadavek už neodchází během startu serveru
+- Adopted Tabby s neplatným runtime patchem se bezpečně opraví a restartuje; u externí instance se proces neukončuje, ale citlivé operace včetně HF downloadu blokují s lidskou chybou
+
+## [1.4.1] — 2026-08-28
+
+### Added
+
+- Při startu Studio pozná už běžící TabbyAPI na nakonfigurované adrese a osiřelou instanci z předchozího běhu převezme (včetně PID). Cizí službu na portu nepřivlastní ani neukončí — na stránce Server i v logu je stav vidět
 
 ## [1.4.0] — 2026-08-27
 
@@ -35,11 +52,10 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ### Fixed
 
-- Když Tabby během stahování z Hugging Face přestane odpovídat, Studio napíše, že server zmizel a stahování se přerušilo, včetně toho, kolik už je na disku
-- Při ukončení aplikace se falešná chyba z pollingu (katalog, když serve už neběží) neukáže v UI ani v logu
 - Při přepnutí backendu se korektně zastaví jen Studiem vlastněný proces; cizí `python.exe` na portu se neukončuje
 - Zástupce v nabídce Start a `OllamaStudio.exe` měly výchozí ikonu Electronu a hlásily se jako Electron 33.4.11; instalátor teď do binárky zapisuje ikonu i verzi aplikace
 - Katalog modelů a admin operace Tabby končily chybou `401 Please provide an API key`. TabbyAPI ověřuje admin endpointy nejdřív API klíčem, takže Studio posílá `x-api-key` i `x-admin-key`
+- Po přerušeném stažení z Hugging Face šlo znovu stáhnout jen ručním smazáním složky. Studio teď pozná existující složku, nabídne smazání, jiný název, nebo použití kompletního modelu — Tabby hlášku „path already exists“ už neukazuje jako syrové HTTP 400
 
 ## [1.3.3] — 2026-08-25
 

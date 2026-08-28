@@ -207,6 +207,8 @@ export const cs = {
     hfRevisionsFailed: 'Revize se nepodařilo načíst',
     hfTokenPlaceholder: 'HF token (volitelné, jednorázově)',
     hfTokenHelp: 'Token se neukládá — použije se jen pro toto stažení a načtení revizí.',
+    hfDownloadRetrySemantics:
+      'Přerušený soubor se zkusí nejvýše dvakrát znovu od začátku. Range resume ani pokračování z částečné složky se nepoužívá.',
     hfDownloadFailed: 'Stažení z Hugging Face selhalo',
     hfDownloadBackendLost:
       'Tabby server přestal odpovídat, stahování bylo přerušeno ({downloaded} z {total})',
@@ -227,6 +229,24 @@ export const cs = {
     hfFolderUseOtherName: 'Stáhnout do „{folder}“',
     hfFolderUsedExisting: 'Použita existující složka „{folder}“ — nic se nestahovalo.',
     hfFolderDeleteFailed: 'Složku se nepodařilo smazat',
+    hfDownloadStatusTitle: 'Stav stažení',
+    hfDownloadStatusRunning: 'Stahuje se',
+    hfDownloadStatusSuccess: 'Staženo',
+    hfDownloadStatusError: 'Stažení selhalo',
+    hfDownloadStatusInterrupted: 'Stažení přerušeno',
+    hfDownloadStatusConflict: 'Cílová složka už existuje',
+    hfDownloadStartedAt: 'Zahájeno: {time}',
+    hfDownloadUpdatedAt: 'Aktualizováno: {time}',
+    hfDownloadDismiss: 'Zavřít záznam',
+    hfDownloadNoResume:
+      'TabbyAPI umí jen nové stažení, ne pokračování z částečné složky.',
+    hfDownloadCleanupComplete:
+      'Částečné soubory byly po chybě bezpečně odstraněny. Formulář zůstal vyplněný pro nový pokus.',
+    hfDownloadInterruptedHint:
+      'Stažení neskončilo. Na disku je {downloaded} z {total}. Smažte částečnou složku a stáhněte znovu, nebo zvolte jiný název.',
+    hfDownloadRepo: 'Repo: {repo}',
+    hfDownloadRevision: 'Revize: {revision}',
+    hfDownloadFolder: 'Složka: {folder}',
     emptyTabby: 'Žádné modely. Stáhněte EXL3 model z Hugging Face pomocí formuláře výše.',
     unloadConfirmTabby:
       'Uvolnit model „{name}"? TabbyAPI drží jen jeden model — probíhající požadavky budou přerušeny.'
@@ -435,6 +455,21 @@ export const cs = {
     copied: 'Zkopírováno',
     copyTitle: 'Zkopírovat zobrazené řádky do schránky ({count})',
     clear: 'Vymazat',
+    clearConfirm:
+      'Vymazat logy v aplikaci i soubor na disku (%APPDATA%\\OllamaStudio\\logs)? Historické řádky s klíči budou odstraněny.',
+    clearConfirmTitle: 'Vymazat logy',
+    scrubTabby: 'Vyčistit logy Tabby',
+    scrubTabbyConfirm:
+      'Bezpečně přepsat textové logy v {installDir}\\logs? ZIP archivy se nemažou automaticky.',
+    scrubTabbyConfirmTitle: 'Vyčistit Tabby runtime logy',
+    scrubTabbyBlocked: 'TabbyAPI musí být zastaveno (včetně externí instance).',
+    scrubTabbyDone: 'Textové logy Tabby vyčištěny ({changed} řádků změněno).',
+    scrubTabbyZipList: 'Nalezené ZIP archivy (nečteny):',
+    deleteTabbyZip: 'Smazat ZIP logy Tabby',
+    deleteTabbyZipConfirm:
+      'Trvale smazat {count} ZIP archiv(ů) v Tabby logs? Obsah se nerozbalí — jen odstranění souborů.',
+    deleteTabbyZipConfirmTitle: 'Smazat ZIP logy Tabby',
+    deleteTabbyZipDone: 'Smazáno ZIP souborů: {count}',
     empty: 'Žádné logy',
     emptyFiltered: 'Žádné logy (filtr)'
   },

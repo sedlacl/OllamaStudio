@@ -5,6 +5,7 @@ import {
   type TabbyConfig
 } from '../ollama/config'
 import { studioFetch } from '../ollama/fetch-error'
+import { sanitizeUnknownError } from '../security/sanitize-state'
 import { adminAuthHeaders, apiAuthHeaders } from './auth'
 import type { LoadedModelSummary, ModelSummary } from '../backends/types'
 
@@ -76,13 +77,17 @@ async function httpError(res: Response): Promise<Error> {
     const text = (await res.text()).trim()
     if (text) {
       try {
-        const json = JSON.parse(text) as { error?: { message?: string } | string }
-        if (typeof json.error === 'string') detail = `: ${json.error}`
+        const json = JSON.parse(text) as {
+          detail?: string
+          error?: { message?: string } | string
+        }
+        if (typeof json.error === 'string') detail = `: ${sanitizeUnknownError(json.error)}`
         else if (json.error && typeof json.error.message === 'string') {
-          detail = `: ${json.error.message}`
-        } else detail = `: ${text}`
+          detail = `: ${sanitizeUnknownError(json.error.message)}`
+        } else if (typeof json.detail === 'string') detail = `: ${sanitizeUnknownError(json.detail)}`
+        else detail = `: ${sanitizeUnknownError(text)}`
       } catch {
-        detail = `: ${text}`
+        detail = `: ${sanitizeUnknownError(text)}`
       }
     }
   } catch {
@@ -312,7 +317,7 @@ export class TabbyClient {
             status?: string
             error?: { message?: string }
           }
-          if (json.error?.message) throw new Error(json.error.message)
+          if (json.error?.message) throw new Error(sanitizeUnknownError(json.error.message))
           yield {
             module: json.module ?? 0,
             modules: json.modules ?? 0,

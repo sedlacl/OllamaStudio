@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { tMain } from '../i18n'
+import { sanitizeKillProcessResult } from '../security/sanitize-state'
 import { isOllamaRelatedName } from './metrics'
 
 const execFileAsync = promisify(execFile)
@@ -69,60 +70,60 @@ export async function killOllamaRelatedProcess(
   }
 ): Promise<KillProcessResult> {
   if (!Number.isInteger(pid) || pid <= 0) {
-    return { ok: false, error: tMain('errors.invalidPid') }
+    return sanitizeKillProcessResult({ ok: false, error: tMain('errors.invalidPid') })
   }
   if (pid === process.pid) {
-    return { ok: false, error: tMain('errors.cannotKillSelf') }
+    return sanitizeKillProcessResult({ ok: false, error: tMain('errors.cannotKillSelf') })
   }
 
   if (options.servePid != null && pid === options.servePid) {
     try {
       await options.stopServe()
-      return { ok: true }
+      return sanitizeKillProcessResult({ ok: true })
     } catch (e) {
-      return {
+      return sanitizeKillProcessResult({
         ok: false,
         error: e instanceof Error ? e.message : tMain('errors.stopServeFailed')
-      }
+      })
     }
   }
 
   if (options.allowAnyName) {
     if (!options.allowedPids?.includes(pid)) {
-      return {
+      return sanitizeKillProcessResult({
         ok: false,
         error: tMain('errors.notOllamaProcess', { pid, name: 'unknown' })
-      }
+      })
     }
     try {
       await forceKillPid(pid)
-      return { ok: true }
+      return sanitizeKillProcessResult({ ok: true })
     } catch (e) {
-      return {
+      return sanitizeKillProcessResult({
         ok: false,
         error: e instanceof Error ? e.message : tMain('errors.killPidFailed', { pid })
-      }
+      })
     }
   }
 
   const name = await getProcessName(pid)
   if (!name) {
-    return { ok: false, error: tMain('errors.processGone', { pid }) }
+    return sanitizeKillProcessResult({ ok: false, error: tMain('errors.processGone', { pid }) })
   }
   if (!isOllamaRelatedName(name)) {
-    return {
+    return sanitizeKillProcessResult({
       ok: false,
       error: tMain('errors.notOllamaProcess', { pid, name })
-    }
+    })
   }
 
   try {
     await forceKillPid(pid)
-    return { ok: true }
+    return sanitizeKillProcessResult({ ok: true })
   } catch (e) {
-    return {
+    return sanitizeKillProcessResult({
       ok: false,
       error: e instanceof Error ? e.message : tMain('errors.killPidFailed', { pid })
-    }
+    })
   }
 }

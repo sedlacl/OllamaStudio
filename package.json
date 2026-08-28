@@ -1,6 +1,6 @@
 {
   "name": "ollamastudio",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "OllamaStudio — desktopový hostitel Ollama a TabbyAPI",
   "main": "./out/main/index.js",
   "author": "OllamaStudio",
@@ -13,8 +13,11 @@
   "scripts": {
     "dev": "node ./scripts/electron-vite.mjs dev",
     "build": "node ./scripts/electron-vite.mjs build",
+    "lint": "tsc --noEmit -p tsconfig.node.json --tsBuildInfoFile node_modules/.vite/tsconfig.node.tsbuildinfo && tsc --noEmit -p tsconfig.web.json --tsBuildInfoFile node_modules/.vite/tsconfig.web.tsbuildinfo",
     "preview": "node ./scripts/electron-vite.mjs preview",
     "test": "vitest run",
+    "test:security": "vitest run electron/security/adversarial-redaction.test.ts electron/security/secret-redactor.test.ts electron/security/log-scrub.test.ts electron/security/studio-log-persistence.test.ts electron/ollama/log-buffer-redaction.test.ts electron/tabby/download-session-helpers.test.ts electron/tabby/runtime-patch.test.ts",
+    "patch:tabby": "node ./scripts/apply-tabby-downloader-patch.mjs",
     "postinstall": "electron-builder install-app-deps",
     "icons": "node ./scripts/make-icons.mjs build/icon-source.png --fit --transparent",
     "pack": "npm run build && electron-builder --dir",

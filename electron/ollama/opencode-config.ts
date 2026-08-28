@@ -462,7 +462,7 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
       outputLength: cappedOutputLimit(existing?.outputLength, existing?.contextLength),
       providerId: TABBY_PROVIDER_ID,
       // Jen API klíč — nikdy admin.
-      apiKey: auth.disableAuth ? null : auth.apiKey
+      apiKey: auth.disableAuth ? null : auth.apiKeys[0] ?? auth.adminKey
     }
   }
 

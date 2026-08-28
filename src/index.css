@@ -725,6 +725,40 @@ button {
   animation: progress-indeterminate 1.2s ease-in-out infinite;
 }
 
+.download-status-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.download-status-panel[data-status='error'],
+.download-status-panel[data-status='interrupted'] {
+  border-color: var(--danger-border);
+}
+
+.download-status-panel[data-status='success'] {
+  border-color: var(--success);
+}
+
+.download-status-panel[data-status='conflict'] {
+  border-color: var(--warning);
+}
+
+.download-status-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 8px 0 0;
+}
+
+.download-status-hint {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 @keyframes progress-indeterminate {
   0% {
     transform: translateX(-120%);

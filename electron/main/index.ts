@@ -7,7 +7,7 @@ import {
   shell,
   Tray
 } from 'electron'
-import { existsSync } from 'fs'
+import { existsSync, readdirSync } from 'fs'
 import { join } from 'path'
 import {
   ollamaClient,
@@ -29,6 +29,14 @@ import {
   removeLoadOptions
 } from '../ollama/load-options-registry'
 import { logBuffer, type LogEntry } from '../ollama/log-buffer'
+import { scrubTabbyRuntimeTextLogs, deleteTabbyRuntimeZipLogs } from '../security/log-scrub'
+import {
+  clearStudioLogs,
+  prepareStudioLogScrub,
+  withBackendLogMutex
+} from '../security/studio-log-persistence'
+import { sanitizeUnknownError } from '../security/sanitize-state'
+import { registerTabbyAuthSecrets, releaseTabbyAuthSecrets, watchTabbyAuth } from '../tabby/auth'
 import {
   clearModelLoadState,
   getActiveModelLoads,
@@ -74,9 +82,17 @@ import {
 } from '../tabby/active-backend'
 import { tabbyClient, type TabbyLoadOptions } from '../tabby/client'
 import { hfErrorToMessage, runTabbyHfDownload, deleteTabbyDownloadFolder, type TabbyDownloadProgressEvent } from '../tabby/hf-download'
-import { fetchHfRevisions } from '../tabby/hf-hub'
+import { directoryByteSize, fetchHfRevisions } from '../tabby/hf-hub'
 import { writeModelMtpConfig } from '../tabby/model-config'
 import { tabbyServeManager } from '../tabby/serve-manager'
+import {
+  configureDownloadSession,
+  dismissDownloadSession,
+  getDownloadStatusSnapshot,
+  recoverPersistedDownload,
+  rememberDownloadForm,
+  resanitizeDownloadSessionSnapshot
+} from '../tabby/download-session'
 import { type BackendId } from '../backends/types'
 import { isLocale, setMainLocale, tMain, type Locale } from '../i18n'
 import { isAppQuitting, markAppQuitting } from '../ollama/app-lifecycle'
@@ -91,6 +107,7 @@ import {
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let loadedModelCount = 0
+let tabbyAuthWatchRelease: (() => void) | null = null
 /** Testy rychlosti běžící právě teď — dva naráz by si na runneru překážely. */
 const speedTestsInFlight = new Set<string>()
 
@@ -344,7 +361,7 @@ async function startTabbyModelLoad(
     })
     return { ok: true }
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
+    const error = sanitizeUnknownError(err)
     mainWindow?.webContents.send('model-load-status', {
       name,
       status: 'error',
@@ -424,14 +441,18 @@ function registerIpc(): void {
       }
       return killOllamaRelatedProcess(pid, {
         servePid: tabbyServeManager.getPid(),
-        stopServe: () => stopActiveBackend(),
+        stopServe: async () => {
+          await stopActiveBackend()
+        },
         allowAnyName: true,
         allowedPids: managed
       })
     }
     return killOllamaRelatedProcess(pid, {
       servePid: serveManager.getPid(),
-      stopServe: () => stopActiveBackend()
+      stopServe: async () => {
+        await stopActiveBackend()
+      }
     })
   })
 
@@ -707,6 +728,12 @@ function registerIpc(): void {
           /* ignore */
         }
       }
+      try {
+        await tabbyServeManager.ensureReady(180_000)
+      } catch (err) {
+        logIpcError('tabby-download-readiness', err)
+        return { ok: false, error: tMain('errors.tabbyDownloadNotReady') }
+      }
       return runTabbyHfDownload({
         req: {
           repoId: typeof req?.repoId === 'string' ? req.repoId : '',
@@ -720,6 +747,25 @@ function registerIpc(): void {
         download: (downloadReq) => tabbyClient.downloadModel(downloadReq)
       })
     }
+  )
+
+  ipcMain.handle('tabby-download-status', () => getDownloadStatusSnapshot())
+  ipcMain.handle('tabby-download-dismiss', () => dismissDownloadSession())
+  ipcMain.handle(
+    'tabby-download-remember-form',
+    (
+      _e,
+      req: {
+        repoId?: string
+        revision?: string
+        folderName?: string
+      }
+    ) =>
+      rememberDownloadForm({
+        repoId: typeof req?.repoId === 'string' ? req.repoId : '',
+        revision: typeof req?.revision === 'string' ? req.revision : '',
+        folderName: typeof req?.folderName === 'string' ? req.folderName : ''
+      })
   )
 
   ipcMain.handle('tabby-delete-download-folder', async (_e, folderName: unknown) => {
@@ -781,9 +827,39 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('get-logs', (_e, limit?: number) => logBuffer.getEntries(limit ?? 500))
-  ipcMain.handle('clear-logs', () => {
-    logBuffer.clear()
+  ipcMain.handle('clear-logs', async (_e, options?: { disk?: boolean }) => {
+    await clearStudioLogs(join(app.getPath('userData'), 'logs'), options?.disk === true)
     return true
+  })
+
+  function assertTabbyStoppedForRuntimeLogOps(): void {
+    const state = tabbyServeManager.getState()
+    if (
+      state.processStatus === 'running' ||
+      state.processStatus === 'starting' ||
+      state.processStatus === 'external'
+    ) {
+      throw new Error('TabbyAPI must be fully stopped (not external) before runtime log operations')
+    }
+  }
+
+  ipcMain.handle('scrub-tabby-runtime-logs', async () => {
+    return withBackendLogMutex(async () => {
+      assertTabbyStoppedForRuntimeLogOps()
+      const cfg = loadConfig().tabby ?? DEFAULT_TABBY_CONFIG
+      return scrubTabbyRuntimeTextLogs(cfg.installDir)
+    })
+  })
+
+  ipcMain.handle('delete-tabby-runtime-zip-logs', async (_e, zipPaths: string[]) => {
+    return withBackendLogMutex(async () => {
+      assertTabbyStoppedForRuntimeLogOps()
+      const cfg = loadConfig().tabby ?? DEFAULT_TABBY_CONFIG
+      if (!Array.isArray(zipPaths) || zipPaths.length === 0) {
+        return { deleted: [], errors: [] as string[] }
+      }
+      return deleteTabbyRuntimeZipLogs(cfg.installDir, zipPaths)
+    })
   })
 
   ipcMain.handle('detect-ollama-binary', () => {
@@ -823,8 +899,42 @@ function registerIpc(): void {
 app.whenReady().then(async () => {
   syncLocaleFromConfig()
   syncLogVendor()
+  const logsDir = join(app.getPath('userData'), 'logs')
+  if (getActiveBackend() === 'tabby') {
+    registerTabbyAuthSecrets()
+    tabbyAuthWatchRelease = watchTabbyAuth(() => {
+      resanitizeDownloadSessionSnapshot()
+    })
+  }
+  await prepareStudioLogScrub(logsDir)
   createWindow()
   initModelLoadManager(() => mainWindow)
+  configureDownloadSession({
+    persistFile: join(app.getPath('userData'), 'tabby-download.json'),
+    log: (level, text) => logBuffer.appendApp(level, text),
+    emit: (snapshot) => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('tabby-download-status', snapshot)
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  })
+  const startupConfig = loadConfig()
+  const modelDir = resolveTabbyModelDir(startupConfig.tabby ?? DEFAULT_TABBY_CONFIG)
+  await recoverPersistedDownload({
+    modelDir,
+    measureBytes: directoryByteSize,
+    listSiblingNames: async (dir) => {
+      try {
+        return readdirSync(dir)
+      } catch {
+        return []
+      }
+    }
+  })
   createTray()
   registerIpc()
 
@@ -863,6 +973,9 @@ let quittingAfterShutdown = false
 
 app.on('before-quit', (event) => {
   markAppQuitting()
+  tabbyAuthWatchRelease?.()
+  tabbyAuthWatchRelease = null
+  releaseTabbyAuthSecrets()
   if (quittingAfterShutdown) return
   event.preventDefault()
   quittingAfterShutdown = true

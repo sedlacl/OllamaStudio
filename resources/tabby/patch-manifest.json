@@ -1,0 +1,18 @@
+{
+  "version": "ollamastudio-1.4.2-v1",
+  "patches": [
+    {
+      "target": "common/downloader.py",
+      "originalSha256": "4fc9d19293594b0c732516f54a50a00c7c438c4f2b4f0d849517cc4d9574c595",
+      "patchedSha256": "8e548f58a3d6b0e4f53c4b330a79024f9e8d4238f479b0b8ca56f7fd91946608",
+      "legacyPatchedSha256": [
+        "cda2b0452c82dc3abc040358714e042fdb3c19ea112f1dee6abf86010df7a567"
+      ]
+    },
+    {
+      "target": "common/auth.py",
+      "originalSha256": "414a7076614ab4f6473bb3900b62f9ddc695889bce6eb0cd4a1341ebe95731b0",
+      "patchedSha256": "85dde2a80a07c43150d3faee73a696bdd27dbb82be93425eb8aa84aaf21a383c"
+    }
+  ]
+}

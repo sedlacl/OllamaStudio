@@ -183,6 +183,45 @@ export interface TabbyDownloadResult {
   downloadPath?: string
   error?: string
   folderConflict?: TabbyDownloadFolderConflict
+  alreadyRunning?: boolean
+}
+
+export type TabbyDownloadSessionStatus =
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'interrupted'
+  | 'conflict'
+
+export interface TabbyDownloadFormSnapshot {
+  repoId: string
+  revision: string
+  folderName: string
+}
+
+export interface TabbyDownloadSessionView {
+  sequence: number
+  operationId: string
+  status: TabbyDownloadSessionStatus
+  repoId: string
+  revision: string
+  folderName: string
+  startedAt: number
+  updatedAt: number
+  downloadedBytes: number
+  totalBytes: number | null
+  percent: number | null
+  error?: string
+  folderConflict?: TabbyDownloadFolderConflict
+  dismissed: boolean
+  bytesPerSec?: number | null
+  etaSeconds?: number | null
+}
+
+export interface TabbyDownloadStatusSnapshot {
+  sequence: number
+  session: TabbyDownloadSessionView | null
+  form: TabbyDownloadFormSnapshot
 }
 
 export type TabbyDownloadProgressStatus = 'running' | 'success' | 'error'
@@ -310,6 +349,20 @@ export interface LogEntry {
     isError?: boolean
     isRequest?: boolean
   }
+}
+
+export interface LogScrubFileResult {
+  ok: boolean
+  path: string
+  linesRead: number
+  linesChanged: number
+  error?: string
+}
+
+export interface TabbyRuntimeLogScrubResult {
+  scrubbed: LogScrubFileResult[]
+  zipFiles: string[]
+  skippedZip: boolean
 }
 
 export type ActiveRequestPhase =
@@ -570,6 +623,10 @@ export interface Api {
   tabbyDeleteDownloadFolder: (folderName: string) => Promise<{ ok: boolean; error?: string }>
   tabbyHfRefs: (req: HfRefsRequest) => Promise<HfRefsResult>
   onTabbyDownloadProgress: (cb: (data: TabbyDownloadProgress) => void) => () => void
+  getTabbyDownloadStatus: () => Promise<TabbyDownloadStatusSnapshot>
+  dismissTabbyDownload: () => Promise<TabbyDownloadStatusSnapshot>
+  rememberTabbyDownloadForm: (form: TabbyDownloadFormSnapshot) => Promise<TabbyDownloadStatusSnapshot>
+  onTabbyDownloadStatus: (cb: (data: TabbyDownloadStatusSnapshot) => void) => () => void
   getModelLoadOptions: (name: string) => Promise<RecordedLoadOptions | null>
   getModelLoadStatus: () => Promise<ModelLoadState[]>
   onModelLoadStatus: (cb: (state: ModelLoadState) => void) => () => void
@@ -583,7 +640,9 @@ export interface Api {
   stopServer: () => Promise<ServeState>
   restartServer: (forceKillConflict?: boolean) => Promise<ServeState>
   getLogs: (limit?: number) => Promise<LogEntry[]>
-  clearLogs: () => Promise<boolean>
+  clearLogs: (options?: { disk?: boolean }) => Promise<boolean>
+  scrubTabbyRuntimeLogs: () => Promise<TabbyRuntimeLogScrubResult>
+  deleteTabbyRuntimeZipLogs: (zipPaths: string[]) => Promise<{ deleted: string[]; errors: string[] }>
   subscribeLogs: (cb: (entry: LogEntry) => void) => () => void
   subscribeDashboardRequests: (cb: () => void) => () => void
   detectOllamaBinary: () => Promise<string | null>

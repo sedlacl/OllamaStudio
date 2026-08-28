@@ -1,3 +1,12 @@
+import { StringDecoder } from 'string_decoder'
+import {
+  isTabbySensitiveLabelLine,
+  onSecretsResanitize,
+  REDACTION_MARKER,
+  sanitizeErrorMessage,
+  sanitizeSecrets,
+  sanitizeTabbyKeyLine
+} from '../security/secret-redactor'
 import { parseTabbyLogLine } from '../tabby/log-parser'
 
 export type LogLevel = 'info' | 'error' | 'warn' | 'debug'
@@ -89,6 +98,21 @@ export interface RequestHistoryItem {
 
 const MAX_ENTRIES = 5000
 const MAX_HISTORY = 10
+const MAX_LINE_BYTES = 64 * 1024
+const OVERSIZED_LINE_TEXT = `${REDACTION_MARKER}: oversized line`
+
+type LogStream = 'stdout' | 'stderr'
+
+interface StreamRedactorState {
+  carry: string
+  decoder: StringDecoder
+  /** Po překročení 64KiB bez newline — zahazovat až do dalšího newline. */
+  discardingUntilNewline: boolean
+}
+
+function createStreamState(): StreamRedactorState {
+  return { carry: '', decoder: new StringDecoder('utf8'), discardingUntilNewline: false }
+}
 /** Keep completed tasks briefly so the UI can show a short done state. */
 const COMPLETED_RETENTION_MS = 8_000
 /** Drop tasks with no log updates (stale/aborted). */
@@ -186,15 +210,24 @@ export class LogBuffer {
   private tabbyRequestIds = new Map<string, number>()
   private readonly nowFn: () => number
   private readonly maxHistory: number
+  private readonly streamStates: Record<LogStream, StreamRedactorState> = {
+    stdout: createStreamState(),
+    stderr: createStreamState()
+  }
+  /** Sdílený stav label→secret mezi stdout/stderr (fail-closed). */
+  private pendingSensitiveNextLine = false
+  private resanitizeUnsub: (() => void) | null = null
 
   constructor(options?: LogBufferOptions) {
     this.nowFn = options?.now ?? (() => Date.now())
     this.maxHistory = options?.maxHistory ?? MAX_HISTORY
+    this.resanitizeUnsub = onSecretsResanitize(() => this.resanitizeStoredContent())
   }
 
   setVendor(vendor: LogVendor): void {
     if (this.vendor === vendor) return
     this.vendor = vendor
+    this.resetStreamStates()
     this.clear()
   }
 
@@ -220,9 +253,136 @@ export class LogBuffer {
    * parsers, so it cannot invent slot/request metrics.
    */
   appendApp(level: LogLevel, text: string): void {
-    const line = text.replace(/\r?\n/g, ' ').trim()
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    for (const rawLine of normalized.split('\n')) {
+      const line = sanitizeErrorMessage(rawLine.trim())
+      if (!line) continue
+      this.publishSanitizedLine('stderr', line, level, 'studio')
+    }
+  }
+
+  /** @deprecated Prefer appendChunk for process stdout/stderr. */
+  append(stream: LogStream, text: string): void {
+    this.appendChunk(stream, text)
+  }
+
+  appendChunk(stream: LogStream, chunk: Buffer | string): void {
+    const state = this.streamStates[stream]
+    const piece =
+      typeof chunk === 'string' ? chunk : state.decoder.write(chunk)
+    this.processStreamText(stream, state.carry + piece)
+  }
+
+  flushAll(): void {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      const state = this.streamStates[stream]
+      const tail = state.decoder.end()
+      if (tail) state.carry += tail
+      state.carry = ''
+    }
+    this.pendingSensitiveNextLine = false
+  }
+
+  private resetStreamStates(): void {
+    for (const stream of ['stdout', 'stderr'] as const) {
+      this.streamStates[stream] = createStreamState()
+    }
+    this.pendingSensitiveNextLine = false
+  }
+
+  private processStreamText(stream: LogStream, text: string): void {
+    const state = this.streamStates[stream]
+    let rest = text
+    while (rest.length > 0) {
+      const nlIdx = findNewlineIndex(rest)
+      if (nlIdx < 0) {
+        if (state.discardingUntilNewline) {
+          state.carry = ''
+          return
+        }
+        state.carry = rest
+        if (Buffer.byteLength(state.carry, 'utf8') > MAX_LINE_BYTES) {
+          this.publishSanitizedLine(stream, OVERSIZED_LINE_TEXT)
+          state.carry = ''
+          state.discardingUntilNewline = true
+          this.pendingSensitiveNextLine = false
+        }
+        return
+      }
+
+      if (state.discardingUntilNewline) {
+        rest = rest.slice(nlIdx + 1)
+        if (rest.startsWith('\n')) rest = rest.slice(1)
+        state.discardingUntilNewline = false
+        state.carry = ''
+        continue
+      }
+
+      const rawLine = rest.slice(0, nlIdx)
+      rest = rest.slice(nlIdx + 1)
+      if (rest.startsWith('\n')) rest = rest.slice(1)
+
+      if (rawLine.length === 0) continue
+      if (Buffer.byteLength(rawLine, 'utf8') > MAX_LINE_BYTES) {
+        this.publishSanitizedLine(stream, OVERSIZED_LINE_TEXT)
+        state.discardingUntilNewline = true
+        this.pendingSensitiveNextLine = false
+        continue
+      }
+      this.emitRawLine(stream, rawLine)
+    }
+  }
+
+  private emitRawLine(stream: LogStream, rawLine: string): void {
+    let sanitized: string
+
+    if (this.pendingSensitiveNextLine) {
+      const trimmed = rawLine.trim()
+      sanitized = trimmed ? REDACTION_MARKER : ''
+      this.pendingSensitiveNextLine = false
+      if (!sanitized) return
+    } else if (isTabbySensitiveLabelLine(rawLine)) {
+      sanitized = sanitizeTabbyKeyLine(rawLine)
+      this.pendingSensitiveNextLine = true
+    } else {
+      sanitized = sanitizeTabbyKeyLine(rawLine)
+    }
+
+    this.publishSanitizedLine(stream, sanitized)
+  }
+
+  private publishSanitizedLine(
+    stream: LogStream,
+    sanitizedLine: string,
+    appLevel?: LogLevel,
+    origin: 'process' | 'studio' = 'process'
+  ): void {
+    const line = sanitizeSecrets(sanitizedLine)
     if (!line) return
-    const entry: LogEntry = {
+
+    const entry =
+      origin === 'studio'
+        ? this.createAppEntry(line, appLevel ?? 'info')
+        : this.createEntry(stream, line)
+
+    this.entries.push(entry)
+    if (this.entries.length > MAX_ENTRIES) {
+      this.entries.splice(0, this.entries.length - MAX_ENTRIES)
+    }
+    if (origin === 'process') this.updateMetrics(entry)
+
+    if (this.fileStream) {
+      const ts = new Date(entry.timestamp).toISOString()
+      const tag = origin === 'studio' ? 'studio' : stream
+      this.fileStream.write(`[${ts}] [${tag}] ${entry.text}\n`)
+    }
+    for (const listener of this.listeners) {
+      listener(entry)
+    }
+  }
+
+  private createAppEntry(line: string, level: LogLevel): LogEntry {
+    return {
       id: this.nextId++,
       timestamp: this.now(),
       stream: 'stderr',
@@ -231,35 +391,20 @@ export class LogBuffer {
       category: level === 'error' || level === 'warn' ? 'error' : 'general',
       parsed: { isError: level === 'error' }
     }
-    this.entries.push(entry)
-    if (this.entries.length > MAX_ENTRIES) {
-      this.entries.splice(0, this.entries.length - MAX_ENTRIES)
-    }
-    if (this.fileStream) {
-      const ts = new Date(entry.timestamp).toISOString()
-      this.fileStream.write(`[${ts}] [studio] ${line}\n`)
-    }
-    for (const listener of this.listeners) {
-      listener(entry)
-    }
   }
 
-  append(stream: 'stdout' | 'stderr', text: string): void {
-    const lines = text.split(/\r?\n/)
-    for (const line of lines) {
-      if (line.length === 0) continue
-      const entry = this.createEntry(stream, line)
-      this.entries.push(entry)
-      if (this.entries.length > MAX_ENTRIES) {
-        this.entries.splice(0, this.entries.length - MAX_ENTRIES)
+  private resanitizeStoredContent(): void {
+    for (const entry of this.entries) {
+      entry.text = sanitizeSecrets(entry.text)
+    }
+    for (const item of this.requestHistory) {
+      if (item.completionReason) {
+        item.completionReason = sanitizeSecrets(item.completionReason)
       }
-      this.updateMetrics(entry)
-      if (this.fileStream) {
-        const ts = new Date(entry.timestamp).toISOString()
-        this.fileStream.write(`[${ts}] [${stream}] ${line}\n`)
-      }
-      for (const listener of this.listeners) {
-        listener(entry)
+    }
+    for (const req of this.activeRequests.values()) {
+      if (req.completionReason) {
+        req.completionReason = sanitizeSecrets(req.completionReason)
       }
     }
   }
@@ -305,6 +450,7 @@ export class LogBuffer {
   }
 
   clear(): void {
+    this.resetStreamStates()
     this.entries = []
     this.recentGenTps = []
     this.activeRequestEstimate = 0
@@ -722,7 +868,11 @@ export class LogBuffer {
     req.phase = 'done'
     req.progressPercent = result === 'done' ? 100 : req.progressPercent
     req.elapsedSeconds = (now - req.firstSeenAt) / 1000
-    req.completionReason = error?.trim() ? error : result === 'done' ? null : req.completionReason
+    req.completionReason = error?.trim()
+      ? sanitizeErrorMessage(error)
+      : result === 'done'
+        ? null
+        : req.completionReason
     req.updatedAt = now
     this.archiveRequest(req, result, now, req.completionReason)
   }
@@ -934,6 +1084,14 @@ function parseLine(line: string): ParsedLogEvent {
   }
 
   return parsed
+}
+
+function findNewlineIndex(text: string): number {
+  const lf = text.indexOf('\n')
+  const cr = text.indexOf('\r')
+  if (lf < 0) return cr
+  if (cr < 0) return lf
+  return Math.min(lf, cr)
 }
 
 export const logBuffer = new LogBuffer()

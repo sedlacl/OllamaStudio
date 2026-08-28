@@ -1,6 +1,5 @@
 import { execFile, type ChildProcess } from 'child_process'
 import {
-  createWriteStream,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -22,9 +21,12 @@ import {
   type TabbyConfig
 } from '../ollama/config'
 import { logBuffer } from '../ollama/log-buffer'
+import { openStudioLogWriter, closeStudioLogWriter } from '../security/studio-log-persistence'
+import { sanitizeOptionalError } from '../security/sanitize-state'
 import { tabbyClient } from './client'
-import { noteBackendLost } from './download-session'
-import { getTabbyAuthFingerprint, readTabbyAuth } from './auth'
+import { noteBackendLost, resanitizeDownloadSessionSnapshot } from './download-session'
+import { setTabbyPatchReadiness } from './patch-readiness'
+import { getTabbyAuthFingerprint, registerTabbyAuthSecrets, readTabbyAuth, watchTabbyAuth } from './auth'
 import type { BackendServeState, EndpointStatus, ProcessStatus } from '../backends/types'
 import { spawn } from 'child_process'
 import {
@@ -36,6 +38,12 @@ import {
   type StoredOwnedPid,
   type TabbyStartAction
 } from './adopt-helpers'
+import { SingleFlight, waitForHealthy } from './readiness'
+import {
+  applyTabbyRuntimePatches,
+  TABBY_RUNTIME_PATCH_VERSION,
+  verifyTabbyRuntimePatchIntegrity
+} from './runtime-patch'
 
 const execFileAsync = promisify(execFile)
 
@@ -154,10 +162,13 @@ export class TabbyServeManager {
   private ownedByStudio = false
   private adoptedExisting = false
   private listeners = new Set<StatusListener>()
-  private logFile: ReturnType<typeof createWriteStream> | null = null
+  private readonly startGate = new SingleFlight()
+  private readonly readinessGate = new SingleFlight()
+  private runtimePatchLoaded = false
+  private authWatchRelease: (() => void) | null = null
 
   constructor() {
-    this.setupLogFile()
+    /* log writer se otevře až po registraci secretů a dokončeném scrubu (start/adopt) */
   }
 
   subscribe(listener: StatusListener): () => void {
@@ -259,11 +270,17 @@ export class TabbyServeManager {
     if (partial.pid !== undefined) this.pid = partial.pid
     if (partial.spawnTime !== undefined) this.spawnTime = partial.spawnTime
     if (partial.binaryPath !== undefined) this.binaryPath = partial.binaryPath
-    if (partial.error !== undefined) this.error = partial.error
+    if (partial.error !== undefined) {
+      this.error = sanitizeOptionalError(partial.error) ?? null
+    }
     if (partial.portConflict !== undefined) this.portConflict = partial.portConflict
     if (partial.ownedByStudio !== undefined) this.ownedByStudio = partial.ownedByStudio
     if (partial.adoptedExisting !== undefined) this.adoptedExisting = partial.adoptedExisting
     this.emit()
+    setTabbyPatchReadiness({
+      externalProcess: this.processStatus === 'external',
+      runtimePatchValid: this.runtimePatchLoaded
+    })
   }
 
   async checkPortInUse(): Promise<boolean> {
@@ -307,7 +324,11 @@ export class TabbyServeManager {
     }
   }
 
-  async start(_forceKillConflict = false): Promise<void> {
+  async start(forceKillConflict = false): Promise<void> {
+    return this.startGate.run(() => this.startOnce(forceKillConflict))
+  }
+
+  private async startOnce(_forceKillConflict = false): Promise<void> {
     if (this.processStatus === 'starting' || this.processStatus === 'running') return
 
     const action = await this.resolveStartDecision()
@@ -322,6 +343,36 @@ export class TabbyServeManager {
       })
       return
     }
+
+    const patchResults = applyTabbyRuntimePatches(pre.installDir)
+    const failed = patchResults.find((result) => !result.ok)
+    if (failed) {
+      const unsupported = failed.status === 'unsupported-source'
+      const message = unsupported
+        ? tMain('errors.tabbyPatchUnsupported')
+        : tMain('errors.tabbyPatchFailed')
+      logBuffer.appendApp(
+        'error',
+        `[studio] tabby-runtime-patch version=${failed.version} target=${failed.target} status=${failed.status}`
+      )
+      this.setPartial({
+        processStatus: 'failed',
+        endpointStatus: 'unreachable',
+        error: message,
+        binaryPath: pre.pythonPath
+      })
+      return
+    }
+    const applied = patchResults.find((result) => result.status === 'applied')
+    if (applied) {
+      logBuffer.appendApp(
+        'info',
+        `[studio] tabby-runtime-patch version=${applied.version} status=applied`
+      )
+    }
+    registerTabbyAuthSecrets()
+    this.startAuthWatcher(pre.installDir)
+    this.runtimePatchLoaded = true
 
     const portBusy = await this.checkPortInUse()
     if (portBusy) {
@@ -346,6 +397,7 @@ export class TabbyServeManager {
     })
 
     try {
+      await openStudioLogWriter(join(app.getPath('userData'), 'logs'), 'tabby-serve.log')
       this.process = spawn(pre.pythonPath, [pre.mainPy], {
         cwd: pre.installDir,
         env: { ...process.env },
@@ -364,17 +416,18 @@ export class TabbyServeManager {
       if (pid != null) this.writeOwnedPid(pid, startedAt, pre.pythonPath, pre.installDir)
 
       this.process.stdout?.on('data', (chunk: Buffer) => {
-        logBuffer.append('stdout', chunk.toString('utf-8'))
+        logBuffer.appendChunk('stdout', chunk)
       })
       this.process.stderr?.on('data', (chunk: Buffer) => {
-        logBuffer.append('stderr', chunk.toString('utf-8'))
+        logBuffer.appendChunk('stderr', chunk)
       })
 
       this.process.on('error', (err) => {
+        this.runtimePatchLoaded = false
         this.clearOwnedPid()
         this.setPartial({
           processStatus: 'failed',
-          error: err.message,
+          error: sanitizeOptionalError(err.message) ?? tMain('errors.tabbyStoppedUnexpectedly'),
           pid: null,
           spawnTime: null,
           ownedByStudio: false,
@@ -384,6 +437,8 @@ export class TabbyServeManager {
       })
 
       this.process.on('exit', (code, signal) => {
+        logBuffer.flushAll()
+        this.runtimePatchLoaded = false
         this.clearOwnedPid()
         if (this.processStatus !== 'stopping') {
           const msg =
@@ -419,25 +474,42 @@ export class TabbyServeManager {
 
       await this.waitForReady(180000)
       tabbyClient.refresh()
-      readTabbyAuth()
+      registerTabbyAuthSecrets()
       this.setPartial({
         processStatus: 'running',
         endpointStatus: 'healthy',
         error: null
       })
     } catch (err) {
+      this.runtimePatchLoaded = false
       await this.killProcess()
       this.clearOwnedPid()
       this.setPartial({
         processStatus: 'failed',
         endpointStatus: 'unreachable',
-        error: err instanceof Error ? err.message : String(err),
+        error: sanitizeOptionalError(err instanceof Error ? err.message : String(err)) ?? null,
         pid: null,
         spawnTime: null,
         ownedByStudio: false,
         adoptedExisting: false
       })
     }
+  }
+
+  async ensureReady(timeoutMs = 180000): Promise<void> {
+    return this.readinessGate.run(async () => {
+      if (!(await this.isEndpointHealthy())) {
+        await this.start()
+      }
+      if (!this.runtimePatchLoaded) {
+        if (this.ownedByStudio) {
+          await this.restart()
+        } else {
+          throw new Error(tMain('errors.tabbyPatchRestartRequired'))
+        }
+      }
+      await this.waitForReady(timeoutMs)
+    })
   }
 
   async stop(): Promise<void> {
@@ -460,6 +532,7 @@ export class TabbyServeManager {
     }
     this.setPartial({ processStatus: 'stopping' })
     await this.killProcess()
+    logBuffer.flushAll()
     this.clearOwnedPid()
     this.setPartial({
       processStatus: 'stopped',
@@ -492,9 +565,50 @@ export class TabbyServeManager {
   }
 
   async shutdown(): Promise<void> {
+    this.authWatchRelease?.()
+    this.authWatchRelease = null
     if (this.ownedByStudio) await this.stop()
-    this.logFile?.end()
-    this.logFile = null
+    closeStudioLogWriter()
+  }
+
+  private startAuthWatcher(installDir: string): void {
+    this.authWatchRelease?.()
+    const cfg = loadConfig().tabby!
+    this.authWatchRelease = watchTabbyAuth(() => {
+      try {
+        resanitizeDownloadSessionSnapshot()
+      } catch {
+        /* download store may be unconfigured in tests */
+      }
+    }, { ...cfg, installDir })
+  }
+
+  private refreshRuntimePatchState(installDir: string, owned: boolean): boolean {
+    const integrity = verifyTabbyRuntimePatchIntegrity(installDir)
+    if (integrity.ok) {
+      this.runtimePatchLoaded = true
+      setTabbyPatchReadiness({
+        externalProcess: !owned,
+        runtimePatchValid: true
+      })
+      return true
+    }
+    this.runtimePatchLoaded = false
+    setTabbyPatchReadiness({
+      externalProcess: !owned,
+      runtimePatchValid: false
+    })
+    if (owned) {
+      logBuffer.appendApp(
+        'warn',
+        `[studio] tabby-runtime-patch integrity failed targets=${integrity.invalidTargets.join(',')}`
+      )
+    } else {
+      this.setPartial({
+        error: tMain('errors.tabbyPatchRestartRequired')
+      })
+    }
+    return false
   }
 
   private async resolveStartDecision(): Promise<TabbyStartAction> {
@@ -550,14 +664,30 @@ export class TabbyServeManager {
       error: null,
       portConflict: false
     })
+    registerTabbyAuthSecrets()
+    this.startAuthWatcher(stored.installDir)
+    const patched = this.refreshRuntimePatchState(stored.installDir, true)
+    if (!patched) {
+      void this.repairAdoptedPatchAndRestart(stored.installDir)
+    }
     logBuffer.appendApp(
       'info',
       `[studio] tabby-serve: ${tMain('errors.tabbyAdopted', { pid: stored.pid, endpoint })}`
     )
   }
 
+  private async repairAdoptedPatchAndRestart(installDir: string): Promise<void> {
+    const results = applyTabbyRuntimePatches(installDir)
+    if (results.some((result) => !result.ok)) return
+    if (this.ownedByStudio && this.processStatus === 'running') {
+      await this.restart()
+    }
+  }
+
   private applyExternal(pythonPath: string, endpoint: string): void {
     this.process = null
+    const installDir = loadConfig().tabby!.installDir.trim()
+    this.refreshRuntimePatchState(installDir, false)
     this.setPartial({
       processStatus: 'external',
       endpointStatus: 'healthy',
@@ -565,10 +695,12 @@ export class TabbyServeManager {
       adoptedExisting: false,
       pid: null,
       spawnTime: null,
-      error: null,
+      error: this.runtimePatchLoaded ? null : tMain('errors.tabbyPatchRestartRequired'),
       portConflict: false,
       binaryPath: pythonPath
     })
+    registerTabbyAuthSecrets()
+    this.startAuthWatcher(installDir)
     logBuffer.appendApp(
       'warn',
       `[studio] tabby-serve: ${tMain('errors.tabbyExternal', { endpoint })}`
@@ -615,7 +747,8 @@ export class TabbyServeManager {
       port: cfg.port,
       pythonPath,
       installDir,
-      startedAtMs
+      startedAtMs,
+      runtimePatchVersion: TABBY_RUNTIME_PATCH_VERSION
     }
     try {
       const path = ownedPidPath()
@@ -648,19 +781,32 @@ export class TabbyServeManager {
     this.spawnTime = null
     this.ownedByStudio = false
     this.adoptedExisting = false
+    this.runtimePatchLoaded = false
     this.error = null
   }
 
   private async waitForReady(timeoutMs: number): Promise<void> {
-    const start = Date.now()
-    while (Date.now() - start < timeoutMs) {
-      if (await tabbyClient.ping()) return
-      if (this.processStatus === 'failed') {
-        throw new Error(this.error ?? tMain('errors.serverTimeout'))
+    const healthy = await waitForHealthy({
+      timeoutMs,
+      intervalMs: 250,
+      probe: async () => {
+        if (this.processStatus === 'failed') {
+          throw new Error(this.error ?? tMain('errors.serverTimeout'))
+        }
+        return this.isEndpointHealthy()
       }
-      await sleep(1000)
+    })
+    if (!healthy) throw new Error(tMain('errors.serverTimeout'))
+  }
+
+  private async isEndpointHealthy(): Promise<boolean> {
+    tabbyClient.refresh()
+    try {
+      const health = await tabbyClient.getHealth()
+      return health.status === 'healthy'
+    } catch {
+      return false
     }
-    throw new Error(tMain('errors.serverTimeout'))
   }
 
   private async killProcess(): Promise<void> {
@@ -712,17 +858,8 @@ export class TabbyServeManager {
     this.process = null
   }
 
-  private setupLogFile(): void {
-    try {
-      const logsDir = join(app.getPath('userData'), 'logs')
-      const logPath = join(logsDir, 'tabby-serve.log')
-      if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true })
-      this.logFile = createWriteStream(logPath, { flags: 'a' })
-      // Sdílíme stejný buffer jako Ollama — aktivní backend zapisuje sem.
-      logBuffer.setFileWriter(this.logFile)
-    } catch {
-      /* ignore */
-    }
+  isExternalProcess(): boolean {
+    return this.processStatus === 'external'
   }
 }
 

@@ -3,6 +3,7 @@ import type { OllamaClient, ModelLoadOptions } from './client'
 import { recordLoadOptions } from './load-options-registry'
 import { logBuffer } from './log-buffer'
 import { tMain } from '../i18n'
+import { sanitizeUnknownError } from '../security/sanitize-state'
 
 export type ModelLoadStatus = 'loading' | 'success' | 'error'
 
@@ -77,7 +78,7 @@ export function startModelLoad(
         }
       }, 30_000)
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err)
+      const error = sanitizeUnknownError(err)
       const failed: ModelLoadState = { name, status: 'error', error, startedAt: state.startedAt }
       activeLoads.set(name, failed)
       emit(failed)

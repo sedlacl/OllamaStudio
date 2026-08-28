@@ -16,6 +16,44 @@ export interface TabbyDownloadProgress {
   bytesTotal?: number | null
 }
 
+export type TabbyDownloadSessionStatus =
+  | 'running'
+  | 'success'
+  | 'error'
+  | 'interrupted'
+  | 'conflict'
+
+export interface TabbyDownloadFormSnapshot {
+  repoId: string
+  revision: string
+  folderName: string
+}
+
+export interface TabbyDownloadSessionView {
+  sequence: number
+  operationId: string
+  status: TabbyDownloadSessionStatus
+  repoId: string
+  revision: string
+  folderName: string
+  startedAt: number
+  updatedAt: number
+  downloadedBytes: number
+  totalBytes: number | null
+  percent: number | null
+  error?: string
+  folderConflict?: TabbyDownloadFolderConflict
+  dismissed: boolean
+  bytesPerSec?: number | null
+  etaSeconds?: number | null
+}
+
+export interface TabbyDownloadStatusSnapshot {
+  sequence: number
+  session: TabbyDownloadSessionView | null
+  form: TabbyDownloadFormSnapshot
+}
+
 export interface HfRefsRequest {
   repoId: string
   token?: string
@@ -47,6 +85,7 @@ export interface TabbyDownloadResult {
   downloadPath?: string
   error?: string
   folderConflict?: TabbyDownloadFolderConflict
+  alreadyRunning?: boolean
 }
 
 export interface Api {
@@ -71,6 +110,10 @@ export interface Api {
   tabbyDeleteDownloadFolder: (folderName: string) => Promise<{ ok: boolean; error?: string }>
   tabbyHfRefs: (req: HfRefsRequest) => Promise<HfRefsResult>
   onTabbyDownloadProgress: (cb: (data: TabbyDownloadProgress) => void) => () => void
+  getTabbyDownloadStatus: () => Promise<TabbyDownloadStatusSnapshot>
+  dismissTabbyDownload: () => Promise<TabbyDownloadStatusSnapshot>
+  rememberTabbyDownloadForm: (form: TabbyDownloadFormSnapshot) => Promise<TabbyDownloadStatusSnapshot>
+  onTabbyDownloadStatus: (cb: (data: TabbyDownloadStatusSnapshot) => void) => () => void
   getModelLoadOptions: (name: string) => Promise<unknown>
   getModelLoadStatus: () => Promise<unknown>
   onModelLoadStatus: (cb: (state: unknown) => void) => () => void
@@ -84,7 +127,13 @@ export interface Api {
   stopServer: () => Promise<unknown>
   restartServer: (forceKillConflict?: boolean) => Promise<unknown>
   getLogs: (limit?: number) => Promise<unknown>
-  clearLogs: () => Promise<boolean>
+  clearLogs: (options?: { disk?: boolean }) => Promise<boolean>
+  scrubTabbyRuntimeLogs: () => Promise<{
+    scrubbed: Array<{ ok: boolean; path: string; linesRead: number; linesChanged: number; error?: string }>
+    zipFiles: string[]
+    skippedZip: boolean
+  }>
+  deleteTabbyRuntimeZipLogs: (zipPaths: string[]) => Promise<{ deleted: string[]; errors: string[] }>
   subscribeLogs: (cb: (entry: unknown) => void) => () => void
   subscribeDashboardRequests: (cb: () => void) => () => void
   detectOllamaBinary: () => Promise<string | null>
@@ -134,6 +183,14 @@ const api: Api = {
     ipcRenderer.on('tabby-download-progress', handler)
     return () => ipcRenderer.removeListener('tabby-download-progress', handler)
   },
+  getTabbyDownloadStatus: () => ipcRenderer.invoke('tabby-download-status'),
+  dismissTabbyDownload: () => ipcRenderer.invoke('tabby-download-dismiss'),
+  rememberTabbyDownloadForm: (form) => ipcRenderer.invoke('tabby-download-remember-form', form),
+  onTabbyDownloadStatus: (cb) => {
+    const handler = (_: unknown, data: TabbyDownloadStatusSnapshot) => cb(data)
+    ipcRenderer.on('tabby-download-status', handler)
+    return () => ipcRenderer.removeListener('tabby-download-status', handler)
+  },
   getModelLoadOptions: (name) => ipcRenderer.invoke('get-model-load-options', name),
   getModelLoadStatus: () => ipcRenderer.invoke('get-model-load-status'),
   onModelLoadStatus: (cb) => {
@@ -155,7 +212,10 @@ const api: Api = {
   stopServer: () => ipcRenderer.invoke('stop-server'),
   restartServer: (force) => ipcRenderer.invoke('restart-server', force),
   getLogs: (limit) => ipcRenderer.invoke('get-logs', limit),
-  clearLogs: () => ipcRenderer.invoke('clear-logs'),
+  clearLogs: (options?: { disk?: boolean }) => ipcRenderer.invoke('clear-logs', options),
+  scrubTabbyRuntimeLogs: () => ipcRenderer.invoke('scrub-tabby-runtime-logs'),
+  deleteTabbyRuntimeZipLogs: (zipPaths: string[]) =>
+    ipcRenderer.invoke('delete-tabby-runtime-zip-logs', zipPaths),
   subscribeLogs: (cb) => {
     const handler = (_: unknown, entry: unknown) => cb(entry)
     ipcRenderer.on('log-entry', handler)

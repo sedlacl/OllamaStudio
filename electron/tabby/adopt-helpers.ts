@@ -17,6 +17,7 @@ export interface StoredOwnedPid {
   pythonPath: string
   installDir: string
   startedAtMs: number
+  runtimePatchVersion?: string
 }
 
 export interface LiveProcessInfo {
@@ -137,6 +138,10 @@ export function parseOwnedPidRecord(raw: unknown): StoredOwnedPid | null {
   const pythonPath = o.pythonPath
   const installDir = o.installDir
   const startedAtMs = o.startedAtMs
+  const runtimePatchVersion =
+    typeof o.runtimePatchVersion === 'string' && o.runtimePatchVersion.trim()
+      ? o.runtimePatchVersion.trim()
+      : undefined
   if (!Number.isInteger(pid) || (pid as number) <= 0) return null
   if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) return null
   if (typeof host !== 'string' || host.trim().length === 0) return null
@@ -151,6 +156,7 @@ export function parseOwnedPidRecord(raw: unknown): StoredOwnedPid | null {
     port: port as number,
     pythonPath,
     installDir: installDir.trim(),
-    startedAtMs
+    startedAtMs,
+    ...(runtimePatchVersion ? { runtimePatchVersion } : {})
   }
 }

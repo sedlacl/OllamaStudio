@@ -1,6 +1,8 @@
 import { existsSync } from 'fs'
 import { lstat, readdir, realpath, rmdir, unlink } from 'fs/promises'
 import { isAbsolute, join, resolve } from 'path'
+import { registerSecret } from '../security/secret-redactor'
+import { sanitizePathForState, sanitizeOptionalError } from '../security/sanitize-state'
 import { tMain } from '../i18n'
 import {
   formatFetchErrorUserText,
@@ -8,7 +10,6 @@ import {
   isBackendLostError
 } from '../ollama/fetch-error'
 import { logIpcError } from '../ollama/ipc-error'
-import { logBuffer } from '../ollama/log-buffer'
 import type { TabbyDownloadRequest } from './client'
 import {
   calculateDownloadProgress,
@@ -25,12 +26,17 @@ import {
   type FolderConflictInfo
 } from './hf-download-helpers'
 import {
+  beginOwnedDownload,
   finishDownloadSession,
-  startDownloadSession,
+  getDownloadStatusSnapshot,
+  recordDownloadConflict,
+  rememberDownloadForm,
+  updateDownloadProgress,
   updateDownloadSession,
   wasDownloadInterruptedByBackend
 } from './download-session'
 import { directoryByteSize, fetchHfExpectedBytes } from './hf-hub'
+import { isTabbyDownloadAllowed } from './patch-readiness'
 
 export type TabbyDownloadProgressStatus = 'running' | 'success' | 'error'
 export type TabbyDownloadFolderConflict = FolderConflictInfo
@@ -49,6 +55,7 @@ export interface TabbyDownloadResult {
   downloadPath?: string
   error?: string
   folderConflict?: TabbyDownloadFolderConflict
+  alreadyRunning?: boolean
 }
 
 const POLL_MS = 1000
@@ -78,6 +85,16 @@ export function hfErrorToMessage(err: unknown): string {
     }
   }
   const raw = redactSecrets(err instanceof Error ? err.message : String(err))
+  if (
+    /ContentLengthError|ClientPayloadError|Response payload is not completed|Incomplete response.+expected.+received/i.test(
+      raw
+    )
+  ) {
+    return tMain('errors.hfDownloadIncomplete')
+  }
+  if (/WinError\s*32|used by another process|EBUSY|EPERM/i.test(raw)) {
+    return tMain('errors.hfDownloadCleanupBusy')
+  }
   const existingFolder = parseTabbyFolderExistsError(raw)
   if (existingFolder) {
     return tMain('errors.hfFolderExists', { folder: existingFolder })
@@ -285,6 +302,9 @@ export async function runTabbyHfDownload(opts: {
   emit: (event: TabbyDownloadProgressEvent) => void
   download: (req: TabbyDownloadRequest) => Promise<{ downloadPath: string }>
 }): Promise<TabbyDownloadResult> {
+  if (!isTabbyDownloadAllowed()) {
+    return { ok: false, error: tMain('errors.tabbyPatchRestartRequired') }
+  }
   const repoId = opts.req.repoId?.trim() ?? ''
   if (!repoId) {
     return { ok: false, error: tMain('errors.hfRepoIdEmpty') }
@@ -294,6 +314,17 @@ export async function runTabbyHfDownload(opts: {
   const folderName = resolveDownloadFolderName(repoId, revision, opts.req.folderName)
   const targetDir = join(opts.modelDir, folderName)
   const token = opts.req.token?.trim() || undefined
+  const releaseToken = token ? registerSecret(token) : () => undefined
+  try {
+  const existing = getDownloadStatusSnapshot().session
+  if (existing?.status === 'running') {
+    return {
+      ok: false,
+      alreadyRunning: true,
+      error: tMain('errors.hfDownloadAlreadyRunning')
+    }
+  }
+  rememberDownloadForm({ repoId, revision, folderName })
 
   const inspected = await inspectTabbyDownloadTarget({
     modelDir: opts.modelDir,
@@ -304,10 +335,18 @@ export async function runTabbyHfDownload(opts: {
   })
   if (inspected.conflict) {
     // TabbyAPI POST /v1/download nemá resume a existující cestu odmítne HTTP 400.
+    const error = tMain('errors.hfFolderExists', { folder: inspected.conflict.folderName })
+    recordDownloadConflict({
+      repoId,
+      revision,
+      folderName: inspected.conflict.folderName,
+      conflict: inspected.conflict,
+      error
+    })
     return {
       ok: false,
       folderConflict: inspected.conflict,
-      error: tMain('errors.hfFolderExists', { folder: inspected.conflict.folderName })
+      error: sanitizeOptionalError(error) ?? error
     }
   }
 
@@ -362,6 +401,11 @@ export async function runTabbyHfDownload(opts: {
   }
 
   const pushRunning = (progress: DownloadProgressSample): void => {
+    updateDownloadProgress({
+      downloadedBytes: progress.bytesDownloaded,
+      totalBytes: progress.bytesTotal,
+      percent: progress.percent
+    })
     emit({
       status: 'running',
       percent: progress.percent,
@@ -370,12 +414,21 @@ export async function runTabbyHfDownload(opts: {
     })
   }
 
-  startDownloadSession({
+  const started = beginOwnedDownload({
     operationId: opts.operationId,
+    repoId,
+    revision,
     folderName,
-    bytesDownloaded: baseline,
-    bytesTotal
+    downloadedBytes: baseline,
+    totalBytes: bytesTotal
   })
+  if (!started.ok) {
+    return {
+      ok: false,
+      alreadyRunning: true,
+      error: tMain('errors.hfDownloadAlreadyRunning')
+    }
+  }
 
   try {
     const initial = calculateDownloadProgress({
@@ -406,6 +459,13 @@ export async function runTabbyHfDownload(opts: {
     const verified = verifiedDownloadPath(result.downloadPath, opts.modelDir, folderName)
     if (!verified) {
       const error = tMain('errors.hfDownloadPathMissing')
+      updateDownloadProgress({
+        downloadedBytes: maxBytes,
+        totalBytes: bytesTotal,
+        percent,
+        status: 'error',
+        error
+      })
       emit({ status: 'error', message: error, percent, bytesDownloaded: maxBytes, bytesTotal })
       return { ok: false, error }
     }
@@ -415,27 +475,51 @@ export async function runTabbyHfDownload(opts: {
       bytesDownloaded: last.bytesDownloaded,
       bytesTotal: last.bytesTotal
     })
+    updateDownloadProgress({
+      downloadedBytes: done.bytesDownloaded,
+      totalBytes: done.bytesTotal,
+      percent: done.percent,
+      status: 'success'
+    })
     emit({
       status: 'success',
-      message: verified,
+      message: sanitizePathForState(verified),
       percent: done.percent,
       bytesDownloaded: done.bytesDownloaded,
       bytesTotal: done.bytesTotal
     })
-    return { ok: true, downloadPath: verified }
+    return { ok: true, downloadPath: sanitizePathForState(verified) }
   } catch (err) {
     logIpcError('tabby-download', err)
     const sizes = describeInterruptedDownload({
       downloaded: maxBytes,
       total: bytesTotal
     })
-    const error =
-      wasDownloadInterruptedByBackend() || isBackendLostError(err)
-        ? tMain('errors.hfDownloadBackendLost', sizes)
-        : hfErrorToMessage(err)
-    if (error === tMain('errors.hfDownloadBackendLost', sizes)) {
-      logBuffer.appendApp('error', `[studio] tabby-download: ${error}`)
+    const interrupted = wasDownloadInterruptedByBackend() || isBackendLostError(err)
+    const error = interrupted
+      ? tMain('errors.hfDownloadBackendLost', sizes)
+      : hfErrorToMessage(err)
+    let folderConflict: TabbyDownloadFolderConflict | undefined
+    try {
+      const afterFailure = await inspectTabbyDownloadTarget({
+        modelDir: opts.modelDir,
+        repoId,
+        revision,
+        folderName,
+        token
+      })
+      folderConflict = afterFailure.conflict ?? undefined
+    } catch {
+      folderConflict = undefined
     }
+    updateDownloadProgress({
+      downloadedBytes: maxBytes,
+      totalBytes: bytesTotal,
+      percent,
+      status: interrupted ? 'interrupted' : 'error',
+      error,
+      folderConflict
+    })
     emit({
       status: 'error',
       message: error,
@@ -443,7 +527,7 @@ export async function runTabbyHfDownload(opts: {
       bytesDownloaded: maxBytes,
       bytesTotal
     })
-    return { ok: false, error }
+    return { ok: false, error, folderConflict }
   } finally {
     finishDownloadSession()
     cancelled = true
@@ -451,5 +535,8 @@ export async function runTabbyHfDownload(opts: {
       clearInterval(pollTimer)
       pollTimer = null
     }
+  }
+  } finally {
+    releaseToken()
   }
 }

@@ -1,4 +1,5 @@
 import { redactSecrets } from '../tabby/hf-download-helpers'
+import { sanitizeSecrets, sanitizeUrl } from '../security/secret-redactor'
 
 const USELESS_MESSAGE =
   /^(fetch failed|failed to fetch|networkerror when attempting to fetch resource|network)$/i
@@ -62,7 +63,7 @@ export class NetworkError extends Error {
       cause: cause instanceof Error ? cause : new Error(String(cause))
     })
     this.name = 'NetworkError'
-    this.url = stripUrlSecrets(url)
+    this.url = sanitizeUrl(stripUrlSecrets(url))
   }
 }
 
@@ -98,7 +99,7 @@ export function extractCauseChain(err: unknown, max = 6): CauseLink[] {
         url?: unknown
       }
       out.push({
-        message: extra.message,
+        message: sanitizeSecrets(extra.message),
         name: extra.name,
         code: typeof extra.code === 'string' ? extra.code : undefined,
         address: typeof extra.address === 'string' ? extra.address : undefined,
@@ -118,7 +119,9 @@ export function extractCauseChain(err: unknown, max = 6): CauseLink[] {
         cause?: unknown
       }
       out.push({
-        message: typeof extra.message === 'string' ? extra.message : String(extra.message),
+        message: sanitizeSecrets(
+          typeof extra.message === 'string' ? extra.message : String(extra.message)
+        ),
         name: typeof extra.name === 'string' ? extra.name : undefined,
         code: typeof extra.code === 'string' ? extra.code : undefined,
         address: typeof extra.address === 'string' ? extra.address : undefined,

@@ -1,5 +1,6 @@
 import { loadConfig, parseHostPort } from './config'
 import { studioFetch } from './fetch-error'
+import { sanitizeUpdateInfo } from '../security/sanitize-state'
 
 export interface ModelTag {
   name: string
@@ -281,7 +282,7 @@ export class OllamaClient {
       this.updateCache &&
       now - this.updateCache.checkedAt < OllamaClient.UPDATE_CACHE_MS
     ) {
-      return this.updateCache
+      return sanitizeUpdateInfo(this.updateCache)
     }
 
     let current: string | null = null
@@ -315,8 +316,8 @@ export class OllamaClient {
       info.error = e instanceof Error ? e.message : String(e)
     }
 
-    this.updateCache = info
-    return info
+    this.updateCache = sanitizeUpdateInfo(info)
+    return this.updateCache
   }
 
   async getTags(): Promise<ModelTag[]> {
