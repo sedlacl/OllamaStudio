@@ -154,6 +154,13 @@ export const cs = {
     colContinue: 'Continue',
     statusLoading: 'Načítá se…',
     statusLoaded: 'Načteno',
+    statusIncomplete: 'Nekompletní',
+    sizeUnknown: '—',
+    loadIncompleteDisabled: 'Model není kompletní — nejdřív smažte nebo dokončete stažení',
+    deleteIncompleteFolder: 'Smazat nekompletní složku',
+    deleteIncompleteConfirm:
+      'Opravdu smazat nekompletní složku „{folder}"? Tuto akci nelze vrátit.',
+    deleteIncompleteDone: 'Nekompletní složka „{folder}" byla smazána.',
     inContinue: 'V Continue',
     notInContinue: 'Není',
     load: 'Načíst',

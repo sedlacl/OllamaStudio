@@ -1,6 +1,11 @@
 import { loadConfig, parseHostPort } from './config'
 import { studioFetch } from './fetch-error'
-import { sanitizeUpdateInfo } from '../security/sanitize-state'
+import {
+  sanitizeUpdateInfo,
+  sanitizePullProgress,
+  sanitizeSpeedTestResult,
+  sanitizeUnknownError
+} from '../security/sanitize-state'
 
 export interface ModelTag {
   name: string
@@ -172,9 +177,9 @@ async function httpError(res: Response): Promise<Error> {
     if (text) {
       try {
         const json = JSON.parse(text) as { error?: unknown }
-        detail = typeof json.error === 'string' && json.error ? `: ${json.error}` : `: ${text}`
+        detail = typeof json.error === 'string' && json.error ? `: ${sanitizeUnknownError(json.error)}` : `: ${sanitizeUnknownError(text)}`
       } catch {
-        detail = `: ${text}`
+        detail = `: ${sanitizeUnknownError(text)}`
       }
     }
   } catch {
@@ -422,7 +427,7 @@ export class OllamaClient {
     const promptTokens = promptSpeed.tokens
     const promptEvalSeconds = promptSpeed.ms / 1000
 
-    return {
+    return sanitizeSpeedTestResult({
       model: name,
       prompt,
       response: run.response.trim(),
@@ -436,7 +441,7 @@ export class OllamaClient {
       totalMs: run.totalMs,
       loadMs: wasLoaded ? 0 : loadMs,
       wasLoaded
-    }
+    })
   }
 
   /**
@@ -597,7 +602,7 @@ export class OllamaClient {
       for (const line of lines) {
         if (!line.trim()) continue
         try {
-          yield JSON.parse(line) as PullProgress
+          yield sanitizePullProgress(JSON.parse(line))
         } catch {
           /* skip malformed */
         }

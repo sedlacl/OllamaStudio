@@ -12,7 +12,7 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 - Redakce tajemství v logu: percent-encoded query parametry, YAML s jednoduchými uvozovkami u klíče i hodnoty, ANSI reset/timestamp za labelem Tabby klíče a řádky nad 64 KiB (fail-closed marker bez úniku payloadu, včetně více chunků)
 - Hash-guarded runtime patch bundle (`common/auth.py`, `common/downloader.py`): reprodukovatelný LF manifest, legacy CRLF patched hash zůstává platný na disku, neznámý hash fail-close; ověření disk hash pro spawned/adopted/external proces
-- Auth watcher: při změně `api_tokens.yml` okamžitá fail-closed redakce a synchronní registrace klíčů (debounce jen pro stabilizační re-read); po swapu re-sanitizace RAM session stavů
+- Auth watcher: při změně `api_tokens.yml` okamžitá fail-closed redakce; staré klíče zůstávají registrované při transientně chybějícím/prázdném/neplatném souboru a uvolní se až po stabilním načtení nových hodnot (new-before-old)
 - Centralizovaná Studio log persistence: jednorázový scrub historických logů až po registraci auth secretů, sdílený mutex pro writer/start/scrub/delete/clear, realpath guard před open/rename/delete
 - Historické logy Studio lze bezpečně vyčistit tlačítkem Vymazat (včetně souboru na disku po potvrzení); textové logy Tabby runtime jdou scrubnout při zastaveném serveru (externí instance odmítnuta); ZIP archivy jen po explicitním potvrzení smazání
 - Chybové stavy serve/model-load/download/HTTP/update/kill/scrub a cesty ve stavu/IPC se sanitizují před prvním uložením (včetně konfliktu HF downloadu a kill výsledků)
@@ -26,8 +26,10 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 - Stav stažení už není jen na stránce Modely: po přepnutí na jinou záložku a zpět panel pokračuje z aktuálního snapshotu v main procesu
 - Když stažení neskončí úspěchem (chyba, přerušení, existující složka) nebo aplikace spadne uprostřed, Studio si pamatuje formulář i stav — po restartu nabídne smazání částečné složky nebo jiný název. TabbyAPI umí jen nové stažení, ne resume. Úspěšné stažení se po restartu neobnovuje jako aktivní panel; poslední vyplněné Repo ID / revize / složka zůstanou
 - Přerušený více-souborový HF download už na Windows nepřekryje původní síťovou chybu zamčenou složkou: Studio instaluje hashovanou opravu downloaderu, která ukončí a dočká paralelní úlohy před cleanupem, zamčené mazání omezeně zopakuje a konkrétní přerušený soubor nejvýše dvakrát stáhne znovu od začátku
+- Dlouhé stažení z Hugging Face přes Tabby už nespadne po 5 minutách na holé `fetch failed` (výchozí limit hlaviček undici). Studio nechá dokončit POST `/v1/download` a když spojení selže, session i UI ukážou lidskou příčinu (vypršení / přerušení), ne samotné `fetch failed`
 - Stažení počká na skutečně zdravé TabbyAPI a souběžná rychlá kliknutí sdílejí jeden start; první požadavek už neodchází během startu serveru
 - Adopted Tabby s neplatným runtime patchem se bezpečně opraví a restartuje; u externí instance se proces neukončuje, ale citlivé operace včetně HF downloadu blokují s lidskou chybou
+- Tabulka lokálních Tabby modelů ukazovala u všech `0 B` a prázdný stav — API `/v1/model/list` velikost neposílá. Studio teď počítá reálnou velikost ze složky na disku, rozliší neznámou velikost (`—`) od prázdné `0 B` a nekompletní stažení označí stavem Nekompletní (Load vypnutý, smazání přes existující flow)
 
 ## [1.4.1] — 2026-08-28
 

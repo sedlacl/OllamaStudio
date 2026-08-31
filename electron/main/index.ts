@@ -1,3 +1,4 @@
+import { applyRemoteDebugPortIfEnabled } from './remote-debug-port'
 import {
   app,
   BrowserWindow,
@@ -35,7 +36,11 @@ import {
   prepareStudioLogScrub,
   withBackendLogMutex
 } from '../security/studio-log-persistence'
-import { sanitizeUnknownError } from '../security/sanitize-state'
+import {
+  sanitizePullProgress,
+  sanitizeSpeedTestResult,
+  sanitizeUnknownError
+} from '../security/sanitize-state'
 import { registerTabbyAuthSecrets, releaseTabbyAuthSecrets, watchTabbyAuth } from '../tabby/auth'
 import {
   clearModelLoadState,
@@ -82,6 +87,7 @@ import {
 } from '../tabby/active-backend'
 import { tabbyClient, type TabbyLoadOptions } from '../tabby/client'
 import { hfErrorToMessage, runTabbyHfDownload, deleteTabbyDownloadFolder, type TabbyDownloadProgressEvent } from '../tabby/hf-download'
+import { enrichTabbyModelSummaries, invalidateLocalModelCache } from '../tabby/local-model-info'
 import { directoryByteSize, fetchHfRevisions } from '../tabby/hf-hub'
 import { writeModelMtpConfig } from '../tabby/model-config'
 import { tabbyServeManager } from '../tabby/serve-manager'
@@ -126,10 +132,11 @@ async function runSpeedTest(name: string): Promise<ModelSpeedTestResult> {
   speedTestsInFlight.add(name)
   try {
     const backend = getActiveBackend()
-    const result =
+    const result = sanitizeSpeedTestResult(
       backend === 'tabby'
         ? ((await tabbyClient.testSpeed(name)) as unknown as ModelSpeedTestResult)
         : await ollamaClient.testSpeed(name, getLoadOptions(name)?.options ?? null)
+    )
     recordSpeedTest(name, result)
     mainWindow?.webContents.send('speed-tests-changed')
     return result
@@ -305,16 +312,18 @@ function tagsFromTabby(
   name: string
   model: string
   modified_at: string
-  size: number
+  size: number | null
   digest: string
+  local_status?: 'complete' | 'incomplete' | 'unknown'
   details?: Record<string, string>
 }> {
   return models.map((m) => ({
     name: m.modelId,
     model: m.modelId,
     modified_at: m.modifiedAt ?? new Date().toISOString(),
-    size: m.sizeBytes ?? 0,
+    size: m.sizeBytes ?? null,
     digest: m.digest ?? '',
+    local_status: m.localCompleteness,
     details: {
       format: m.format ?? 'exl3',
       family: m.family ?? '',
@@ -523,7 +532,15 @@ function registerIpc(): void {
     try {
       if (getActiveBackend() === 'tabby') {
         tabbyClient.refresh()
-        return tagsFromTabby(await tabbyClient.listModels())
+        const cfg = loadConfig()
+        const modelDir = resolveTabbyModelDir(cfg.tabby ?? DEFAULT_TABBY_CONFIG)
+        const listed = await tabbyClient.listModels()
+        const enriched = await enrichTabbyModelSummaries(
+          listed,
+          modelDir,
+          getDownloadStatusSnapshot()
+        )
+        return tagsFromTabby(enriched)
       }
       return ollamaClient.getTags()
     } catch (err) {
@@ -619,7 +636,13 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('model-test-speed', (_e, name: string) => runSpeedTest(name))
+  ipcMain.handle('model-test-speed', async (_e, name: string) => {
+    try {
+      return await runSpeedTest(name)
+    } catch (err) {
+      throw serializeIpcError('model-test-speed', err, activeBackendUrl())
+    }
+  })
 
   ipcMain.handle('get-speed-tests', () => getSpeedTests())
 
@@ -674,7 +697,7 @@ function registerIpc(): void {
     }
     try {
       for await (const progress of ollamaClient.pull(name)) {
-        event.sender.send('pull-progress', { name, progress })
+        event.sender.send('pull-progress', { name, progress: sanitizePullProgress(progress) })
       }
       return { ok: true }
     } catch (err) {
@@ -772,7 +795,9 @@ function registerIpc(): void {
     const name = typeof folderName === 'string' ? folderName : ''
     const cfg = loadConfig()
     const modelDir = resolveTabbyModelDir(cfg.tabby ?? DEFAULT_TABBY_CONFIG)
-    return deleteTabbyDownloadFolder(modelDir, name)
+    const result = await deleteTabbyDownloadFolder(modelDir, name)
+    if (result.ok) invalidateLocalModelCache(name)
+    return result
   })
 
   ipcMain.handle('get-server-config', () => loadConfig())
@@ -895,6 +920,8 @@ function registerIpc(): void {
   ipcMain.handle('opencode-upsert-model', (_e, modelName: string) => upsertOpenCodeModel(modelName))
   ipcMain.handle('opencode-remove-model', (_e, modelName: string) => removeOpenCodeModel(modelName))
 }
+
+applyRemoteDebugPortIfEnabled()
 
 app.whenReady().then(async () => {
   syncLocaleFromConfig()

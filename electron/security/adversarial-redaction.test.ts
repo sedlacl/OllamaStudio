@@ -26,8 +26,15 @@ import { snapshotContainsSecrets } from '../tabby/download-session-helpers'
 import {
   sanitizeKillProcessResult,
   sanitizePathForState,
+  sanitizePullProgress,
+  sanitizeSpeedTestResult,
   sanitizeUpdateInfo
 } from './sanitize-state'
+import {
+  clearAllSpeedTests,
+  getSpeedTests,
+  recordSpeedTest
+} from '../ollama/speed-test-registry'
 import {
   beginOwnedDownload,
   getDownloadStatusSnapshot,
@@ -270,6 +277,89 @@ describe('adversarial IPC/state sanitization callsites', () => {
     const out = sanitizePathForState('D:\\models\\repo?token=synthetic-path-key-005')
     expect(out).not.toContain('synthetic-path-key-005')
     expect(out).not.toContain('?token=')
+  })
+
+  it('speed test result — nested synthetic credential redacted in cache/IPC shape', () => {
+    registerSecret('synthetic-speed-secret-006')
+    clearAllSpeedTests()
+    const raw = sanitizeSpeedTestResult({
+      model: 'llama',
+      prompt: 'token=synthetic-speed-secret-006',
+      response: 'path C:\\models\\synthetic-speed-secret-006',
+      thinking: '',
+      ttftMs: 10,
+      tokensPerSecond: 1,
+      generatedTokens: 1,
+      promptTokensPerSecond: 1,
+      promptTokens: 1,
+      promptEvalMs: 1,
+      totalMs: 20,
+      loadMs: 0,
+      wasLoaded: true
+    })
+    recordSpeedTest('llama', raw)
+    const cached = getSpeedTests()
+    const json = JSON.stringify({ result: raw, cached })
+    expect(json).not.toContain('synthetic-speed-secret-006')
+    expect(raw.promptTokens).toBe(1)
+  })
+
+  it('pull progress — nested error/status/digest sanitized, numeric progress preserved', () => {
+    registerSecret('synthetic-pull-secret-007')
+    const raw = sanitizePullProgress({
+      status: 'pulling token=synthetic-pull-secret-007',
+      digest: 'sha256:synthetic-pull-secret-007',
+      total: 4096,
+      completed: 2048,
+      error: { message: 'failed token=synthetic-pull-secret-007', path: 'C:\\pull\\synthetic-pull-secret-007' }
+    })
+    const json = JSON.stringify(raw)
+    expect(json).not.toContain('synthetic-pull-secret-007')
+    expect(raw.total).toBe(4096)
+    expect(raw.completed).toBe(2048)
+  })
+
+  it('pull progress — nested arrays with objects sanitized at depth, shape preserved', () => {
+    registerSecret('synthetic-nested-pull-secret-008')
+    const raw = sanitizePullProgress({
+      status: 'downloading',
+      total: 8192,
+      completed: 4096,
+      layers: [
+        { digest: 'sha256:synthetic-nested-pull-secret-008', size: 1024, ready: true },
+        [{ token: 'synthetic-nested-pull-secret-008', ok: true, count: 3 }],
+        'plain synthetic-nested-pull-secret-008'
+      ],
+      meta: { nested: [{ path: 'C:\\pull\\synthetic-nested-pull-secret-008', active: false }] }
+    })
+    const json = JSON.stringify(raw)
+    expect(json).not.toContain('synthetic-nested-pull-secret-008')
+    expect(raw.total).toBe(8192)
+    expect(raw.completed).toBe(4096)
+    const layers = (raw as unknown as Record<string, unknown>).layers as unknown[]
+    const firstLayer = layers[0] as Record<string, unknown>
+    expect(firstLayer.size).toBe(1024)
+    expect(firstLayer.ready).toBe(true)
+    const nestedRow = (layers[1] as unknown[])[0] as Record<string, unknown>
+    expect(nestedRow.ok).toBe(true)
+    expect(nestedRow.count).toBe(3)
+  })
+
+  it('pull progress — cycles and excessive depth fail-closed without stack overflow', () => {
+    registerSecret('synthetic-cycle-pull-secret-009')
+    const cyclic: Record<string, unknown> = {
+      status: 'pulling synthetic-cycle-pull-secret-009',
+      total: 1
+    }
+    cyclic.self = cyclic
+    expect(() => JSON.stringify(sanitizePullProgress(cyclic))).not.toThrow()
+
+    let deep: unknown = { status: 'ok', token: 'synthetic-cycle-pull-secret-009' }
+    for (let i = 0; i < 40; i += 1) {
+      deep = { nested: deep }
+    }
+    const deepRaw = sanitizePullProgress(deep)
+    expect(JSON.stringify(deepRaw)).not.toContain('synthetic-cycle-pull-secret-009')
   })
 })
 

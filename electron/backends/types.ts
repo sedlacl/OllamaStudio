@@ -34,7 +34,9 @@ export interface ModelSummary {
   modelId: string
   displayName: string
   backend: BackendId
-  sizeBytes?: number
+  /** null = neznámá velikost; 0 = prázdná validní složka */
+  sizeBytes?: number | null
+  localCompleteness?: 'complete' | 'incomplete' | 'unknown'
   format?: string
   family?: string
   parameterSize?: string

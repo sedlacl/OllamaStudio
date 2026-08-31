@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ErrorLogDeduper,
   classifyNetworkCode,
@@ -9,7 +9,11 @@ import {
   NetworkError,
   shouldSkipBackendPoll,
   shouldSwallowPollError,
-  stripUrlSecrets
+  stripUrlSecrets,
+  LONG_RUNNING_FETCH_MS,
+  resolveFetchImpl,
+  resolveStudioFetchInit,
+  studioFetch
 } from './fetch-error'
 import { isAppQuitting, markAppQuitting, resetAppQuittingForTests } from './app-lifecycle'
 import { logIpcError } from './ipc-error'
@@ -76,6 +80,7 @@ describe('classifyNetworkCode / user text', () => {
   it('maps timeout, reset, DNS and abort', () => {
     expect(classifyNetworkCode('ETIMEDOUT')).toBe('timedOut')
     expect(classifyNetworkCode('UND_ERR_CONNECT_TIMEOUT')).toBe('timedOut')
+    expect(classifyNetworkCode('UND_ERR_HEADERS_TIMEOUT', 'TimeoutError')).toBe('timedOut')
     expect(classifyNetworkCode('ECONNRESET')).toBe('connReset')
     expect(classifyNetworkCode('ENOTFOUND')).toBe('dnsFailed')
     expect(classifyNetworkCode('ABORT_ERR', 'AbortError')).toBe('aborted')
@@ -88,6 +93,88 @@ describe('classifyNetworkCode / user text', () => {
     const user = formatFetchErrorUserText(info, t)
     expect(user.toLowerCase()).not.toBe('fetch failed')
     expect(user).toContain('errors.networkFailed')
+  })
+
+  it('keeps UND_ERR_HEADERS_TIMEOUT on a TypeError fetch failed cause', () => {
+    const cause = Object.assign(new Error('Headers Timeout Error'), {
+      name: 'TimeoutError',
+      code: 'UND_ERR_HEADERS_TIMEOUT'
+    })
+    const typeError = undiciFetchFailed(cause)
+    const info = inspectFetchError(new NetworkError('http://127.0.0.1:5000/v1/download', typeError))
+    expect(info.kind).toBe('timedOut')
+    expect(info.code).toBe('UND_ERR_HEADERS_TIMEOUT')
+    expect(info.logLine.toLowerCase()).not.toBe('fetch failed')
+    expect(formatFetchErrorUserText(info, t).toLowerCase()).not.toContain('fetch failed')
+  })
+})
+
+describe('resolveFetchImpl / studioFetch longRunning', () => {
+  it('prefers electron.net.fetch over global fetch in electron runtime', async () => {
+    const electronNetFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    const globalFetchSpy = vi.fn(async () => new Response(null, { status: 500 }))
+    vi.stubGlobal('fetch', globalFetchSpy)
+    vi.doMock('electron', () => ({ net: { fetch: electronNetFetch } }))
+
+    const prevElectron = process.versions.electron
+    Object.defineProperty(process.versions, 'electron', {
+      value: '33.2.0',
+      configurable: true
+    })
+
+    const impl = await resolveFetchImpl(true)
+    expect(impl).not.toBe(globalFetchSpy)
+    await studioFetch('http://127.0.0.1:5000/v1/download', {
+      method: 'POST',
+      longRunning: true,
+      body: '{}'
+    })
+    expect(electronNetFetch).toHaveBeenCalled()
+    expect(globalFetchSpy).not.toHaveBeenCalled()
+    const call = electronNetFetch.mock.calls[0] as unknown as [string, RequestInit & {
+      headersTimeout?: number
+      bodyTimeout?: number
+    }] | undefined
+    expect(call).toBeDefined()
+    const init = call![1]
+    expect(init?.headersTimeout).toBe(LONG_RUNNING_FETCH_MS)
+    expect(init?.bodyTimeout).toBe(0)
+
+    Object.defineProperty(process.versions, 'electron', {
+      value: prevElectron,
+      configurable: true
+    })
+    vi.doUnmock('electron')
+    vi.unstubAllGlobals()
+  })
+
+  it('falls back to global fetch when not long-running', async () => {
+    const globalFetchSpy = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', globalFetchSpy)
+    const impl = await resolveFetchImpl(false)
+    expect(impl).toBe(globalFetchSpy)
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('resolveStudioFetchInit', () => {
+  it('extends undici headers timeout for long-running Tabby downloads', () => {
+    const init = resolveStudioFetchInit({
+      method: 'POST',
+      longRunning: true,
+      signal: AbortSignal.timeout(LONG_RUNNING_FETCH_MS)
+    }) as RequestInit & { headersTimeout?: number; bodyTimeout?: number }
+    expect(init.method).toBe('POST')
+    expect(init.headersTimeout).toBe(LONG_RUNNING_FETCH_MS)
+    expect(init.bodyTimeout).toBe(0)
+  })
+
+  it('leaves short requests unchanged', () => {
+    const init = resolveStudioFetchInit({ method: 'GET' }) as RequestInit & {
+      headersTimeout?: number
+    }
+    expect(init.method).toBe('GET')
+    expect(init.headersTimeout).toBeUndefined()
   })
 })
 

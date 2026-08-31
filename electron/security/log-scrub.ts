@@ -1,17 +1,6 @@
-import {
-  createReadStream,
-  createWriteStream,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync
-} from 'fs'
+import { createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'fs'
 import { createInterface } from 'readline'
-import { join, resolve } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import {
   isTabbySensitiveLabelLine,
   REDACTION_MARKER,
@@ -172,6 +161,10 @@ function canonicalPath(path: string): string | null {
     return realpathSync.native(path)
   } catch {
     try {
+      const dir = dirname(path)
+      if (existsSync(dir)) {
+        return join(realpathSync.native(dir), basename(path))
+      }
       return resolve(path)
     } catch {
       return null
@@ -297,8 +290,19 @@ export function deleteTabbyRuntimeZipLogs(
 
 /** Vyprázdní známé Studio log soubory (po potvrzení v UI). */
 export function truncateStudioLogFiles(logsDir: string): void {
-  if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true })
+  const canonicalDir = resolve(logsDir)
+  if (!existsSync(canonicalDir)) mkdirSync(canonicalDir, { recursive: true })
+  const allowedRoots = [canonicalDir]
   for (const name of ['ollama-serve.log', 'tabby-serve.log']) {
-    writeFileSync(join(logsDir, name), '', 'utf8')
+    const logPath = join(canonicalDir, name)
+    const guard = assertKnownLogFile(logPath, allowedRoots)
+    if (!guard.ok) {
+      throw new Error(guard.reason)
+    }
+    const truncateGuard = assertKnownLogFile(logPath, allowedRoots)
+    if (!truncateGuard.ok) {
+      throw new Error(truncateGuard.reason)
+    }
+    writeFileSync(logPath, '', 'utf8')
   }
 }

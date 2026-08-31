@@ -330,9 +330,45 @@ export class ErrorLogDeduper {
   }
 }
 
-export async function studioFetch(url: string, init?: RequestInit): Promise<Response> {
+export const LONG_RUNNING_FETCH_MS = 3_600_000
+
+export type StudioFetchInit = RequestInit & {
+  longRunning?: boolean
+  headersTimeout?: number
+  bodyTimeout?: number
+}
+
+/** Undici defaults headersTimeout to 300s — too short for Tabby POST /v1/download. */
+export function resolveStudioFetchInit(init?: StudioFetchInit): RequestInit {
+  if (!init) return {}
+  const { longRunning, headersTimeout, bodyTimeout, ...rest } = init
+  if (!longRunning && headersTimeout == null && bodyTimeout == null) return rest
+  return {
+    ...rest,
+    headersTimeout: headersTimeout ?? (longRunning ? LONG_RUNNING_FETCH_MS : undefined),
+    bodyTimeout: bodyTimeout ?? (longRunning ? 0 : undefined)
+  } as RequestInit
+}
+
+/** @internal Vitest-only — verifies long-running Tabby downloads bypass Node undici 300s path. */
+export async function resolveFetchImpl(longRunning: boolean): Promise<typeof fetch> {
+  if (longRunning && process.versions.electron) {
+    try {
+      const electron = await import('electron')
+      if (typeof electron.net?.fetch === 'function') {
+        return electron.net.fetch.bind(electron.net) as typeof fetch
+      }
+    } catch {
+      /* vitest / non-electron */
+    }
+  }
+  return fetch
+}
+
+export async function studioFetch(url: string, init?: StudioFetchInit): Promise<Response> {
   try {
-    return await fetch(url, init)
+    const impl = await resolveFetchImpl(Boolean(init?.longRunning))
+    return await impl(url, resolveStudioFetchInit(init))
   } catch (cause) {
     throw new NetworkError(url, cause)
   }

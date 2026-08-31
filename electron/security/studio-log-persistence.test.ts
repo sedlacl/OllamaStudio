@@ -12,6 +12,7 @@ import {
   openStudioLogWriter,
   prepareStudioLogScrub,
   resetStudioLogPersistenceForTests,
+  StudioLogPersistenceError,
   withBackendLogMutex
 } from './studio-log-persistence'
 import { scrubLogFileAtomic } from './log-scrub'
@@ -103,5 +104,53 @@ describe('studio log persistence mutex', () => {
     const result = await scrubLogFileAtomic(link, { allowedRoots: [root] })
     expect(result.ok).toBe(false)
     expect(readFileSync(join(outside, 'secret.log'), 'utf8')).toContain(secret)
+  })
+
+  it('scrub reject — writer is not opened', async () => {
+    const dir = tempDir('log-scrub-reject-')
+    const outside = tempDir('log-scrub-outside-')
+    const secret = 'synthetic-scrub-reject-key-010'
+    registerSecret(secret)
+    writeFileSync(join(outside, 'ollama-serve.log'), `token=${secret}\n`, 'utf8')
+    try {
+      const { symlinkSync } = await import('fs')
+      symlinkSync(join(outside, 'ollama-serve.log'), join(dir, 'ollama-serve.log'))
+    } catch {
+      return
+    }
+    await expect(prepareStudioLogScrub(dir)).rejects.toBeInstanceOf(StudioLogPersistenceError)
+    await expect(openStudioLogWriter(dir, 'ollama-serve.log')).rejects.toBeInstanceOf(
+      StudioLogPersistenceError
+    )
+    expect(readFileSync(join(outside, 'ollama-serve.log'), 'utf8')).toContain(secret)
+  })
+
+  it('symlink log path — open and clear reject without mutating external target', async () => {
+    const dir = tempDir('log-symlink-open-')
+    const outside = tempDir('log-symlink-outside-')
+    const secret = 'synthetic-symlink-open-key-011'
+    registerSecret(secret)
+    const externalPath = join(outside, 'tabby-serve.log')
+    writeFileSync(externalPath, `keep ${secret}\n`, 'utf8')
+    try {
+      const { symlinkSync } = await import('fs')
+      symlinkSync(externalPath, join(dir, 'tabby-serve.log'))
+    } catch {
+      return
+    }
+    writeFileSync(join(dir, 'ollama-serve.log'), '', 'utf8')
+    await expect(openStudioLogWriter(dir, 'tabby-serve.log')).rejects.toBeInstanceOf(
+      StudioLogPersistenceError
+    )
+    const externalBefore = readFileSync(externalPath, 'utf8')
+    try {
+      const { symlinkSync, unlinkSync } = await import('fs')
+      unlinkSync(join(dir, 'ollama-serve.log'))
+      symlinkSync(externalPath, join(dir, 'ollama-serve.log'))
+    } catch {
+      return
+    }
+    await expect(clearStudioLogs(dir, true)).rejects.toBeInstanceOf(StudioLogPersistenceError)
+    expect(readFileSync(externalPath, 'utf8')).toBe(externalBefore)
   })
 })

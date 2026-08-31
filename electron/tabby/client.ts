@@ -356,7 +356,8 @@ export class TabbyClient {
       method: 'POST',
       headers: this.adminHeaders(),
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(3_600_000)
+      signal: AbortSignal.timeout(3_600_000),
+      longRunning: true
     })
     if (!res.ok) throw await httpError(res)
     const data = (await res.json()) as { download_path?: string }

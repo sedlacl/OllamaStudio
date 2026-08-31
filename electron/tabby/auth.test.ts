@@ -1,11 +1,26 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { adminAuthHeaders, apiAuthHeaders, getTabbyAuthFingerprint } from './auth'
+import {
+  _resetTabbyAuthStateForTests,
+  adminAuthHeaders,
+  apiAuthHeaders,
+  getTabbyAuthFingerprint,
+  registerTabbyAuthSecrets,
+  releaseTabbyAuthSecrets,
+  watchTabbyAuth
+} from './auth'
 import type { TabbyConfig } from '../ollama/config'
+import {
+  _resetSecretRegistryForTests,
+  REDACTION_MARKER,
+  sanitizeSecrets,
+  setCredentialFailClosed
+} from '../security/secret-redactor'
 
 const dirs: string[] = []
+const STABILIZE_MS = 300
 
 function tabbyConfigWith(tokens: string | null): TabbyConfig {
   const dir = mkdtempSync(join(tmpdir(), 'tabby-auth-'))
@@ -25,6 +40,10 @@ function tabbyConfigWith(tokens: string | null): TabbyConfig {
 }
 
 afterEach(() => {
+  releaseTabbyAuthSecrets()
+  _resetTabbyAuthStateForTests()
+  _resetSecretRegistryForTests()
+  setCredentialFailClosed(false)
   while (dirs.length) rmSync(dirs.pop() as string, { recursive: true, force: true })
 })
 
@@ -67,5 +86,54 @@ describe('tabby auth headers', () => {
     const cfg = tabbyConfigWith(null)
     expect(adminAuthHeaders(cfg)).toEqual({})
     expect(apiAuthHeaders(cfg)).toEqual({})
+  })
+})
+
+describe('tabby auth rotation registry', () => {
+  it('keeps old keys registered through missing/empty/invalid transient states', () => {
+    const cfg = tabbyConfigWith('api_key: synthetic-rotate-old-key-101\n')
+    const path = join(cfg.installDir, 'api_tokens.yml')
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-101')).toContain(REDACTION_MARKER)
+
+    unlinkSync(path)
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-101')).toContain(REDACTION_MARKER)
+
+    writeFileSync(path, '', 'utf8')
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-101')).toContain(REDACTION_MARKER)
+
+    writeFileSync(path, 'api_key: "unclosed\n', 'utf8')
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-101')).toContain(REDACTION_MARKER)
+  })
+
+  it('registers new keys before releasing old after stable valid file', async () => {
+    const cfg = tabbyConfigWith('api_key: synthetic-rotate-old-key-102\n')
+    const path = join(cfg.installDir, 'api_tokens.yml')
+    registerTabbyAuthSecrets(cfg)
+    writeFileSync(path, 'api_key: synthetic-rotate-new-key-103\n', 'utf8')
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-new-key-103')).toContain(REDACTION_MARKER)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-102')).not.toContain(REDACTION_MARKER)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-102')).toBe('synthetic-rotate-old-key-102')
+  })
+
+  it('watcher keeps old keys through confirmed delete until new stable file', async () => {
+    const cfg = tabbyConfigWith('api_key: synthetic-rotate-old-key-104\n')
+    const path = join(cfg.installDir, 'api_tokens.yml')
+    registerTabbyAuthSecrets(cfg)
+    const release = watchTabbyAuth(() => undefined, cfg)
+    unlinkSync(path)
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-104')).toContain(REDACTION_MARKER)
+    await new Promise((r) => setTimeout(r, STABILIZE_MS + 50))
+    expect(sanitizeSecrets('synthetic-rotate-old-key-104')).toContain(REDACTION_MARKER)
+    writeFileSync(path, 'api_key: synthetic-rotate-new-key-105\n', 'utf8')
+    registerTabbyAuthSecrets(cfg)
+    expect(sanitizeSecrets('synthetic-rotate-new-key-105')).toContain(REDACTION_MARKER)
+    expect(sanitizeSecrets('synthetic-rotate-old-key-104')).toBe('synthetic-rotate-old-key-104')
+    release()
   })
 })

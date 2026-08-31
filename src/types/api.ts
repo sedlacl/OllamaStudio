@@ -281,8 +281,11 @@ export interface ModelTag {
   name: string
   model: string
   modified_at: string
-  size: number
+  /** null = neznámá velikost (Tabby API neposílá size) */
+  size: number | null
   digest: string
+  /** Lokální kompletnost složky (Tabby) */
+  local_status?: 'complete' | 'incomplete' | 'unknown'
   details?: {
     format?: string
     family?: string

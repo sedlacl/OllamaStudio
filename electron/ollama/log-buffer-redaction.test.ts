@@ -65,6 +65,24 @@ describe('LogBuffer streaming redaction', () => {
     expect(texts.join('\n')).not.toMatch(/a{100}/)
   })
 
+  it('emits marker and normal line when oversized chunk contains newline terminator', () => {
+    const buf = new LogBuffer()
+    registerSecret('synthetic-oversized-mid-secret-016')
+    buf.appendChunk('stdout', `${'z'.repeat(70_000)}\nnormal next line\n`)
+    const texts = buf.getEntries().map((e) => e.text)
+    expect(texts.some((t) => t.includes('oversized line'))).toBe(true)
+    expect(texts.some((t) => t.includes('normal next line'))).toBe(true)
+    expect(texts.join('\n')).not.toMatch(/z{100}/)
+  })
+
+  it('handles CRLF oversized line with trailing normal line in one chunk', () => {
+    const buf = new LogBuffer()
+    buf.appendChunk('stdout', `${'m'.repeat(70_000)}\r\nsafe crlf line\r\n`)
+    const texts = buf.getEntries().map((e) => e.text)
+    expect(texts.some((t) => t.includes('oversized line'))).toBe(true)
+    expect(texts.some((t) => t.includes('safe crlf line'))).toBe(true)
+  })
+
   it('discards trailing payload across chunks until newline after oversized line', () => {
     const buf = new LogBuffer()
     registerSecret('leak-chunk-secret-014')

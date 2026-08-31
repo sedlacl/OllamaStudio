@@ -1,5 +1,6 @@
 import type { ModelSpeedTestResult } from './client'
 import { canonicalizeModelName } from './load-options-registry'
+import { sanitizeSpeedTestResult } from '../security/sanitize-state'
 
 /**
  * Poslední výsledek testu rychlosti pro každý model. Drží se v paměti hlavního
@@ -11,7 +12,7 @@ const registry = new Map<string, ModelSpeedTestResult>()
 export function recordSpeedTest(name: string, result: ModelSpeedTestResult): void {
   const key = canonicalizeModelName(name)
   if (!key) return
-  registry.set(key, result)
+  registry.set(key, sanitizeSpeedTestResult(result))
 }
 
 export function removeSpeedTest(name: string): void {
@@ -21,7 +22,11 @@ export function removeSpeedTest(name: string): void {
 }
 
 export function getSpeedTests(): Record<string, ModelSpeedTestResult> {
-  return Object.fromEntries(registry)
+  const out: Record<string, ModelSpeedTestResult> = {}
+  for (const [key, result] of registry) {
+    out[key] = sanitizeSpeedTestResult(result)
+  }
+  return out
 }
 
 export function clearAllSpeedTests(): void {

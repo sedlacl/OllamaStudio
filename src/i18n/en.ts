@@ -156,6 +156,13 @@ export const en: MessageTree = {
     colContinue: 'Continue',
     statusLoading: 'Loading…',
     statusLoaded: 'Loaded',
+    statusIncomplete: 'Incomplete',
+    sizeUnknown: '—',
+    loadIncompleteDisabled: 'Model is incomplete — delete the folder or finish the download first',
+    deleteIncompleteFolder: 'Delete incomplete folder',
+    deleteIncompleteConfirm:
+      'Really delete the incomplete folder “{folder}”? This cannot be undone.',
+    deleteIncompleteDone: 'Incomplete folder “{folder}” was deleted.',
     inContinue: 'In Continue',
     notInContinue: 'Not present',
     load: 'Load',

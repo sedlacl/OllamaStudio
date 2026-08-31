@@ -27,7 +27,8 @@ import {
   type TabbyLoadOptions
 } from '../types/api'
 
-function formatSize(bytes: number): string {
+function formatSize(bytes: number | null | undefined, unknownLabel = '—'): string {
+  if (bytes == null) return unknownLabel
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
   return `${bytes} B`
@@ -443,6 +444,25 @@ export default function Models(): JSX.Element {
     }
   }
 
+  const handleDeleteIncompleteFolder = async (folder: string): Promise<void> => {
+    if (!confirm(t('models.deleteIncompleteConfirm', { folder }))) return
+    setBusy(folder)
+    setError(null)
+    try {
+      const result = await api().tabbyDeleteDownloadFolder(folder)
+      if (!result.ok) {
+        setError(result.error ?? t('models.hfFolderDeleteFailed'))
+        return
+      }
+      setLoadNotice(t('models.deleteIncompleteDone', { folder }))
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : t('models.hfFolderDeleteFailed'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const handleClone = async (): Promise<void> => {
     if (!cloneModal || !cloneDest.trim()) return
     setBusy(cloneModal)
@@ -536,7 +556,7 @@ export default function Models(): JSX.Element {
     }
   }
 
-  const overflowActions = (name: string): OverflowAction[] => {
+  const overflowActions = (name: string, localStatus?: ModelTag['local_status']): OverflowAction[] => {
     const continueMatch = integrations.continue.byModel[name]
     const opencodeMatch = integrations.opencode.byModel[name]
     const continuePresent = continueMatch?.state === 'current' || continueMatch?.state === 'stale'
@@ -612,6 +632,16 @@ export default function Models(): JSX.Element {
         disabled: busy === name,
         separatorBefore: true,
         onClick: () => void handleDelete(name)
+      })
+    }
+    if (isTabby && localStatus === 'incomplete') {
+      items.push({
+        id: 'delete-incomplete-folder',
+        label: t('models.deleteIncompleteFolder'),
+        danger: true,
+        disabled: busy === name,
+        separatorBefore: items.length > 0,
+        onClick: () => void handleDeleteIncompleteFolder(name)
       })
     }
     return items
@@ -990,16 +1020,21 @@ export default function Models(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {tags.map((m) => (
+              {tags.map((m) => {
+                const incomplete = isTabby && m.local_status === 'incomplete'
+                const loadDisabled = busy === m.name || isLoading(m.name) || incomplete
+                return (
                 <tr key={m.digest}>
                   <td className="mono">{m.name}</td>
-                  <td>{formatSize(m.size)}</td>
+                  <td>{formatSize(m.size, t('models.sizeUnknown'))}</td>
                   <td>
                     {isLoading(m.name)
                       ? t('models.statusLoading')
                       : isRunning(m.name)
                         ? t('models.statusLoaded')
-                        : '—'}
+                        : incomplete
+                          ? t('models.statusIncomplete')
+                          : '—'}
                   </td>
                   <td>
                     <ToolConfigIndicators
@@ -1012,7 +1047,8 @@ export default function Models(): JSX.Element {
                       {!isRunning(m.name) && (
                         <button
                           className="btn btn-primary"
-                          disabled={busy === m.name || isLoading(m.name)}
+                          disabled={loadDisabled}
+                          title={incomplete ? t('models.loadIncompleteDisabled') : undefined}
                           onClick={() => void openLoadDialog(m)}
                         >
                           {isLoading(m.name) ? t('models.statusLoading') : t('models.load')}
@@ -1027,11 +1063,12 @@ export default function Models(): JSX.Element {
                           {t('models.unload')}
                         </button>
                       )}
-                      <ModelOverflowMenu modelName={m.name} actions={overflowActions(m.name)} />
+                      <ModelOverflowMenu modelName={m.name} actions={overflowActions(m.name, m.local_status)} />
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         )}

@@ -3,8 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { NetworkError } from '../ollama/fetch-error'
 import { deleteTabbyDownloadFolder, hfErrorToMessage, runTabbyHfDownload } from './hf-download'
-import { resetDownloadSessionForTests } from './download-session'
+import { getDownloadStatusSnapshot, resetDownloadSessionForTests } from './download-session'
 import { setTabbyPatchReadiness } from './patch-readiness'
 
 const dirs: string[] = []
@@ -106,6 +107,20 @@ describe('hfErrorToMessage', () => {
       new Error('PermissionError: [WinError 32] file is being used by another process')
     )
     expect(locked).not.toMatch(/WinError|PermissionError/i)
+  })
+
+  it('unwraps TypeError fetch failed cause instead of echoing fetch failed', () => {
+    const cause = Object.assign(new Error('Headers Timeout Error'), {
+      name: 'TimeoutError',
+      code: 'UND_ERR_HEADERS_TIMEOUT'
+    })
+    const typeError = new TypeError('fetch failed')
+    Object.defineProperty(typeError, 'cause', { value: cause })
+    const wrapped = new NetworkError('http://127.0.0.1:5000/v1/download', typeError)
+    const message = hfErrorToMessage(wrapped)
+    expect(message.toLowerCase()).not.toContain('fetch failed')
+    expect(message).toMatch(/vypršelo|timed out/i)
+    expect(message).toContain('127.0.0.1:5000')
   })
 })
 
@@ -235,5 +250,33 @@ describe('runTabbyHfDownload preflight', () => {
       folderName: 'my-model',
       completeness: 'unknown'
     })
+  })
+
+  it('persists the human timeout cause instead of a bare fetch failed', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('offline')
+    })
+    const modelDir = await tempModelDir()
+    const cause = Object.assign(new Error('Headers Timeout Error'), {
+      name: 'TimeoutError',
+      code: 'UND_ERR_HEADERS_TIMEOUT'
+    })
+    const typeError = new TypeError('fetch failed')
+    Object.defineProperty(typeError, 'cause', { value: cause })
+
+    const result = await runTabbyHfDownload({
+      req: { repoId: 'org/my-model' },
+      operationId: 'timeout-cause-1',
+      modelDir,
+      emit: () => {},
+      download: async () => {
+        throw new NetworkError('http://127.0.0.1:5000/v1/download', typeError)
+      }
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.error?.toLowerCase()).not.toContain('fetch failed')
+    expect(result.error).toMatch(/vypršelo|timed out/i)
+    expect(getDownloadStatusSnapshot().session?.error?.toLowerCase()).not.toContain('fetch failed')
   })
 })

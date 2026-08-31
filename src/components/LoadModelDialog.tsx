@@ -519,7 +519,8 @@ function SettingStatus({ label, value }: { label: string; value?: string }): JSX
   )
 }
 
-function formatSize(bytes: number): string {
+function formatSize(bytes: number | null): string {
+  if (bytes == null) return '—'
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
   return `${bytes} B`

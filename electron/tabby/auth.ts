@@ -25,6 +25,8 @@ export interface TabbyAuthKeys {
 }
 
 let cached: TabbyAuthKeys | null = null
+/** Poslední úspěšně načtený a zaregistrovaný auth snapshot — drží se při transientním chybějícím/prázdném souboru. */
+let lastStableAuth: TabbyAuthKeys | null = null
 let watchingPath: string | null = null
 let registeredRelease: (() => void) | null = null
 let dirWatcher: FSWatcher | null = null
@@ -32,6 +34,55 @@ let missingPoll: ReturnType<typeof setInterval> | null = null
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 const STABILIZE_MS = 300
+
+type DiskAuthRead =
+  | { kind: 'stable'; auth: TabbyAuthKeys }
+  | { kind: 'missing' }
+  | { kind: 'empty' }
+  | { kind: 'invalid' }
+
+function readAuthFromDisk(tabby?: TabbyConfig): DiskAuthRead {
+  const path = tokensPath(tabby)
+  const disableAuth = readDisableAuth(tabby)
+  if (!existsSync(path)) return { kind: 'missing' }
+  try {
+    const raw = readFileSync(path, 'utf-8')
+    if (!raw.trim()) return { kind: 'empty' }
+    const parsed = parseYaml(raw) as Record<string, unknown> | null
+    if (!parsed || typeof parsed !== 'object') return { kind: 'invalid' }
+    const apiKeys = parseApiKeys(parsed.api_key)
+    const adminKey =
+      typeof parsed.admin_key === 'string' && parsed.admin_key.trim()
+        ? parsed.admin_key.trim()
+        : null
+    const stat = statSync(path)
+    return {
+      kind: 'stable',
+      auth: {
+        apiKeys,
+        adminKey,
+        disableAuth,
+        path,
+        mtimeMs: stat.mtimeMs
+      }
+    }
+  } catch {
+    return { kind: 'invalid' }
+  }
+}
+
+function fallbackAuthForPath(path: string, disableAuth: boolean): TabbyAuthKeys {
+  if (lastStableAuth && lastStableAuth.path === path) {
+    return { ...lastStableAuth, disableAuth, mtimeMs: null }
+  }
+  return {
+    apiKeys: [],
+    adminKey: null,
+    disableAuth,
+    path,
+    mtimeMs: null
+  }
+}
 
 function tokensPath(tabby?: TabbyConfig): string {
   const cfg = tabby ?? loadConfig().tabby ?? undefined
@@ -72,61 +123,51 @@ function parseApiKeys(raw: unknown): string[] {
 }
 
 export function readTabbyAuth(tabby?: TabbyConfig): TabbyAuthKeys {
+  const disk = readAuthFromDisk(tabby)
+  if (disk.kind === 'stable') {
+    cached = disk.auth
+    return disk.auth
+  }
   const path = tokensPath(tabby)
   const disableAuth = readDisableAuth(tabby)
-  if (!existsSync(path)) {
-    cached = {
-      apiKeys: [],
-      adminKey: null,
-      disableAuth,
-      path,
-      mtimeMs: null
-    }
-    return cached
-  }
-  try {
-    const raw = readFileSync(path, 'utf-8')
-    const parsed = parseYaml(raw) as Record<string, unknown> | null
-    const apiKeys = parseApiKeys(parsed?.api_key)
-    const adminKey =
-      typeof parsed?.admin_key === 'string' && parsed.admin_key.trim()
-        ? parsed.admin_key.trim()
-        : null
-    const stat = statSync(path)
-    cached = {
-      apiKeys,
-      adminKey,
-      disableAuth,
-      path,
-      mtimeMs: stat.mtimeMs
-    }
-    return cached
-  } catch {
-    cached = {
-      apiKeys: [],
-      adminKey: null,
-      disableAuth,
-      path,
-      mtimeMs: null
-    }
-    return cached
-  }
+  cached = fallbackAuthForPath(path, disableAuth)
+  return cached
 }
 
 /** Načte klíče a zaregistruje je pro redakci v logu/IPC. Vrací release handle. */
 export function registerTabbyAuthSecrets(tabby?: TabbyConfig): () => void {
-  const auth = readTabbyAuth(tabby)
-  const secrets = [...auth.apiKeys]
-  if (auth.adminKey) secrets.push(auth.adminKey)
+  const disk = readAuthFromDisk(tabby)
+  if (disk.kind !== 'stable') {
+    if (registeredRelease !== null && lastStableAuth !== null) {
+      return registeredRelease
+    }
+    const nextRelease = registerSecrets([])
+    registeredRelease?.()
+    registeredRelease = nextRelease
+    lastStableAuth = null
+    return registeredRelease
+  }
+
+  const secrets = [...disk.auth.apiKeys]
+  if (disk.auth.adminKey) secrets.push(disk.auth.adminKey)
   const nextRelease = registerSecrets(secrets)
   registeredRelease?.()
   registeredRelease = nextRelease
+  lastStableAuth = disk.auth
+  cached = disk.auth
   return registeredRelease
 }
 
 export function releaseTabbyAuthSecrets(): void {
   registeredRelease?.()
   registeredRelease = null
+  lastStableAuth = null
+  cached = null
+}
+
+/** Test-only reset module state. */
+export function _resetTabbyAuthStateForTests(): void {
+  releaseTabbyAuthSecrets()
 }
 
 export function getTabbyAuthFingerprint(tabby?: TabbyConfig): {
@@ -217,14 +258,12 @@ function stopMissingPoll(): void {
 
 function onTokensFileEvent(tabby: TabbyConfig | undefined, onChange: () => void): void {
   setCredentialFailClosed(true)
-  cached = null
   registerTabbyAuthSecrets(tabby)
   onChange()
 
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => {
     debounceTimer = null
-    cached = null
     registerTabbyAuthSecrets(tabby)
     setCredentialFailClosed(false)
     onChange()

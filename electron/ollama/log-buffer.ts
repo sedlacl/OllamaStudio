@@ -325,7 +325,6 @@ export class LogBuffer {
       if (rawLine.length === 0) continue
       if (Buffer.byteLength(rawLine, 'utf8') > MAX_LINE_BYTES) {
         this.publishSanitizedLine(stream, OVERSIZED_LINE_TEXT)
-        state.discardingUntilNewline = true
         this.pendingSensitiveNextLine = false
         continue
       }

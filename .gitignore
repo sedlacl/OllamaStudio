@@ -19,3 +19,4 @@ scripts/_*-main.mjs
 # os
 .DS_Store
 Thumbs.db
+.tmp/**

@@ -36,6 +36,7 @@ import {
   wasDownloadInterruptedByBackend
 } from './download-session'
 import { directoryByteSize, fetchHfExpectedBytes } from './hf-hub'
+import { invalidateLocalModelCache } from './local-model-info'
 import { isTabbyDownloadAllowed } from './patch-readiness'
 
 export type TabbyDownloadProgressStatus = 'running' | 'success' | 'error'
@@ -60,6 +61,9 @@ export interface TabbyDownloadResult {
 
 const POLL_MS = 1000
 const DELETE_ATTEMPTS = 5
+
+const USELESS_FETCH_MESSAGE =
+  /^(fetch failed|failed to fetch|networkerror when attempting to fetch resource|network)$/i
 
 export function hfErrorToMessage(err: unknown): string {
   if (err instanceof HfApiError) {
@@ -98,6 +102,9 @@ export function hfErrorToMessage(err: unknown): string {
   const existingFolder = parseTabbyFolderExistsError(raw)
   if (existingFolder) {
     return tMain('errors.hfFolderExists', { folder: existingFolder })
+  }
+  if (USELESS_FETCH_MESSAGE.test(raw.trim())) {
+    return redactSecrets(formatFetchErrorUserText(inspectFetchError(err), tMain))
   }
   return raw
 }
@@ -488,6 +495,7 @@ export async function runTabbyHfDownload(opts: {
       bytesDownloaded: done.bytesDownloaded,
       bytesTotal: done.bytesTotal
     })
+    invalidateLocalModelCache(folderName)
     return { ok: true, downloadPath: sanitizePathForState(verified) }
   } catch (err) {
     logIpcError('tabby-download', err)
