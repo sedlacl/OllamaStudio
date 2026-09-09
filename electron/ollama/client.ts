@@ -11,8 +11,9 @@ export interface ModelTag {
   name: string
   model: string
   modified_at: string
-  size: number
+  size: number | null
   digest: string
+  local_status?: 'complete' | 'incomplete' | 'unknown'
   details?: {
     format?: string
     family?: string

@@ -1,10 +1,15 @@
 import { execFile } from 'child_process'
 import os from 'os'
 import { promisify } from 'util'
-import type { OllamaClient } from './client'
+import type { RunningModel } from './client'
 import type { ActiveRequest, RequestHistoryItem } from './log-buffer'
 
 const execFileAsync = promisify(execFile)
+
+export interface MetricsClient {
+  getPs(): Promise<RunningModel[]>
+  getVersion(): Promise<string | null>
+}
 
 export interface GpuMetrics {
   /** index z nvidia-smi; null u adaptérů, které nvidia-smi nevidí */
@@ -55,7 +60,7 @@ export interface DashboardMetrics {
 }
 
 export async function collectMetrics(
-  client: OllamaClient,
+  client: MetricsClient,
   servePid: number | null,
   spawnTime: number | null,
   getTokensPerSec: () => number | null,
@@ -388,7 +393,7 @@ export interface ResourceUsageData {
 }
 
 export async function collectResourceUsage(
-  client: OllamaClient,
+  client: Pick<MetricsClient, 'getPs'>,
   servePid: number | null,
   serveStatus: string,
   options?: {
