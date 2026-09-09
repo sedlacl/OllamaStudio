@@ -117,4 +117,20 @@ describe('LogBuffer streaming redaction', () => {
     const joined = buf.getEntries().map((e) => e.text).join(' ')
     expect(joined).not.toContain(SYNTH_API)
   })
+
+  it('does not prepend a completed line onto the next chunk', () => {
+    const buf = new LogBuffer()
+    buf.appendChunk('stdout', 'first line')
+    buf.appendChunk('stdout', '\nsecond line\n')
+    buf.appendChunk('stdout', 'third line\n')
+    expect(buf.getEntries().map((e) => e.text)).toEqual(['first line', 'second line', 'third line'])
+  })
+
+  it('parses new lines after flushAll recreates the decoder', () => {
+    const buf = new LogBuffer()
+    buf.appendChunk('stdout', 'partial without newline')
+    buf.flushAll()
+    buf.appendChunk('stdout', 'after flush\n')
+    expect(buf.getEntries().map((e) => e.text)).toEqual(['after flush'])
+  })
 })

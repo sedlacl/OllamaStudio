@@ -46,6 +46,7 @@ import {
   clearModelLoadState,
   getActiveModelLoads,
   initModelLoadManager,
+  startBackgroundModelLoad,
   startModelLoad
 } from '../ollama/model-load-manager'
 import { collectMetrics, collectResourceUsage } from '../ollama/metrics'
@@ -91,6 +92,7 @@ import { enrichTabbyModelSummaries, invalidateLocalModelCache } from '../tabby/l
 import { directoryByteSize, fetchHfRevisions } from '../tabby/hf-hub'
 import { writeModelMtpConfig } from '../tabby/model-config'
 import { tabbyServeManager } from '../tabby/serve-manager'
+import { tabbyProcessSize } from '../tabby/loaded-memory-live'
 import {
   configureDownloadSession,
   dismissDownloadSession,
@@ -333,13 +335,14 @@ function tagsFromTabby(
   }))
 }
 
-async function startTabbyModelLoad(
+function startTabbyModelLoad(
   options: TabbyLoadOptions & {
     mtp?: { enabled: boolean; draftNumTokens?: number; dynamicDraft?: boolean }
   }
-): Promise<{ ok: boolean; error?: string }> {
+): { ok: boolean; error?: string } {
   const name = options.modelName
-  try {
+  return startBackgroundModelLoad(name, async () => {
+    logBuffer.appendApp('info', `[studio] tabby-load start ${name}`)
     if (options.mtp?.enabled) {
       writeModelMtpConfig(name, {
         draftMode: 'mtp',
@@ -354,31 +357,22 @@ async function startTabbyModelLoad(
     }
 
     for await (const progress of tabbyClient.loadModel(options)) {
-      mainWindow?.webContents.send('model-load-status', {
-        name,
-        status: 'loading',
-        startedAt: Date.now(),
-        error: undefined,
-        progress
-      })
+      if (progress.status === 'finished') continue
     }
 
-    mainWindow?.webContents.send('model-load-status', {
-      name,
-      status: 'success',
-      startedAt: Date.now()
-    })
-    return { ok: true }
-  } catch (err) {
-    const error = sanitizeUnknownError(err)
-    mainWindow?.webContents.send('model-load-status', {
-      name,
-      status: 'error',
-      error,
-      startedAt: Date.now()
-    })
-    return { ok: false, error }
-  }
+    logBuffer.appendApp('info', `[studio] tabby-load done ${name}`)
+  })
+}
+
+async function tabbyMemoryPids(): Promise<number[]> {
+  const managed = await tabbyServeManager.getManagedPids()
+  if (managed.length > 0) return managed
+  const pid = tabbyServeManager.getPid()
+  return pid != null ? [pid] : []
+}
+
+async function tabbyLoadedSizes(): Promise<{ size: number; sizeVram: number }> {
+  return tabbyProcessSize(await tabbyMemoryPids())
 }
 
 function registerIpc(): void {
@@ -407,12 +401,13 @@ function registerIpc(): void {
           getPs: async () => {
             const current = await tabbyClient.getCurrentModel().catch(() => null)
             if (!current) return []
+            const mem = await tabbyLoadedSizes()
             return [
               {
                 name: current.modelId,
                 model: current.modelId,
-                size: current.sizeBytes ?? 0,
-                size_vram: current.sizeVramBytes ?? 0,
+                size: mem.size,
+                size_vram: mem.sizeVram,
                 digest: '',
                 expires_at: ''
               }
@@ -475,12 +470,13 @@ function registerIpc(): void {
     if (backend === 'tabby') {
       const current = skipHttp ? null : await tabbyClient.getCurrentModel().catch(() => null)
       const health = skipHttp ? null : await tabbyClient.getHealth().catch(() => null)
+      const mem = current ? await tabbyLoadedSizes() : { size: 0, sizeVram: 0 }
       const loadedModels = current
         ? [
             {
               name: current.modelId,
-              sizeVram: current.sizeVramBytes ?? 0,
-              size: current.sizeBytes ?? 0
+              sizeVram: mem.sizeVram,
+              size: mem.size
             }
           ]
         : []
@@ -555,12 +551,13 @@ function registerIpc(): void {
       if (getActiveBackend() === 'tabby') {
         const current = await tabbyClient.getCurrentModel()
         if (!current) return []
+        const mem = await tabbyLoadedSizes()
         return [
           {
             name: current.modelId,
             model: current.modelId,
-            size: current.sizeBytes ?? 0,
-            size_vram: current.sizeVramBytes ?? 0,
+            size: mem.size,
+            size_vram: mem.sizeVram,
             digest: '',
             expires_at: '',
             context_length: current.contextLength,

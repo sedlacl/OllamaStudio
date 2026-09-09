@@ -270,17 +270,20 @@ export class LogBuffer {
     const state = this.streamStates[stream]
     const piece =
       typeof chunk === 'string' ? chunk : state.decoder.write(chunk)
-    this.processStreamText(stream, state.carry + piece)
+    const text = state.carry + piece
+    state.carry = ''
+    this.processStreamText(stream, text)
   }
 
   flushAll(): void {
     for (const stream of ['stdout', 'stderr'] as const) {
-      const state = this.streamStates[stream]
-      const tail = state.decoder.end()
-      if (tail) state.carry += tail
-      state.carry = ''
+      try {
+        this.streamStates[stream].decoder.end()
+      } catch {
+        /* decoder already ended */
+      }
     }
-    this.pendingSensitiveNextLine = false
+    this.resetStreamStates()
   }
 
   private resetStreamStates(): void {

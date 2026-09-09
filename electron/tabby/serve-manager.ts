@@ -1,4 +1,4 @@
-import { execFile, type ChildProcess } from 'child_process'
+import { execFile, spawn, type ChildProcess } from 'child_process'
 import {
   existsSync,
   mkdirSync,
@@ -28,7 +28,6 @@ import { noteBackendLost, resanitizeDownloadSessionSnapshot } from './download-s
 import { setTabbyPatchReadiness } from './patch-readiness'
 import { getTabbyAuthFingerprint, registerTabbyAuthSecrets, readTabbyAuth, watchTabbyAuth } from './auth'
 import type { BackendServeState, EndpointStatus, ProcessStatus } from '../backends/types'
-import { spawn } from 'child_process'
 import {
   classifyListenerProbe,
   decideTabbyStart,
@@ -44,6 +43,7 @@ import {
   TABBY_RUNTIME_PATCH_VERSION,
   verifyTabbyRuntimePatchIntegrity
 } from './runtime-patch'
+import { buildTabbySpawnEnv, tabbySpawnArgs } from './spawn-env'
 
 const execFileAsync = promisify(execFile)
 
@@ -398,9 +398,10 @@ export class TabbyServeManager {
 
     try {
       await openStudioLogWriter(join(app.getPath('userData'), 'logs'), 'tabby-serve.log')
-      this.process = spawn(pre.pythonPath, [pre.mainPy], {
+      logBuffer.appendApp('info', '[studio] tabby-serve: spawning')
+      this.process = spawn(pre.pythonPath, tabbySpawnArgs(pre.mainPy), {
         cwd: pre.installDir,
-        env: { ...process.env },
+        env: buildTabbySpawnEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         detached: false

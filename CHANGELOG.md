@@ -6,6 +6,15 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.4.3] — 2026-09-09
+
+### Fixed
+
+- TabbyAPI se ze Studia spouští s nebufferovaným Pythonem, takže pád po CUDA už nezmizí z logu; Electron/Node flagy do procesu nejdou
+- Log panel znovu ukazuje jednotlivé řádky Tabby místo narůstajícího slepence starých zpráv; po Stop/Start jdou nové logy znovu číst
+- Kliknutí na Load u Tabby modelu hned ukáže „Načítá se…“ a běží na pozadí; dřív dialog zmizel a desítky sekund nebylo nic vidět
+- U načteného Tabby modelu tabulka split ukáže VRAM a RAM procesu (TabbyAPI tyhle údaje na rozdíl od Ollamy neposílá)
+
 ## [1.4.2] — 2026-08-28
 
 ### Security

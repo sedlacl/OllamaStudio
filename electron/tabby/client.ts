@@ -283,6 +283,7 @@ export class TabbyClient {
       method: 'POST',
       headers: this.adminHeaders(),
       body: JSON.stringify(body),
+      longRunning: true,
       signal: AbortSignal.timeout(600000)
     })
     if (!res.ok) throw await httpError(res)

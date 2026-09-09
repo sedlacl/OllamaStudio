@@ -713,7 +713,7 @@ function mergeOllamaProcesses(
  * hlásí násobky skutečnosti (~11 GB proti 2,4 GB z nvidia-smi), a `Shared Usage` per proces
  * také ne — kompozitor (dwm) v ní má započítané plochy cizích procesů.
  */
-async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
+export async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
   if (process.platform !== 'win32') return []
   try {
     const script = [
@@ -772,7 +772,7 @@ async function getGpuProcessesFromPerfCounters(): Promise<GpuProcess[]> {
   }
 }
 
-async function getGpuProcessesFromSmi(): Promise<GpuProcess[]> {
+export async function getGpuProcessesFromSmi(): Promise<GpuProcess[]> {
   // gpu_uuid umí až novější nvidia-smi; bez něj jen přijdeme o rozlišení karet
   const withUuid = await querySmiComputeApps(true)
   if (withUuid !== null) return withUuid

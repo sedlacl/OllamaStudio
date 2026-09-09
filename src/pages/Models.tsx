@@ -284,6 +284,10 @@ export default function Models(): JSX.Element {
     setLoadError(null)
     setLoadNotice(null)
     setError(null)
+    setModelLoads((prev) => [
+      ...prev.filter((s) => s.name !== modelName),
+      { name: modelName, status: 'loading', startedAt: Date.now() }
+    ])
     void handleLoad(modelName, options).catch(() => {})
   }
 

@@ -42,51 +42,86 @@ export function getActiveModelLoads(): ModelLoadState[] {
   return Array.from(activeLoads.values())
 }
 
+function beginLoad(name: string): { ok: false; error: string } | { ok: true; state: ModelLoadState } {
+  const existing = activeLoads.get(name)
+  if (existing?.status === 'loading') {
+    return { ok: false, error: tMain('errors.modelAlreadyLoading', { name }) }
+  }
+  const state: ModelLoadState = { name, status: 'loading', startedAt: Date.now() }
+  activeLoads.set(name, state)
+  emit(state)
+  const historyTaskId = logBuffer.startManagedRequest('load', name)
+  loadHistoryTasks.set(name, historyTaskId)
+  emitRequestsChanged()
+  return { ok: true, state }
+}
+
+function finishLoad(
+  name: string,
+  startedAt: number,
+  result: 'done' | 'error',
+  error?: string,
+  onLoaded?: (name: string) => void
+): void {
+  if (result === 'done') {
+    const success: ModelLoadState = { name, status: 'success', startedAt }
+    activeLoads.set(name, success)
+    emit(success)
+    finishLoadHistory(name, 'done')
+    onLoaded?.(name)
+    setTimeout(() => {
+      const current = activeLoads.get(name)
+      if (current?.status === 'success' && current.startedAt === startedAt) {
+        activeLoads.delete(name)
+      }
+    }, 30_000)
+    return
+  }
+  const failed: ModelLoadState = { name, status: 'error', error, startedAt }
+  activeLoads.set(name, failed)
+  emit(failed)
+  finishLoadHistory(name, 'error', error)
+}
+
+/**
+ * Fire-and-forget load (Tabby SSE může trvat desítky sekund bez prvního eventu).
+ * IPC musí vrátit hned, jinak dialog zmizí a UI nic neukáže.
+ */
+export function startBackgroundModelLoad(
+  name: string,
+  work: () => Promise<void>,
+  onLoaded?: (name: string) => void
+): { ok: boolean; error?: string } {
+  const started = beginLoad(name)
+  if (!started.ok) return started
+
+  void (async () => {
+    try {
+      await work()
+      finishLoad(name, started.state.startedAt, 'done', undefined, onLoaded)
+    } catch (err) {
+      finishLoad(name, started.state.startedAt, 'error', sanitizeUnknownError(err))
+    }
+  })()
+
+  return { ok: true }
+}
+
 export function startModelLoad(
   client: OllamaClient,
   name: string,
   options?: ModelLoadOptions,
   onLoaded?: (name: string) => void
 ): { ok: boolean; error?: string } {
-  const existing = activeLoads.get(name)
-  if (existing?.status === 'loading') {
-    return { ok: false, error: tMain('errors.modelAlreadyLoading', { name }) }
-  }
-
   const loadOptions = options ?? { keepAlive: '-1' }
-  const state: ModelLoadState = { name, status: 'loading', startedAt: Date.now() }
-  activeLoads.set(name, state)
-  emit(state)
-
-  const historyTaskId = logBuffer.startManagedRequest('load', name)
-  loadHistoryTasks.set(name, historyTaskId)
-  emitRequestsChanged()
-
-  void (async () => {
-    try {
+  return startBackgroundModelLoad(
+    name,
+    async () => {
       await client.load(name, loadOptions)
       recordLoadOptions(name, loadOptions)
-      const success: ModelLoadState = { name, status: 'success', startedAt: state.startedAt }
-      activeLoads.set(name, success)
-      emit(success)
-      finishLoadHistory(name, 'done')
-      onLoaded?.(name)
-      setTimeout(() => {
-        const current = activeLoads.get(name)
-        if (current?.status === 'success' && current.startedAt === state.startedAt) {
-          activeLoads.delete(name)
-        }
-      }, 30_000)
-    } catch (err) {
-      const error = sanitizeUnknownError(err)
-      const failed: ModelLoadState = { name, status: 'error', error, startedAt: state.startedAt }
-      activeLoads.set(name, failed)
-      emit(failed)
-      finishLoadHistory(name, 'error', error)
-    }
-  })()
-
-  return { ok: true }
+    },
+    onLoaded
+  )
 }
 
 export function clearModelLoadState(name: string): void {
