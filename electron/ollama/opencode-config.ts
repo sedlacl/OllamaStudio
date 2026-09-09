@@ -30,6 +30,9 @@ export interface OpenCodeModelEntry {
 /** Strop `limit.output` v OpenCode — vyšší hodnoty si stejně sráží na 32k. */
 export const MAX_OPENCODE_OUTPUT_LIMIT = 32_000
 
+/** Stejné výchozí `max_seq_len` jako dialog načtení Tabby. */
+export const TABBY_DEFAULT_CONTEXT_LENGTH = 8192
+
 /**
  * OpenCode spouští auto-compaction při `estimated > context - max(output, buffer)`.
  * Output blízký contextu tedy nechá na prompt jen pár set tokenů a session se
@@ -43,6 +46,18 @@ export function recommendedOutputLimit(context: number | undefined): number {
   if (context == null) return MAX_OPENCODE_OUTPUT_LIMIT
   const share = Math.floor(context / OUTPUT_LIMIT_CONTEXT_DIVISOR)
   return Math.max(1, Math.min(share, MAX_OPENCODE_OUTPUT_LIMIT))
+}
+
+/**
+ * Kontext pro OpenCode u Tabby: poslední load (`max_seq_len`) má přednost
+ * před už zapsaným limitem; bez obojího dialogové výchozí 8192.
+ * Bez `limit.context` OpenCode kompaktuje session hned po první zprávě.
+ */
+export function resolveTabbyOpenCodeContext(opts: {
+  recordedMaxSeqLen?: number
+  existingContext?: number
+}): number {
+  return opts.recordedMaxSeqLen ?? opts.existingContext ?? TABBY_DEFAULT_CONTEXT_LENGTH
 }
 
 /** Ručně sníženou hodnotu respektuje, příliš velkou (i z dřívějších verzí) srazí. */
@@ -454,12 +469,20 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
     const modelId = ollamaModel.trim()
     const apiBase = ensureOpenAiV1Base(tabbyBaseUrl(config.tabby))
     const auth = readTabbyAuth(config.tabby)
+    const recorded =
+      getLoadOptions(ollamaModel) ??
+      getLoadOptions(modelId) ??
+      getLoadOptions(`${modelId}:latest`)
+    const contextLength = resolveTabbyOpenCodeContext({
+      recordedMaxSeqLen: recorded?.options.numCtx,
+      existingContext: existing?.contextLength
+    })
     return {
       model: modelId,
       name: existing?.name ?? modelId,
       apiBase,
-      contextLength: existing?.contextLength,
-      outputLength: cappedOutputLimit(existing?.outputLength, existing?.contextLength),
+      contextLength,
+      outputLength: cappedOutputLimit(existing?.outputLength, contextLength),
       providerId: TABBY_PROVIDER_ID,
       // Jen API klíč — nikdy admin.
       apiKey: auth.disableAuth ? null : auth.apiKeys[0] ?? auth.adminKey
@@ -630,6 +653,7 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
   if (targetKey && targetKey !== writeKey) delete models[targetKey]
   models[writeKey] = modelBlock
   repairProviderModelLimits(models)
+  doc.model = `${provider.id}/${writeKey}`
 
   writeDocument(path, doc)
   return (

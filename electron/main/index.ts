@@ -27,6 +27,7 @@ import {
 import {
   clearAllLoadOptions,
   getLoadOptions,
+  recordLoadOptions,
   removeLoadOptions
 } from '../ollama/load-options-registry'
 import { logBuffer, type LogEntry } from '../ollama/log-buffer'
@@ -58,6 +59,7 @@ import {
 import { getIntegrationsStatus } from '../ollama/integrations-status'
 import {
   removeOpenCodeModel,
+  TABBY_DEFAULT_CONTEXT_LENGTH,
   upsertOpenCodeModel
 } from '../ollama/opencode-config'
 import { killOllamaRelatedProcess } from '../ollama/kill-process'
@@ -341,6 +343,10 @@ function startTabbyModelLoad(
   }
 ): { ok: boolean; error?: string } {
   const name = options.modelName
+  recordLoadOptions(name, {
+    keepAlive: '-1',
+    numCtx: options.maxSeqLen ?? TABBY_DEFAULT_CONTEXT_LENGTH
+  })
   return startBackgroundModelLoad(name, async () => {
     logBuffer.appendApp('info', `[studio] tabby-load start ${name}`)
     if (options.mtp?.enabled) {
@@ -618,6 +624,7 @@ function registerIpc(): void {
     try {
       if (getActiveBackend() === 'tabby') {
         await tabbyClient.unloadModel()
+        removeLoadOptions(name)
         removeSpeedTest(name)
         mainWindow?.webContents.send('speed-tests-changed')
         clearModelLoadState(name)

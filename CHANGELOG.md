@@ -14,6 +14,7 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 - Log panel znovu ukazuje jednotlivé řádky Tabby místo narůstajícího slepence starých zpráv; po Stop/Start jdou nové logy znovu číst
 - Kliknutí na Load u Tabby modelu hned ukáže „Načítá se…“ a běží na pozadí; dřív dialog zmizel a desítky sekund nebylo nic vidět
 - U načteného Tabby modelu tabulka split ukáže VRAM a RAM procesu (TabbyAPI tyhle údaje na rozdíl od Ollamy neposílá)
+- OpenCode u Tabby modelu zapisuje `limit.context` / `limit.output` podle `max_seq_len` z načtení (výchozí 8192 / čtvrtina) a nastaví ho jako aktivní model. Bez limitu OpenCode hned po první zprávě kompaktoval session
 
 ## [1.4.2] — 2026-08-28
 
