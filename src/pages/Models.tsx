@@ -76,6 +76,17 @@ function providerEmptyCatalogKey(providerId: BackendId): MessageKey {
   return `providers.${providerId}.emptyCatalog` as MessageKey
 }
 
+function suggestTextOnlyCloneName(modelId: string): string {
+  const trimmed = modelId.trim()
+  const slash = trimmed.lastIndexOf('/')
+  const leaf = (slash >= 0 ? trimmed.slice(slash + 1) : trimmed) || 'model'
+  const colon = leaf.indexOf(':')
+  const name = colon >= 0 ? leaf.slice(0, colon) : leaf
+  const tag = colon >= 0 ? leaf.slice(colon + 1) : 'latest'
+  const safe = (value: string) => value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return `${safe(name) || 'model'}:${safe(`${tag}-text`) || 'text'}`
+}
+
 export default function Models(): JSX.Element {
   const { t } = useI18n()
   const {
@@ -91,8 +102,13 @@ export default function Models(): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const errorSourceRef = useRef<'fetch' | 'action' | null>(null)
   const [showModal, setShowModal] = useState<{ name: string; data: ModelShow } | null>(null)
-  const [cloneModal, setCloneModal] = useState<string | null>(null)
+  const [cloneModal, setCloneModal] = useState<CatalogModel | null>(null)
   const [cloneDest, setCloneDest] = useState('')
+  const [cloneStripVision, setCloneStripVision] = useState(false)
+  const [cloneHasVision, setCloneHasVision] = useState(false)
+  const [cloneBusy, setCloneBusy] = useState(false)
+  const [cloneStatus, setCloneStatus] = useState('')
+  const [cloneError, setCloneError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [loadTarget, setLoadTarget] = useState<CatalogModel | null>(null)
   const [loadModelInfo, setLoadModelInfo] = useState<ModelShow | null>(null)
@@ -151,6 +167,12 @@ export default function Models(): JSX.Element {
     }, 8000)
     return () => clearInterval(id)
   }, [refresh])
+
+  useEffect(() => {
+    return api().onModelCopyProgress((data) => {
+      setCloneStatus(data.status)
+    })
+  }, [])
 
   useEffect(() => {
     const poll = (): void => {
@@ -324,17 +346,32 @@ export default function Models(): JSX.Element {
   }
 
   const handleClone = async (): Promise<void> => {
-    if (!cloneModal || !cloneDest.trim()) return
-    setBusy(cloneModal)
+    if (!cloneModal || !cloneDest.trim() || cloneBusy) return
+    const rowKey = modelRefKey(cloneModal)
+    setBusy(rowKey)
+    setCloneBusy(true)
+    setCloneError(null)
+    setCloneStatus(t('models.cloneWorking'))
     try {
-      await api().modelCopy(cloneModal, cloneDest.trim())
+      await api().modelCopy(cloneModal.modelId, cloneDest.trim(), {
+        providerId: cloneModal.providerId,
+        stripVision: cloneStripVision
+      })
       setCloneModal(null)
       setCloneDest('')
+      setCloneStripVision(false)
+      setCloneHasVision(false)
+      setCloneStatus('')
+      setLoadNotice(t('models.cloneDone', { name: cloneDest.trim() }))
       await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('models.cloneFailed'))
+      const message = e instanceof Error ? e.message : t('models.cloneFailed')
+      setCloneError(message)
+      errorSourceRef.current = 'action'
+      setError(message)
     } finally {
       setBusy(null)
+      setCloneBusy(false)
     }
   }
 
@@ -504,8 +541,25 @@ export default function Models(): JSX.Element {
         id: 'clone',
         label: t('models.clone'),
         onClick: () => {
-          setCloneModal(name)
+          setCloneModal(model)
           setCloneDest(`${name}-copy`)
+          setCloneStripVision(false)
+          setCloneHasVision(false)
+          if (model.providerId === 'ollama') {
+            void api()
+              .modelShow(name)
+              .then((shown) => {
+                const vision = shown.capabilities?.includes('vision') === true
+                setCloneHasVision(vision)
+                if (vision) {
+                  setCloneStripVision(true)
+                  setCloneDest(suggestTextOnlyCloneName(name))
+                }
+              })
+              .catch(() => {
+                /* checkbox remains off when show fails */
+              })
+          }
         }
       })
     }
@@ -794,22 +848,67 @@ export default function Models(): JSX.Element {
       )}
 
       {cloneModal && (
-        <div className="modal-backdrop" onClick={() => setCloneModal(null)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (!cloneBusy) setCloneModal(null)
+          }}
+        >
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>{t('models.cloneTitle')}</h3>
             <p>
-              {t('models.cloneSource')} <span className="mono">{cloneModal}</span>
+              {t('models.cloneSource')} <span className="mono">{cloneModal.modelId}</span>
             </p>
             <div className="form-field">
               <label>{t('models.cloneDest')}</label>
-              <input value={cloneDest} onChange={(e) => setCloneDest(e.target.value)} />
+              <input
+                value={cloneDest}
+                onChange={(e) => setCloneDest(e.target.value)}
+                disabled={cloneBusy}
+              />
             </div>
+            {cloneModal.providerId === 'ollama' && cloneHasVision && (
+              <label className="checkbox-row" style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={cloneStripVision}
+                  disabled={cloneBusy}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setCloneStripVision(checked)
+                    setCloneDest(
+                      checked
+                        ? suggestTextOnlyCloneName(cloneModal.modelId)
+                        : `${cloneModal.modelId}-copy`
+                    )
+                  }}
+                />
+                <span>
+                  {t('models.cloneStripVision')}
+                  <span className="field-help">{t('models.cloneStripVisionHelp')}</span>
+                </span>
+              </label>
+            )}
+            {cloneBusy && (
+              <p className="field-help" style={{ marginTop: 12 }}>
+                {t('models.cloneWorkingHint', { status: cloneStatus || t('models.cloneWorking') })}
+              </p>
+            )}
+            {cloneError && (
+              <div className="alert alert-error" role="alert" style={{ marginTop: 12 }}>
+                {cloneError}
+              </div>
+            )}
             <div className="modal-actions">
-              <button className="btn" onClick={() => setCloneModal(null)}>
+              <button className="btn" onClick={() => setCloneModal(null)} disabled={cloneBusy}>
                 {t('common.cancel')}
               </button>
-              <button className="btn btn-primary" onClick={handleClone} disabled={!cloneDest.trim()}>
-                {t('models.clone')}
+              <button
+                className="btn btn-primary"
+                onClick={() => void handleClone()}
+                disabled={!cloneDest.trim() || cloneBusy}
+              >
+                {cloneBusy ? t('models.cloneWorking') : t('models.clone')}
               </button>
             </div>
           </div>

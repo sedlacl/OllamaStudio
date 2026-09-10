@@ -547,13 +547,35 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('model-copy', async (_e, source: string, destination: string) => {
-    try {
-      return await getActiveProvider().cloneModel(source, destination)
-    } catch (err) {
-      throw serializeIpcError('model-copy', err, activeBackendUrl())
+  ipcMain.handle(
+    'model-copy',
+    async (
+      _e,
+      source: string,
+      destination: string,
+      options?: { providerId?: string; stripVision?: boolean }
+    ) => {
+      try {
+        const providerId =
+          options?.providerId && isBackendId(options.providerId)
+            ? options.providerId
+            : getActiveProvider().id
+        await getProvider(providerId).cloneModel(source, destination, {
+          stripVision: options?.stripVision === true,
+          onProgress: (status) => {
+            if (!mainWindow || mainWindow.isDestroyed()) return
+            mainWindow.webContents.send('model-copy-progress', {
+              destination,
+              status
+            })
+          }
+        })
+        modelCatalog.invalidate()
+      } catch (err) {
+        throw serializeIpcError('model-copy', err, activeBackendUrl())
+      }
     }
-  })
+  )
 
   ipcMain.handle('get-model-load-options', (_e, ref: ModelRef) => {
     if (!ref || !isBackendId(ref.providerId) || typeof ref.modelId !== 'string') {

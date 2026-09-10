@@ -1,6 +1,6 @@
 {
   "name": "ollamastudio",
-  "version": "1.6.1",
+  "version": "1.7.3",
   "description": "OllamaStudio — desktopový hostitel Ollama a TabbyAPI",
   "main": "./out/main/index.js",
   "author": "OllamaStudio",

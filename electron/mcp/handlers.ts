@@ -279,13 +279,24 @@ export const studioMcpHandlers = {
     return deleteStudioModel(ref)
   },
 
-  async copyModel(providerId: BackendId, source: string, destination: string) {
+  async copyModel(
+    providerId: BackendId,
+    source: string,
+    destination: string,
+    stripVision = false
+  ) {
     if (!isBackendId(providerId)) throw new Error('INVALID_BACKEND')
     const provider = getProvider(providerId)
     if (!provider.capabilities.cloneModel) throw new Error('MODEL_COPY_UNSUPPORTED')
-    await provider.cloneModel(source.trim(), destination.trim())
+    await provider.cloneModel(source.trim(), destination.trim(), { stripVision })
     modelCatalog.invalidate()
-    return { ok: true, providerId, source: source.trim(), destination: destination.trim() }
+    return {
+      ok: true,
+      providerId,
+      source: source.trim(),
+      destination: destination.trim(),
+      stripVision
+    }
   },
 
   async killProcess(providerId: BackendId, pid: number) {

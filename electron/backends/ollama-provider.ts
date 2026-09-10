@@ -12,6 +12,7 @@ import {
   type AppConfig
 } from '../ollama/config'
 import { getLoadOptions } from '../ollama/load-options-registry'
+import { stripVisionFromModelfile, buildTextOnlyCreateRequest } from '../ollama/modelfile-vision'
 import { killOllamaRelatedProcess } from '../ollama/kill-process'
 import { startModelLoad } from '../ollama/model-load-manager'
 import { serveManager } from '../ollama/serve-manager'
@@ -347,8 +348,33 @@ export class OllamaProvider implements BackendProvider {
     return ollamaClient.delete(modelId)
   }
 
-  cloneModel(source: string, destination: string): Promise<void> {
-    return ollamaClient.copy(source, destination)
+  async cloneModel(
+    source: string,
+    destination: string,
+    options?: { stripVision?: boolean; onProgress?: (status: string) => void }
+  ): Promise<void> {
+    if (!options?.stripVision) {
+      options?.onProgress?.('copying')
+      await ollamaClient.copy(source, destination)
+      options?.onProgress?.('success')
+      return
+    }
+    options?.onProgress?.('reading modelfile')
+    const shown = await ollamaClient.show(source)
+    const modelfile = shown.modelfile?.trim()
+    if (!modelfile) throw new Error('MODELFILE_UNAVAILABLE')
+    const stripped = stripVisionFromModelfile(modelfile)
+    options?.onProgress?.('creating')
+    for await (const progress of ollamaClient.createModel(
+      buildTextOnlyCreateRequest({
+        model: destination,
+        strippedModelfile: stripped.modelfile,
+        parameters: shown.parameters
+      })
+    )) {
+      options?.onProgress?.(progress.status)
+    }
+    options?.onProgress?.('success')
   }
 
   async pullModel(

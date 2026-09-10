@@ -264,11 +264,14 @@ export function formatFetchErrorUserText(
       return t('errors.dnsFailed', { target: target || '?' })
     case 'aborted':
       return t('errors.aborted', { target: target || '?' })
-    case 'http':
-      return t('errors.httpStatus', {
+    case 'http': {
+      const base = t('errors.httpStatus', {
         status: info.httpStatus ?? 0,
         target: target || '?'
       })
+      const extra = (info.messages[0] ?? '').replace(/^HTTP\s+\d{3}\s*:?\s*/i, '').trim()
+      return extra ? `${base}: ${extra}` : base
+    }
     default:
       return t('errors.networkFailed', {
         detail: redactSecrets(info.messages[0] ?? info.logLine)

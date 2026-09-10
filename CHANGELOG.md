@@ -6,6 +6,30 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.7.3] — 2026-09-10
+
+### Fixed
+
+- Klon bez vision už neposílá Jinja chat template do Ollama Go parseru (`function "content" not defined`)
+
+## [1.7.2] — 2026-09-10
+
+### Fixed
+
+- Dialog klonu hned ukáže průběh (Vytvářím… a status z Ollamy) a nepadá potichu na 120s timeoutu
+
+## [1.7.1] — 2026-09-10
+
+### Fixed
+
+- Klon bez vision už nejde přes zastaralé pole `modelfile` (Ollama 400), ale přes `/api/create` s odkazem na existující GGUF blob
+
+## [1.7.0] — 2026-09-10
+
+### Added
+
+- Klon Ollama modelu bez vision: z Modelfile se vynechá mmproj GGUF, váhy se znovu nestahují
+
 ## [1.6.1] — 2026-09-10
 
 ### Security

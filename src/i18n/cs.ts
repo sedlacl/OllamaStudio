@@ -232,6 +232,12 @@ export const cs = {
     cloneTitle: 'Klonovat model',
     cloneSource: 'Zdroj:',
     cloneDest: 'Cílový název',
+    cloneStripVision: 'Bez vision (mmproj)',
+    cloneStripVisionHelp:
+      'Vytvoří nový model přes Modelfile a vynechá projector GGUF. Váhy se jen odkážou, nestahují se znovu.',
+    cloneWorking: 'Vytvářím…',
+    cloneWorkingHint: 'Ollama teď může chvíli číst GGUF blob. Stav: {status}',
+    cloneDone: 'Klon „{name}“ je hotový.',
     hfDownloadLabel: 'Stáhnout z Hugging Face',
     hfRepoPlaceholder: 'např. organization/model-name',
     hfRevisionPlaceholder: 'Revize (volitelné, ručně)',

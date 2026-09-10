@@ -234,6 +234,12 @@ export const en: MessageTree = {
     cloneTitle: 'Clone model',
     cloneSource: 'Source:',
     cloneDest: 'Destination name',
+    cloneStripVision: 'Without vision (mmproj)',
+    cloneStripVisionHelp:
+      'Creates a new model from the Modelfile and omits the projector GGUF. Weights are reused, not downloaded again.',
+    cloneWorking: 'Creating…',
+    cloneWorkingHint: 'Ollama may take a while to read the GGUF blob. Status: {status}',
+    cloneDone: 'Clone “{name}” is ready.',
     hfDownloadLabel: 'Download from Hugging Face',
     hfRepoPlaceholder: 'e.g. organization/model-name',
     hfRevisionPlaceholder: 'Revision (optional, manual)',

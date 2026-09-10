@@ -120,7 +120,11 @@ export interface BackendProvider {
   }>
   checkForUpdate(force?: boolean): Promise<OllamaUpdateInfo>
   deleteModel(modelId: string): Promise<void>
-  cloneModel(source: string, destination: string): Promise<void>
+  cloneModel(
+    source: string,
+    destination: string,
+    options?: { stripVision?: boolean; onProgress?: (status: string) => void }
+  ): Promise<void>
   pullModel(
     modelId: string,
     onProgress: (progress: PullProgress) => void

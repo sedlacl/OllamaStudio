@@ -443,16 +443,18 @@ export function registerStudioTools(
   server.registerTool(
     'copy_model',
     {
-      description: 'Copy an Ollama model to a new local model name.',
+      description:
+        'Copy an Ollama model to a new local name. Set stripVision to recreate from the Modelfile without the mmproj GGUF.',
       inputSchema: {
         providerId,
         source: shortText.describe('Existing model identifier'),
-        destination: shortText.describe('New model identifier')
+        destination: shortText.describe('New model identifier'),
+        stripVision: z.boolean().optional()
       },
       annotations: mutating
     },
-    ({ providerId: id, source, destination }) =>
-      execute(() => handlers.copyModel(id, source, destination))
+    ({ providerId: id, source, destination, stripVision }) =>
+      execute(() => handlers.copyModel(id, source, destination, stripVision === true))
   )
 
   server.registerTool(

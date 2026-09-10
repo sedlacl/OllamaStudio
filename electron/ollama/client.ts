@@ -632,6 +632,53 @@ export class OllamaClient {
     if (!res.ok) throw await httpError(res)
   }
 
+  async *createModel(body: {
+    model: string
+    files: Record<string, string>
+    template?: string
+    parameters?: Record<string, unknown>
+    stream: boolean
+  }): AsyncGenerator<{ status: string }> {
+    const res = await studioFetch(`${this.baseUrl}/api/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      longRunning: true
+    })
+    if (!res.ok) throw await httpError(res)
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('No response body')
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const consumeLine = function* (line: string): Generator<{ status: string }> {
+      if (!line.trim()) return
+      let payload: { error?: unknown; status?: unknown }
+      try {
+        payload = JSON.parse(line) as { error?: unknown; status?: unknown }
+      } catch {
+        return
+      }
+      if (typeof payload.error === 'string' && payload.error.trim()) {
+        throw new Error(sanitizeUnknownError(payload.error))
+      }
+      if (typeof payload.status === 'string' && payload.status.trim()) {
+        yield { status: sanitizeUnknownError(payload.status) }
+      }
+    }
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) {
+        yield* consumeLine(line)
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) yield* consumeLine(buffer)
+  }
+
   async *pull(name: string): AsyncGenerator<PullProgress> {
     const res = await studioFetch(`${this.baseUrl}/api/pull`, {
       method: 'POST',

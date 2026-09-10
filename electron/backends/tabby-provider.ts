@@ -551,7 +551,11 @@ export class TabbyProvider implements BackendProvider {
     throw new Error('Tabby katalog nepodporuje delete ze Studia')
   }
 
-  async cloneModel(_source: string, _destination: string): Promise<void> {
+  async cloneModel(
+    _source: string,
+    _destination: string,
+    _options?: { stripVision?: boolean; onProgress?: (status: string) => void }
+  ): Promise<void> {
     throw new Error('Tabby katalog nepodporuje clone ze Studia')
   }
 

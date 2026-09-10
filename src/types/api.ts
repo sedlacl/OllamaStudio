@@ -632,7 +632,12 @@ export interface Api {
   checkOllamaUpdate: (force?: boolean) => Promise<OllamaUpdateInfo>
   openExternal: (url: string) => Promise<void>
   modelDelete: (name: string) => Promise<void>
-  modelCopy: (source: string, destination: string) => Promise<void>
+  modelCopy: (
+    source: string,
+    destination: string,
+    options?: { providerId?: BackendId; stripVision?: boolean }
+  ) => Promise<void>
+  onModelCopyProgress: (cb: (data: { destination: string; status: string }) => void) => () => void
   modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
   tabbyDownload: (req: TabbyDownloadRequest) => Promise<TabbyDownloadResult>
   tabbyDeleteDownloadFolder: (folderName: string) => Promise<{ ok: boolean; error?: string }>

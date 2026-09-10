@@ -47,7 +47,13 @@ const api = {
   checkOllamaUpdate: (force) => ipcRenderer.invoke('check-ollama-update', force),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   modelDelete: (name) => ipcRenderer.invoke('model-delete', name),
-  modelCopy: (source, destination) => ipcRenderer.invoke('model-copy', source, destination),
+  modelCopy: (source, destination, options) =>
+    ipcRenderer.invoke('model-copy', source, destination, options),
+  onModelCopyProgress: (cb) => {
+    const handler = (_: unknown, data: { destination: string; status: string }) => cb(data)
+    ipcRenderer.on('model-copy-progress', handler)
+    return () => ipcRenderer.removeListener('model-copy-progress', handler)
+  },
   modelPull: (name) => ipcRenderer.invoke('model-pull', name),
   tabbyDownload: (req) => ipcRenderer.invoke('tabby-download', req),
   tabbyDeleteDownloadFolder: (folderName) =>
