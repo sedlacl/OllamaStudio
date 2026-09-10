@@ -8,7 +8,7 @@ import {
   shell,
   Tray
 } from 'electron'
-import { existsSync, readdirSync } from 'fs'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import {
   type ModelSpeedTestResult,
@@ -16,10 +16,10 @@ import {
 } from '../ollama/client'
 import {
   getActiveBackend,
+  getBackendSettings,
   loadConfig,
-  resolveTabbyModelDir,
   saveConfig,
-  DEFAULT_TABBY_CONFIG,
+  saveBackendSettings,
   type AppConfig
 } from '../ollama/config'
 import {
@@ -28,19 +28,13 @@ import {
   removeLoadOptions
 } from '../ollama/load-options-registry'
 import { logBuffer, type LogEntry } from '../ollama/log-buffer'
-import { scrubTabbyRuntimeTextLogs, deleteTabbyRuntimeZipLogs } from '../security/log-scrub'
 import {
   clearStudioLogs,
-  prepareStudioLogScrub,
-  withBackendLogMutex
+  prepareStudioLogScrub
 } from '../security/studio-log-persistence'
-import {
-  sanitizePullProgress,
-  sanitizeSpeedTestResult
-} from '../security/sanitize-state'
+import { sanitizeSpeedTestResult } from '../security/sanitize-state'
 import { registerTabbyAuthSecrets, releaseTabbyAuthSecrets, watchTabbyAuth } from '../tabby/auth'
 import {
-  clearModelLoadState,
   getActiveModelLoads,
   initModelLoadManager
 } from '../ollama/model-load-manager'
@@ -71,7 +65,6 @@ import {
 import {
   getActiveCapabilities,
   getUnifiedServeState,
-  preflightTabby,
   restartActiveBackend,
   saveConfigAndRestartActive,
   shutdownAllBackends,
@@ -79,16 +72,9 @@ import {
   stopActiveBackend,
   switchActiveBackend
 } from '../tabby/active-backend'
-import { tabbyClient } from '../tabby/client'
-import { hfErrorToMessage, runTabbyHfDownload, deleteTabbyDownloadFolder, type TabbyDownloadProgressEvent } from '../tabby/hf-download'
-import { invalidateLocalModelCache } from '../tabby/local-model-info'
-import { directoryByteSize, fetchHfRevisions } from '../tabby/hf-hub'
-import { tabbyServeManager } from '../tabby/serve-manager'
 import {
-  configureDownloadSession,
   dismissDownloadSession,
   getDownloadStatusSnapshot,
-  recoverPersistedDownload,
   rememberDownloadForm,
   resanitizeDownloadSessionSnapshot
 } from '../tabby/download-session'
@@ -96,15 +82,27 @@ import { type BackendId } from '../backends/types'
 import {
   getActiveProvider,
   getAllProviders,
+  getProvider,
   normalizeProviderId
 } from '../backends/registry'
-import type { BackendLoadOptions } from '../backends/provider'
+import { BACKEND_DESCRIPTORS } from '../backends/definitions'
+import { modelProfileStore } from '../backends/model-profile-store'
+import { modelCatalog } from '../backends/model-catalog'
+import { modelCoordinator } from '../backends/model-coordinator'
+import { modelAcquisitionManager } from '../backends/model-acquisition-manager'
+import { invokeProviderAction } from '../backends/provider-actions'
+import {
+  type AcquisitionState,
+  isBackendId,
+  modelRefKey,
+  type ModelOperationRequest,
+  type ModelRef
+} from '../../shared/backend-contract'
 import { isLocale, setMainLocale, tMain, type Locale } from '../i18n'
 import { isAppQuitting, markAppQuitting } from '../ollama/app-lifecycle'
 import {
   isQuietBackendPoll,
   logAndFormatIpcError,
-  logIpcError,
   serializeIpcError,
   shouldIgnorePollFailure
 } from '../ollama/ipc-error'
@@ -124,20 +122,84 @@ function syncLogVendor(): void {
   logBuffer.setVendor(getActiveProvider().logVendor)
 }
 
-async function runSpeedTest(name: string): Promise<ModelSpeedTestResult> {
-  if (speedTestsInFlight.has(name)) {
+let legacyAcquisitionSequence = 0
+
+function emitAcquisitionChanged(state: AcquisitionState): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('model-acquisition-changed', state)
+  if (state.providerId === 'ollama') {
+    mainWindow.webContents.send('pull-progress', {
+      name: state.modelId,
+      progress: {
+        status: state.status,
+        total: state.bytesTotal ?? undefined,
+        completed: state.bytesDownloaded
+      }
+    })
+    return
+  }
+  const details =
+    state.details && typeof state.details === 'object'
+      ? (state.details as Record<string, unknown>)
+      : {}
+  const repoId = typeof details.repoId === 'string' ? details.repoId : ''
+  const revision = typeof details.revision === 'string' ? details.revision : ''
+  const folderName =
+    typeof details.folderName === 'string' ? details.folderName : state.modelId
+  mainWindow.webContents.send('tabby-download-progress', {
+    operationId: state.operationId,
+    status:
+      state.status === 'success'
+        ? 'success'
+        : state.status === 'running'
+          ? 'running'
+          : 'error',
+    message: state.error,
+    percent: state.percent,
+    bytesDownloaded: state.bytesDownloaded,
+    bytesTotal: state.bytesTotal
+  })
+  legacyAcquisitionSequence += 1
+  mainWindow.webContents.send('tabby-download-status', {
+    sequence: legacyAcquisitionSequence,
+    session: {
+      sequence: legacyAcquisitionSequence,
+      operationId: state.operationId,
+      status: state.status,
+      repoId,
+      revision,
+      folderName,
+      startedAt: state.startedAt,
+      updatedAt: state.updatedAt,
+      downloadedBytes: state.bytesDownloaded ?? 0,
+      totalBytes: state.bytesTotal ?? null,
+      percent: state.percent ?? null,
+      error: state.error,
+      folderConflict: details.folderConflict,
+      dismissed: false,
+      bytesPerSec: state.bytesPerSec,
+      etaSeconds: state.etaSeconds
+    },
+    form: { repoId, revision, folderName }
+  })
+}
+
+async function runSpeedTest(ref: ModelRef): Promise<ModelSpeedTestResult> {
+  const name = ref.modelId
+  const key = modelRefKey(ref)
+  if (speedTestsInFlight.has(key)) {
     throw new Error(tMain('errors.speedTestRunning', { name }))
   }
-  speedTestsInFlight.add(name)
+  speedTestsInFlight.add(key)
   try {
     const result = sanitizeSpeedTestResult(
-      await getActiveProvider().testSpeed(name)
+      await modelCoordinator.test(ref)
     )
-    recordSpeedTest(name, result)
+    recordSpeedTest(ref, result)
     mainWindow?.webContents.send('speed-tests-changed')
     return result
   } finally {
-    speedTestsInFlight.delete(name)
+    speedTestsInFlight.delete(key)
   }
 }
 
@@ -305,6 +367,29 @@ function statusText(status: string): string {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('get-backend-descriptors', () => Object.values(BACKEND_DESCRIPTORS))
+  ipcMain.handle('get-backend-settings', (_e, id: unknown) => {
+    if (!isBackendId(id)) throw new Error('Unknown backend')
+    return getBackendSettings(id)
+  })
+  ipcMain.handle('save-backend-settings', (_e, id: unknown, patch: unknown) => {
+    if (!isBackendId(id) || !patch || typeof patch !== 'object') {
+      throw new Error('Invalid backend settings payload')
+    }
+    return saveBackendSettings(id, patch)
+  })
+  ipcMain.handle('get-model-profile', (_e, ref: ModelRef) => {
+    if (!ref || !isBackendId(ref.providerId) || typeof ref.modelId !== 'string') {
+      throw new Error('Invalid model reference')
+    }
+    return modelProfileStore.get(ref)
+  })
+  ipcMain.handle('save-model-profile', (_e, ref: ModelRef, profile: unknown) => {
+    if (!ref || !isBackendId(ref.providerId) || typeof ref.modelId !== 'string') {
+      throw new Error('Invalid model reference')
+    }
+    return modelProfileStore.save(ref, profile)
+  })
   ipcMain.handle('get-serve-status', () => getUnifiedServeState())
 
   ipcMain.handle('get-app-version', () => app.getVersion())
@@ -318,7 +403,13 @@ function registerIpc(): void {
     return state
   })
 
-  ipcMain.handle('tabby-preflight', () => preflightTabby())
+  ipcMain.handle('tabby-preflight', () =>
+    invokeProviderAction({
+      providerId: 'tabby',
+      action: 'runtime.preflight',
+      payload: {}
+    })
+  )
 
   ipcMain.handle('get-resource-usage', async () => {
     const provider = getActiveProvider()
@@ -342,6 +433,22 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('get-model-load-status', () => getActiveModelLoads())
+  ipcMain.handle('get-model-catalog', () => modelCatalog.refresh())
+  ipcMain.handle('start-model-acquisition', (_e, request: unknown) =>
+    modelAcquisitionManager.start(request as never)
+  )
+  ipcMain.handle('get-model-acquisitions', () =>
+    modelAcquisitionManager.getAll()
+  )
+  ipcMain.handle('dismiss-model-acquisition', (_e, operationId: unknown) => {
+    if (typeof operationId !== 'string') {
+      throw new Error('Invalid acquisition operation')
+    }
+    return modelAcquisitionManager.dismiss(operationId)
+  })
+  ipcMain.handle('invoke-provider-action', (_e, request: unknown) =>
+    invokeProviderAction(request)
+  )
 
   ipcMain.handle('get-dashboard', async () => {
     const provider = getActiveProvider()
@@ -399,34 +506,33 @@ function registerIpc(): void {
 
   ipcMain.handle(
     'model-load',
-    async (_e, name: string, options?: BackendLoadOptions) => {
-      const provider = getActiveProvider()
+    async (_e, request: ModelOperationRequest) => {
+      const providerId = request?.ref?.providerId
+      const provider = isBackendId(providerId) ? getProvider(providerId) : null
+      if (!provider) throw new Error('Invalid model reference')
       const onLoaded = provider.capabilities.speedTestAutoAfterLoad
-        ? (loaded: string) => {
+        ? (loaded: ModelRef) => {
             void runSpeedTest(loaded).catch(() => {
               /* test je doplněk načtení, chybu uživateli nehlásíme */
             })
           }
         : undefined
-      return provider.loadModel(name, options, onLoaded)
+      return modelCoordinator.load(request, onLoaded)
     }
   )
 
-  ipcMain.handle('model-unload', async (_e, name: string) => {
+  ipcMain.handle('model-unload', async (_e, ref: ModelRef) => {
     try {
-      await getActiveProvider().unloadModel(name)
-      removeLoadOptions(name)
-      removeSpeedTest(name)
+      await modelCoordinator.unload(ref)
       mainWindow?.webContents.send('speed-tests-changed')
-      clearModelLoadState(name)
     } catch (err) {
       throw serializeIpcError('model-unload', err, activeBackendUrl())
     }
   })
 
-  ipcMain.handle('model-test-speed', async (_e, name: string) => {
+  ipcMain.handle('model-test-speed', async (_e, ref: ModelRef) => {
     try {
-      return await runSpeedTest(name)
+      return await runSpeedTest(ref)
     } catch (err) {
       throw serializeIpcError('model-test-speed', err, activeBackendUrl())
     }
@@ -447,9 +553,10 @@ function registerIpc(): void {
 
   ipcMain.handle('model-delete', async (_e, name: string) => {
     try {
-      await getActiveProvider().deleteModel(name)
-      removeLoadOptions(name)
-      removeSpeedTest(name)
+      const provider = getActiveProvider()
+      await provider.deleteModel(name)
+      removeLoadOptions({ providerId: provider.id, modelId: name })
+      removeSpeedTest({ providerId: provider.id, modelId: name })
     } catch (err) {
       throw serializeIpcError('model-delete', err, activeBackendUrl())
     }
@@ -463,13 +570,21 @@ function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('get-model-load-options', (_e, name: string) => getLoadOptions(name))
+  ipcMain.handle('get-model-load-options', (_e, ref: ModelRef) => {
+    if (!ref || !isBackendId(ref.providerId) || typeof ref.modelId !== 'string') {
+      throw new Error('Invalid model reference')
+    }
+    return getLoadOptions(ref)
+  })
 
-  ipcMain.handle('model-pull', async (event, name: string) => {
+  ipcMain.handle('model-pull', async (_event, name: string) => {
     try {
-      return await getActiveProvider().pullModel(name, (progress) => {
-        event.sender.send('pull-progress', { name, progress: sanitizePullProgress(progress) })
+      const result = await modelAcquisitionManager.start({
+        providerId: 'ollama',
+        source: 'library',
+        modelId: typeof name === 'string' ? name : ''
       })
+      return { ok: result.ok, error: result.error }
     } catch (err) {
       return { ok: false, error: logAndFormatIpcError('model-pull', err, activeBackendUrl()) }
     }
@@ -484,17 +599,14 @@ function registerIpc(): void {
         token?: string
       }
     ) => {
-      const repoId = typeof req?.repoId === 'string' ? req.repoId.trim() : ''
-      if (!repoId) return { ok: false, error: tMain('errors.hfRepoIdEmpty') }
-      const token =
-        typeof req?.token === 'string' && req.token.trim() ? req.token.trim() : undefined
-      try {
-        const revisions = await fetchHfRevisions(repoId, token)
-        return { ok: true, revisions }
-      } catch (err) {
-        logIpcError('tabby-hf-refs', err)
-        return { ok: false, error: hfErrorToMessage(err) }
-      }
+      return invokeProviderAction({
+        providerId: 'tabby',
+        action: 'hf.refs',
+        payload: {
+          repoId: typeof req?.repoId === 'string' ? req.repoId : '',
+          token: typeof req?.token === 'string' ? req.token : undefined
+        }
+      })
     }
   )
 
@@ -509,41 +621,37 @@ function registerIpc(): void {
         token?: string
       }
     ) => {
-      const operationId = `dl-${Date.now().toString(36)}`
-      const cfg = loadConfig()
-      const modelDir = resolveTabbyModelDir(cfg.tabby ?? DEFAULT_TABBY_CONFIG)
-      const emit = (payload: TabbyDownloadProgressEvent): void => {
-        try {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send('tabby-download-progress', payload)
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-      try {
-        await tabbyServeManager.ensureReady(180_000)
-      } catch (err) {
-        logIpcError('tabby-download-readiness', err)
-        return { ok: false, error: tMain('errors.tabbyDownloadNotReady') }
-      }
-      return runTabbyHfDownload({
-        req: {
-          repoId: typeof req?.repoId === 'string' ? req.repoId : '',
-          revision: typeof req?.revision === 'string' ? req.revision : undefined,
-          folderName: typeof req?.folderName === 'string' ? req.folderName : undefined,
-          token: typeof req?.token === 'string' ? req.token : undefined
-        },
-        operationId,
-        modelDir,
-        emit,
-        download: (downloadReq) => tabbyClient.downloadModel(downloadReq)
+      void event
+      const result = await modelAcquisitionManager.start({
+        providerId: 'tabby',
+        source: 'hugging-face',
+        repoId: typeof req?.repoId === 'string' ? req.repoId : '',
+        revision: typeof req?.revision === 'string' ? req.revision : undefined,
+        folderName: typeof req?.folderName === 'string' ? req.folderName : undefined,
+        token: typeof req?.token === 'string' ? req.token : undefined
       })
+      const details =
+        result.details && typeof result.details === 'object'
+          ? (result.details as Record<string, unknown>)
+          : {}
+      return {
+        ok: result.ok,
+        error: result.error,
+        alreadyRunning: result.alreadyRunning,
+        downloadPath:
+          typeof details.downloadPath === 'string' ? details.downloadPath : undefined,
+        folderConflict: details.folderConflict
+      }
     }
   )
 
   ipcMain.handle('tabby-download-status', () => getDownloadStatusSnapshot())
-  ipcMain.handle('tabby-download-dismiss', () => dismissDownloadSession())
+  ipcMain.handle('tabby-download-dismiss', async () => {
+    const operationId = getDownloadStatusSnapshot().session?.operationId
+    if (operationId) await modelAcquisitionManager.dismiss(operationId)
+    else dismissDownloadSession()
+    return getDownloadStatusSnapshot()
+  })
   ipcMain.handle(
     'tabby-download-remember-form',
     (
@@ -562,12 +670,11 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('tabby-delete-download-folder', async (_e, folderName: unknown) => {
-    const name = typeof folderName === 'string' ? folderName : ''
-    const cfg = loadConfig()
-    const modelDir = resolveTabbyModelDir(cfg.tabby ?? DEFAULT_TABBY_CONFIG)
-    const result = await deleteTabbyDownloadFolder(modelDir, name)
-    if (result.ok) invalidateLocalModelCache(name)
-    return result
+    return invokeProviderAction({
+      providerId: 'tabby',
+      action: 'download.delete-folder',
+      payload: { folderName: typeof folderName === 'string' ? folderName : '' }
+    })
   })
 
   ipcMain.handle('get-server-config', () => loadConfig())
@@ -627,37 +734,29 @@ function registerIpc(): void {
     return true
   })
 
-  function assertTabbyStoppedForRuntimeLogOps(): void {
-    const state = tabbyServeManager.getState()
-    if (
-      state.processStatus === 'running' ||
-      state.processStatus === 'starting' ||
-      state.processStatus === 'external'
-    ) {
-      throw new Error('TabbyAPI must be fully stopped (not external) before runtime log operations')
-    }
-  }
-
   ipcMain.handle('scrub-tabby-runtime-logs', async () => {
-    return withBackendLogMutex(async () => {
-      assertTabbyStoppedForRuntimeLogOps()
-      const cfg = loadConfig().tabby ?? DEFAULT_TABBY_CONFIG
-      return scrubTabbyRuntimeTextLogs(cfg.installDir)
+    return invokeProviderAction({
+      providerId: 'tabby',
+      action: 'runtime.scrub-logs',
+      payload: {}
     })
   })
 
   ipcMain.handle('delete-tabby-runtime-zip-logs', async (_e, zipPaths: string[]) => {
-    return withBackendLogMutex(async () => {
-      assertTabbyStoppedForRuntimeLogOps()
-      const cfg = loadConfig().tabby ?? DEFAULT_TABBY_CONFIG
-      if (!Array.isArray(zipPaths) || zipPaths.length === 0) {
-        return { deleted: [], errors: [] as string[] }
-      }
-      return deleteTabbyRuntimeZipLogs(cfg.installDir, zipPaths)
+    return invokeProviderAction({
+      providerId: 'tabby',
+      action: 'runtime.delete-zip-logs',
+      payload: { zipPaths: Array.isArray(zipPaths) ? zipPaths : [] }
     })
   })
 
-  ipcMain.handle('detect-ollama-binary', () => getActiveProvider().detectBinary())
+  ipcMain.handle('detect-ollama-binary', () =>
+    invokeProviderAction({
+      providerId: 'ollama',
+      action: 'runtime.detect-binary',
+      payload: {}
+    })
+  )
 
   ipcMain.handle('presets-list', (_e, kind: PresetKind) => listPresets(kind))
   ipcMain.handle(
@@ -671,18 +770,55 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('continue-status', () => getContinueConfigStatus())
-  ipcMain.handle('continue-upsert-model', (_e, modelName: string) => {
-    if (!getActiveProvider().capabilities.continueIntegration) {
-      throw new Error('Continue je v této verzi jen pro Ollamu')
+  ipcMain.handle('continue-upsert-model', (_e, ref: ModelRef) => {
+    if (!ref || ref.providerId !== 'ollama' || typeof ref.modelId !== 'string') {
+      throw new Error('Invalid model reference')
     }
-    return upsertContinueModel(modelName)
+    return upsertContinueModel(
+      ref,
+      modelProfileStore.get({ providerId: 'ollama', modelId: ref.modelId })
+    )
   })
-  ipcMain.handle('continue-remove-model', (_e, modelName: string) => removeContinueModel(modelName))
-  ipcMain.handle('integrations-status', (_e, modelNames?: string[]) =>
-    getIntegrationsStatus(Array.isArray(modelNames) ? modelNames : [])
+  ipcMain.handle('continue-remove-model', (_e, ref: ModelRef) => {
+    if (!ref || ref.providerId !== 'ollama' || typeof ref.modelId !== 'string') {
+      throw new Error('Invalid model reference')
+    }
+    return removeContinueModel(ref)
+  })
+  ipcMain.handle('integrations-status', (_e, refs?: ModelRef[]) =>
+    getIntegrationsStatus(
+      Array.isArray(refs)
+        ? refs.filter(
+            (ref): ref is ModelRef =>
+              Boolean(
+                ref &&
+                  (ref.providerId === 'ollama' || ref.providerId === 'tabby') &&
+                  typeof ref.modelId === 'string'
+              )
+          )
+        : []
+    )
   )
-  ipcMain.handle('opencode-upsert-model', (_e, modelName: string) => upsertOpenCodeModel(modelName))
-  ipcMain.handle('opencode-remove-model', (_e, modelName: string) => removeOpenCodeModel(modelName))
+  ipcMain.handle('opencode-upsert-model', (_e, ref: ModelRef) => {
+    if (
+      !ref ||
+      (ref.providerId !== 'ollama' && ref.providerId !== 'tabby') ||
+      typeof ref.modelId !== 'string'
+    ) {
+      throw new Error('Invalid model reference')
+    }
+    return upsertOpenCodeModel(ref, modelProfileStore.get(ref))
+  })
+  ipcMain.handle('opencode-remove-model', (_e, ref: ModelRef) => {
+    if (
+      !ref ||
+      (ref.providerId !== 'ollama' && ref.providerId !== 'tabby') ||
+      typeof ref.modelId !== 'string'
+    ) {
+      throw new Error('Invalid model reference')
+    }
+    return removeOpenCodeModel(ref)
+  })
 }
 
 applyRemoteDebugPortIfEnabled()
@@ -700,32 +836,10 @@ app.whenReady().then(async () => {
   await prepareStudioLogScrub(logsDir)
   createWindow()
   initModelLoadManager(() => mainWindow)
-  configureDownloadSession({
-    persistFile: join(app.getPath('userData'), 'tabby-download.json'),
-    log: (level, text) => logBuffer.appendApp(level, text),
-    emit: (snapshot) => {
-      try {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('tabby-download-status', snapshot)
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-  })
-  const startupConfig = loadConfig()
-  const modelDir = resolveTabbyModelDir(startupConfig.tabby ?? DEFAULT_TABBY_CONFIG)
-  await recoverPersistedDownload({
-    modelDir,
-    measureBytes: directoryByteSize,
-    listSiblingNames: async (dir) => {
-      try {
-        return readdirSync(dir)
-      } catch {
-        return []
-      }
-    }
-  })
+  await modelAcquisitionManager.initialize(
+    app.getPath('userData'),
+    emitAcquisitionChanged
+  )
   createTray()
   registerIpc()
 

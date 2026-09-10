@@ -2,9 +2,14 @@ import { homedir } from 'os'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { tMain } from '../i18n'
-import { getActiveBackend, loadConfig, tabbyBaseUrl } from './config'
-import { getLoadOptions } from './load-options-registry'
+import { loadConfig, tabbyBaseUrl } from './config'
 import { readTabbyAuth } from '../tabby/auth'
+import type {
+  ModelProfile,
+  ModelRef,
+  OllamaModelProfile,
+  TabbyModelProfile
+} from '../../shared/backend-contract'
 import {
   apiBasesEquivalent,
   displayNameFor,
@@ -17,6 +22,7 @@ import {
 } from './tool-config-shared'
 
 export interface OpenCodeModelEntry {
+  ref: ModelRef
   /** Klíč v `provider.ollama.models` (Ollama tag). */
   model: string
   /** Display name v OpenCode (`name`). */
@@ -30,8 +36,40 @@ export interface OpenCodeModelEntry {
 /** Strop `limit.output` v OpenCode — vyšší hodnoty si stejně sráží na 32k. */
 export const MAX_OPENCODE_OUTPUT_LIMIT = 32_000
 
-/** Stejné výchozí `max_seq_len` jako dialog načtení Tabby. */
+/** Poslední záloha, když model nehlásí ani `max_position_embeddings`. */
 export const TABBY_DEFAULT_CONTEXT_LENGTH = 8192
+
+/**
+ * Strop pro kontext odvozený z `max_position_embeddings`. Modely hlásí i 262k,
+ * což by na běžné kartě znamenalo cache mimo VRAM; 32k pohodlně stačí na
+ * systémový prompt agenta i několik kol konverzace.
+ */
+export const TABBY_DERIVED_CONTEXT_CAP = 32_768
+
+/**
+ * Systémový prompt OpenCode build agenta s tool schématy bývá přes 10k tokenů.
+ * Když na prompt zbude méně než tohle, OpenCode kompaktuje session hned od
+ * první zprávy a v cyklu kompaktací se k odpovědi nikdy nedostane.
+ */
+export const MIN_OPENCODE_PROMPT_BUDGET = 16_384
+
+/** Kolik z okna zbude na prompt po odečtení `limit.output`. */
+export function opencodePromptBudget(
+  context: number | undefined,
+  output: number | undefined
+): number | undefined {
+  if (context == null) return undefined
+  return context - (output ?? recommendedOutputLimit(context))
+}
+
+/** Okno je pro OpenCode nepoužitelně malé — hrozí kompaktace od první zprávy. */
+export function isOpenCodeContextTooSmall(
+  context: number | undefined,
+  output: number | undefined
+): boolean {
+  const budget = opencodePromptBudget(context, output)
+  return budget != null && budget < MIN_OPENCODE_PROMPT_BUDGET
+}
 
 /**
  * OpenCode spouští auto-compaction při `estimated > context - max(output, buffer)`.
@@ -49,15 +87,27 @@ export function recommendedOutputLimit(context: number | undefined): number {
 }
 
 /**
- * Kontext pro OpenCode u Tabby: poslední load (`max_seq_len`) má přednost
- * před už zapsaným limitem; bez obojího dialogové výchozí 8192.
+ * Kontext pro OpenCode u Tabby: poslední load (`max_seq_len`) má přednost před
+ * už zapsaným limitem, protože jen ten odpovídá tomu, co Tabby skutečně
+ * obslouží. Bez obojího odvodíme okno z `max_position_embeddings` modelu.
  * Bez `limit.context` OpenCode kompaktuje session hned po první zprávě.
  */
 export function resolveTabbyOpenCodeContext(opts: {
   recordedMaxSeqLen?: number
   existingContext?: number
+  modelMaxContext?: number
 }): number {
-  return opts.recordedMaxSeqLen ?? opts.existingContext ?? TABBY_DEFAULT_CONTEXT_LENGTH
+  return (
+    opts.recordedMaxSeqLen ??
+    opts.existingContext ??
+    derivedTabbyContext(opts.modelMaxContext) ??
+    TABBY_DEFAULT_CONTEXT_LENGTH
+  )
+}
+
+function derivedTabbyContext(modelMaxContext: number | undefined): number | undefined {
+  if (modelMaxContext == null || modelMaxContext <= 0) return undefined
+  return Math.min(modelMaxContext, TABBY_DERIVED_CONTEXT_CAP)
 }
 
 /** Ručně sníženou hodnotu respektuje, příliš velkou (i z dřívějších verzí) srazí. */
@@ -387,6 +437,10 @@ function listModelsFromDoc(doc: Record<string, unknown>): OpenCodeModelEntry[] {
       const block = asRecord(value) ?? {}
       const name = typeof block.name === 'string' && block.name.trim() ? block.name : model
       entries.push({
+        ref: {
+          providerId: found.id === TABBY_PROVIDER_ID ? 'tabby' : 'ollama',
+          modelId: model
+        },
         model,
         name,
         apiBase,
@@ -447,12 +501,23 @@ export function getOpenCodeConfigStatus(): OpenCodeConfigStatus {
   return { path, exists: true, invalid: false, models: listModelsFromDoc(doc) }
 }
 
-export function findOpenCodeModel(ollamaModel: string): OpenCodeModelEntry | null {
+export function findOpenCodeModel(ref: ModelRef): OpenCodeModelEntry | null {
   const status = getOpenCodeConfigStatus()
-  return status.models.find((m) => modelsMatch(m.model, ollamaModel)) ?? null
+  return (
+    status.models.find(
+      (m) =>
+        m.ref.providerId === ref.providerId &&
+        (ref.providerId === 'ollama'
+          ? modelsMatch(m.model, ref.modelId)
+          : m.model === ref.modelId)
+    ) ?? null
+  )
 }
 
-export function buildOpenCodeSettingsFor(ollamaModel: string): {
+export function buildOpenCodeSettingsFor(
+  ref: ModelRef,
+  profile: ModelProfile
+): {
   model: string
   name: string
   apiBase: string
@@ -462,20 +527,15 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
   apiKey: string | null
 } {
   const config = loadConfig()
-  const backend = getActiveBackend(config)
-  const existing = findOpenCodeModel(ollamaModel)
+  const existing = findOpenCodeModel(ref)
 
-  if (backend === 'tabby') {
-    const modelId = ollamaModel.trim()
+  if (ref.providerId === 'tabby') {
+    const modelId = ref.modelId.trim()
     const apiBase = ensureOpenAiV1Base(tabbyBaseUrl(config.tabby))
     const auth = readTabbyAuth(config.tabby)
-    const recorded =
-      getLoadOptions(ollamaModel) ??
-      getLoadOptions(modelId) ??
-      getLoadOptions(`${modelId}:latest`)
     const contextLength = resolveTabbyOpenCodeContext({
-      recordedMaxSeqLen: recorded?.options.numCtx,
-      existingContext: existing?.contextLength
+      recordedMaxSeqLen: (profile as TabbyModelProfile).maxSeqLen,
+      existingContext: existing?.contextLength,
     })
     return {
       model: modelId,
@@ -489,15 +549,8 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
     }
   }
 
-  const base = ollamaModel.replace(/:latest$/i, '')
-  const recorded =
-    getLoadOptions(ollamaModel) ??
-    getLoadOptions(base) ??
-    getLoadOptions(`${base}:latest`)
-  const ctxFromLoad = recorded?.options.numCtx
-  const ctxFromServer = parseContextLength(config.ollamaEnv.OLLAMA_CONTEXT_LENGTH)
-  const modelId = ollamaModel.replace(/:latest$/i, '')
-  const contextLength = ctxFromLoad ?? ctxFromServer ?? existing?.contextLength
+  const modelId = ref.modelId.replace(/:latest$/i, '')
+  const contextLength = (profile as OllamaModelProfile).numCtx ?? existing?.contextLength
 
   return {
     model: modelId,
@@ -510,13 +563,17 @@ export function buildOpenCodeSettingsFor(ollamaModel: string): {
   }
 }
 
-export function matchOpenCodeModel(ollamaModel: string): ToolConfigMatch {
-  const settings = buildOpenCodeSettingsFor(ollamaModel)
+export function matchOpenCodeModel(
+  ref: ModelRef,
+  profile: ModelProfile
+): ToolConfigMatch {
+  const settings = buildOpenCodeSettingsFor(ref, profile)
   const status = getOpenCodeConfigStatus()
   const expected = {
     expectedApiBase: settings.apiBase,
     expectedContextLength: settings.contextLength,
-    expectedOutputLength: settings.outputLength
+    expectedOutputLength: settings.outputLength,
+    contextTooSmall: isOpenCodeContextTooSmall(settings.contextLength, settings.outputLength)
   }
 
   if (!status.exists) {
@@ -526,7 +583,7 @@ export function matchOpenCodeModel(ollamaModel: string): ToolConfigMatch {
     return toolMatch({ state: 'invalid', path: status.path, ...expected })
   }
 
-  const entry = status.models.find((m) => modelsMatch(m.model, ollamaModel))
+  const entry = findOpenCodeModel(ref)
   if (!entry) {
     return toolMatch({ state: 'missing', path: status.path, ...expected })
   }
@@ -554,6 +611,7 @@ export function matchOpenCodeModel(ollamaModel: string): ToolConfigMatch {
     contextLength: entry.contextLength,
     outputLength: entry.outputLength,
     ...expected,
+    contextTooSmall: isOpenCodeContextTooSmall(entry.contextLength, entry.outputLength),
     mismatches
   })
 }
@@ -618,17 +676,20 @@ function ensureTabbyProvider(
  * podle aktivního backendu (Ollama → provider `ollama`, Tabby → `tabbyapi`).
  * Tabby API klíč zapisuje main proces přímo — nikdy admin klíč.
  */
-export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
-  const trimmed = ollamaModel.trim()
+export function upsertOpenCodeModel(
+  ref: ModelRef,
+  profile: ModelProfile
+): OpenCodeModelEntry {
+  const trimmed = ref.modelId.trim()
   if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
-  const settings = buildOpenCodeSettingsFor(trimmed)
+  const settings = buildOpenCodeSettingsFor(ref, profile)
   const { path, exists, invalid, doc } = loadDocument()
   if (exists && invalid) throw new Error(tMain('errors.opencodeInvalidConfig'))
 
   if (!doc.$schema) doc.$schema = SCHEMA
   const provider =
-    settings.providerId === TABBY_PROVIDER_ID
+    ref.providerId === 'tabby'
       ? ensureTabbyProvider(doc, settings.apiBase, settings.apiKey)
       : ensureOllamaProvider(doc, settings.apiBase)
   const models = asRecord(provider.block.models) ?? {}
@@ -636,7 +697,11 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
 
   let targetKey: string | null = null
   for (const key of Object.keys(models)) {
-    if (modelsMatch(key, trimmed)) {
+    if (
+      ref.providerId === 'ollama'
+        ? modelsMatch(key, trimmed)
+        : key === trimmed
+    ) {
       targetKey = key
       break
     }
@@ -657,7 +722,8 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
 
   writeDocument(path, doc)
   return (
-    findOpenCodeModel(trimmed) ?? {
+    findOpenCodeModel(ref) ?? {
+      ref: { providerId: ref.providerId, modelId: writeKey },
       model: writeKey,
       name: String(modelBlock.name ?? writeKey),
       apiBase: settings.apiBase,
@@ -668,24 +734,26 @@ export function upsertOpenCodeModel(ollamaModel: string): OpenCodeModelEntry {
   )
 }
 
-export function removeOpenCodeModel(ollamaModel: string): boolean {
-  const trimmed = ollamaModel.trim()
+export function removeOpenCodeModel(ref: ModelRef): boolean {
+  const trimmed = ref.modelId.trim()
   if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
   const { path, exists, invalid, doc } = loadDocument()
   if (!exists) return false
   if (invalid) throw new Error(tMain('errors.opencodeInvalidConfig'))
 
-  const backend = getActiveBackend()
-  const found =
-    backend === 'tabby' ? findTabbyProvider(doc) : findOllamaProvider(doc)
+  const found = ref.providerId === 'tabby' ? findTabbyProvider(doc) : findOllamaProvider(doc)
   if (!found) return false
   const models = asRecord(found.block.models)
   if (!models) return false
 
   let removed = false
   for (const key of Object.keys(models)) {
-    if (modelsMatch(key, trimmed)) {
+    if (
+      ref.providerId === 'ollama'
+        ? modelsMatch(key, trimmed)
+        : key === trimmed
+    ) {
       delete models[key]
       removed = true
     }

@@ -1,6 +1,7 @@
 /** Společné typy pro Ollama a TabbyAPI backendy. */
 
-export type BackendId = 'ollama' | 'tabby'
+import type { BackendCapabilities, BackendId } from '../../shared/backend-contract'
+export type { BackendCapabilities, BackendId } from '../../shared/backend-contract'
 
 export type ProcessStatus =
   | 'external'
@@ -16,19 +17,6 @@ export type EndpointStatus =
   | 'unauthorized'
   | 'incompatible'
   | 'degraded'
-
-export interface BackendCapabilities {
-  pullLibraryTag: boolean
-  cloneModel: boolean
-  deleteModel: boolean
-  keepAlive: boolean
-  multiLoaded: boolean
-  hfDownload: boolean
-  mtp: boolean
-  speedTestAutoAfterLoad: boolean
-  continueIntegration: boolean
-  opencodeIntegration: boolean
-}
 
 export interface ModelSummary {
   modelId: string

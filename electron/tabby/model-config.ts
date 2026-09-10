@@ -81,6 +81,36 @@ export function readModelDraftMode(
   return m?.[1] ?? null
 }
 
+function positiveInt(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
+  return Math.floor(value)
+}
+
+/**
+ * `max_position_embeddings` z HF `config.json` modelu — u multimodálních Qwen3
+ * leží pod `text_config`. Slouží jako strop pro odvozený kontext, ne jako
+ * hodnota k načtení (tu limituje VRAM).
+ */
+export function readModelMaxContext(
+  modelName: string,
+  tabby?: TabbyConfig
+): number | undefined {
+  const cfg = tabby ?? loadConfig().tabby!
+  const path = join(resolveTabbyModelDir(cfg), modelName, 'config.json')
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as {
+      max_position_embeddings?: unknown
+      text_config?: { max_position_embeddings?: unknown }
+    }
+    return (
+      positiveInt(parsed.max_position_embeddings) ??
+      positiveInt(parsed.text_config?.max_position_embeddings)
+    )
+  } catch {
+    return undefined
+  }
+}
+
 export function ensureModelDir(tabby?: TabbyConfig): string {
   const cfg = tabby ?? loadConfig().tabby!
   const dir = resolveTabbyModelDir(cfg)

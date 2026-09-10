@@ -474,6 +474,10 @@ export class TabbyServeManager {
       })
 
       await this.waitForReady(180000)
+      logBuffer.appendApp(
+        'info',
+        `[studio] tabby-serve: ready in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`
+      )
       tabbyClient.refresh()
       registerTabbyAuthSecrets()
       this.setPartial({

@@ -1,38 +1,61 @@
 import type { ModelLoadOptions } from './client'
+import {
+  canonicalizeModelRef,
+  modelRefKey,
+  type BackendId,
+  type ModelRef
+} from '../../shared/backend-contract'
 
 export interface RecordedLoadOptions {
+  ref: ModelRef
   modelName: string
   options: ModelLoadOptions
   recordedAt: number
 }
 
-/** Normalize model names for registry lookup (case-insensitive, trim). */
+function asRef(value: string | ModelRef, providerId: BackendId = 'ollama'): ModelRef {
+  return typeof value === 'string' ? { providerId, modelId: value } : value
+}
+
+/** Legacy helper; nové registry používají provider-qualified ModelRef. */
 export function canonicalizeModelName(name: string): string {
-  return name.trim().toLowerCase()
+  return canonicalizeModelRef({ providerId: 'ollama', modelId: name }).modelId
 }
 
 const registry = new Map<string, RecordedLoadOptions>()
 
-export function recordLoadOptions(name: string, options: ModelLoadOptions): void {
-  const key = canonicalizeModelName(name)
-  if (!key) return
+export function recordLoadOptions(
+  value: string | ModelRef,
+  options: ModelLoadOptions,
+  providerId: BackendId = 'ollama'
+): void {
+  const ref = asRef(value, providerId)
+  if (!ref.modelId.trim()) return
+  const key = modelRefKey(ref)
   registry.set(key, {
-    modelName: name.trim(),
+    ref: { providerId: ref.providerId, modelId: ref.modelId.trim() },
+    modelName: ref.modelId.trim(),
     options: { ...options },
     recordedAt: Date.now()
   })
 }
 
-export function removeLoadOptions(name: string): void {
-  const key = canonicalizeModelName(name)
-  if (!key) return
-  registry.delete(key)
+export function removeLoadOptions(
+  value: string | ModelRef,
+  providerId: BackendId = 'ollama'
+): void {
+  const ref = asRef(value, providerId)
+  if (!ref.modelId.trim()) return
+  registry.delete(modelRefKey(ref))
 }
 
-export function getLoadOptions(name: string): RecordedLoadOptions | null {
-  const key = canonicalizeModelName(name)
-  if (!key) return null
-  return registry.get(key) ?? null
+export function getLoadOptions(
+  value: string | ModelRef,
+  providerId: BackendId = 'ollama'
+): RecordedLoadOptions | null {
+  const ref = asRef(value, providerId)
+  if (!ref.modelId.trim()) return null
+  return registry.get(modelRefKey(ref)) ?? null
 }
 
 export function clearAllLoadOptions(): void {

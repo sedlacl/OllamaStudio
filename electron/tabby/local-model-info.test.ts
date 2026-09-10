@@ -253,7 +253,11 @@ describe('enrichTabbyModelSummaries', () => {
   })
 })
 
-describe('real disk siblings (optional integration)', () => {
+const describeRealDisk = process.env.OLLAMASTUDIO_RUN_REAL_DISK_TESTS === '1'
+  ? describe
+  : describe.skip
+
+describeRealDisk('real disk siblings (explicit integration)', () => {
   it('classifies known Tabby runtime folders when present', async () => {
     const modelDir = 'D:\\AI\\Tabby\\models'
     try {

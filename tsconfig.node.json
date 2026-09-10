@@ -14,6 +14,8 @@
   },
   "include": [
     "electron.vite.config.ts",
-    "electron/**/*"
+    "electron/**/*",
+    "shared/**/*",
+    "src/types/api.ts"
   ]
 }

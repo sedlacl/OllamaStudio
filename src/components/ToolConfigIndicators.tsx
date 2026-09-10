@@ -26,6 +26,18 @@ export function toolConfigTooltip(
   const toolName = t(tool === 'continue' ? 'models.toolContinue' : 'models.toolOpenCode')
   if (!match) return t('models.toolUnknown', { tool: toolName })
 
+  const base = stateTooltip(toolName, match, t)
+  if (!match.contextTooSmall) return base
+  return `${base}\n${t('models.toolContextTooSmall', {
+    context: match.contextLength ?? match.expectedContextLength ?? 0
+  })}`
+}
+
+function stateTooltip(
+  toolName: string,
+  match: ToolConfigMatch,
+  t: ReturnType<typeof useI18n>['t']
+): string {
   switch (match.state) {
     case 'current': {
       const bits = [
@@ -66,7 +78,7 @@ function ToolIndicator({
   const short = tool === 'continue' ? t('models.toolContinueShort') : t('models.toolOpenCodeShort')
   return (
     <span
-      className={`tool-indicator ${STATE_CLASS[state]}`}
+      className={`tool-indicator ${match?.contextTooSmall ? STATE_CLASS.stale : STATE_CLASS[state]}`}
       title={title}
       aria-label={title}
     >

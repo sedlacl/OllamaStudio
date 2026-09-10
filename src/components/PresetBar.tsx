@@ -83,8 +83,13 @@ export default function PresetBar<K extends PresetKind>({
   }
 
   const handleCopy = async (): Promise<void> => {
+    const target =
+      kind === 'tabby-load'
+        ? { providerId: 'tabby', scope: 'model-profile' }
+        : { providerId: 'ollama', scope: kind === 'serve' ? 'settings' : 'model-profile' }
     const payload = {
-      kind,
+      ...target,
+      schemaVersion: 1,
       name: selected?.name ?? 'current',
       updatedAt: Date.now(),
       data: getCurrentData()

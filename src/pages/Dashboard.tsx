@@ -3,6 +3,7 @@ import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import LogPanel from '../components/LogPanel'
 import ModelSplitTable from '../components/ModelSplitTable'
 import { useI18n } from '../i18n/I18nProvider'
+import { isBackendId, type BackendId, type ModelRef } from '../../shared/backend-contract'
 import {
   api,
   type ActiveRequest,
@@ -245,8 +246,18 @@ export default function Dashboard(): JSX.Element {
   const { t } = useI18n()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [detailsModel, setDetailsModel] = useState<string | null>(null)
+  const [detailsModelRef, setDetailsModelRef] = useState<ModelRef | null>(null)
+  const [serveProviderId, setServeProviderId] = useState<BackendId>('ollama')
   const [modelLoads, setModelLoads] = useState<ModelLoadState[]>([])
+
+  useEffect(() => {
+    api()
+      .getServeStatus()
+      .then((serve) => {
+        if (serve.backend && isBackendId(serve.backend)) setServeProviderId(serve.backend)
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     api().getModelLoadStatus().then(setModelLoads).catch(() => {})
@@ -425,12 +436,21 @@ export default function Dashboard(): JSX.Element {
             <h2 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>
               {t('dashboard.loadedSplit')}
             </h2>
-            <ModelSplitTable models={data.loadedModels} onDetails={setDetailsModel} />
+            <ModelSplitTable
+              models={data.loadedModels}
+              speedTestProviderId={serveProviderId}
+              onDetails={(name) =>
+                setDetailsModelRef({ providerId: serveProviderId, modelId: name })
+              }
+            />
           </div>
         )}
 
-        {detailsModel && (
-          <LoadedModelDetailsDialog modelName={detailsModel} onClose={() => setDetailsModel(null)} />
+        {detailsModelRef && (
+          <LoadedModelDetailsDialog
+            modelRef={detailsModelRef}
+            onClose={() => setDetailsModelRef(null)}
+          />
         )}
       </div>
 

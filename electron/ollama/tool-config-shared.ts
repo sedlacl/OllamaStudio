@@ -13,6 +13,8 @@ export interface ToolConfigMatch {
   expectedApiBase?: string
   expectedContextLength?: number
   expectedOutputLength?: number
+  /** Okno je tak malé, že agent kompaktuje session hned od první zprávy. */
+  contextTooSmall?: boolean
   mismatches: ToolConfigMismatch[]
 }
 

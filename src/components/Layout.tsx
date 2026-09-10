@@ -1,7 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
-import { api, type BackendId, type ServeState } from '../types/api'
+import { useBackendProviders } from '../providers/BackendProviderContext'
+import { providerDisplayNameById } from '../providers/i18n-helpers'
+import { api, type ServeState } from '../types/api'
+import { isBackendId } from '../../shared/backend-contract'
 
 function statusClass(status: string): string {
   if (status === 'running') return 'status-running'
@@ -12,32 +15,36 @@ function statusClass(status: string): string {
 
 export default function Layout(): JSX.Element {
   const { t, locale, setLocale } = useI18n()
+  const { descriptors, descriptorsById, renderSlot } = useBackendProviders()
   const [serve, setServe] = useState<ServeState | null>(null)
   const [version, setVersion] = useState<string | null>(null)
-  const [activeBackend, setActiveBackend] = useState<BackendId>('ollama')
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  const activeBackendId = serve?.backend ?? descriptors[0]?.id ?? 'ollama'
 
   useEffect(() => {
     api().getAppVersion().then(setVersion).catch(() => {})
-    api()
-      .getServerConfig()
-      .then((cfg) => setActiveBackend(cfg.activeBackend === 'tabby' ? 'tabby' : 'ollama'))
-      .catch(() => {})
   }, [])
 
   useEffect(() => {
     const refresh = (): void => {
       api()
         .getServeStatus()
-        .then((state) => {
-          setServe(state)
-          if (state.backend) setActiveBackend(state.backend)
-        })
+        .then(setServe)
         .catch(() => {})
     }
     refresh()
     const id = setInterval(refresh, 8000)
     return () => clearInterval(id)
   }, [])
+
+  useEffect(() => {
+    const starting = serve?.status === 'starting'
+    if (!starting) return
+    setNowMs(Date.now())
+    const id = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [serve?.status])
 
   const statusLabel = (status: string): string => {
     const map: Record<string, string> = {
@@ -50,8 +57,9 @@ export default function Layout(): JSX.Element {
     return map[status] ?? status
   }
 
-  const backendLabel =
-    (serve?.backend ?? activeBackend) === 'tabby' ? t('backend.tabby') : t('backend.ollama')
+  const backendLabel = isBackendId(activeBackendId)
+    ? providerDisplayNameById(t, activeBackendId, descriptorsById)
+    : activeBackendId
 
   return (
     <div className="app-shell">
@@ -106,19 +114,21 @@ export default function Layout(): JSX.Element {
         </div>
       </header>
       <main className="app-main">
+        {descriptors.map((descriptor) =>
+          renderSlot(descriptor.id, 'LayoutNotice', {
+            serve,
+            activeBackend: activeBackendId,
+            nowMs
+          })
+        )}
         {serve?.error && (
           <div className="alert alert-error">
             {serve.error}
-            {serve.portConflict && serve.backend !== 'tabby' && (
-              <div className="btn-row" style={{ marginTop: 8 }}>
-                <button
-                  className="btn btn-primary"
-                  onClick={() => api().startServer(true).then(setServe)}
-                >
-                  {t('layout.killConflict')}
-                </button>
-              </div>
-            )}
+            {serve.backend &&
+              renderSlot(serve.backend, 'ServeErrorActions', {
+                serve,
+                onServeChange: setServe
+              })}
           </div>
         )}
         <Outlet />

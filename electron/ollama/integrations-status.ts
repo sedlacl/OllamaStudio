@@ -1,6 +1,7 @@
 import { getContinueConfigStatus, matchContinueModel } from './continue-config'
 import { getOpenCodeConfigStatus, matchOpenCodeModel } from './opencode-config'
-import { getActiveProvider } from '../backends/registry'
+import { modelProfileStore } from '../backends/model-profile-store'
+import { modelRefKey, type ModelRef } from '../../shared/backend-contract'
 import type { ToolConfigMatch } from './tool-config-shared'
 import { toolMatch } from './tool-config-shared'
 
@@ -16,31 +17,38 @@ export interface IntegrationsStatus {
   opencode: ToolFileStatus
 }
 
-export function getIntegrationsStatus(modelNames: string[] = []): IntegrationsStatus {
+export function getIntegrationsStatus(refs: ModelRef[] = []): IntegrationsStatus {
   const continueStatus = getContinueConfigStatus()
   const opencodeStatus = getOpenCodeConfigStatus()
-  const names = modelNames.filter((name) => name.trim())
-  const supportsContinue = getActiveProvider().capabilities.continueIntegration
 
   const continueByModel: Record<string, ToolConfigMatch> = {}
   const opencodeByModel: Record<string, ToolConfigMatch> = {}
-  for (const name of names) {
-    if (!supportsContinue) {
-      continueByModel[name] = toolMatch({
+  for (const ref of refs) {
+    if (!ref || (ref.providerId !== 'ollama' && ref.providerId !== 'tabby') || !ref.modelId.trim()) {
+      continue
+    }
+    const key = modelRefKey(ref)
+    if (ref.providerId !== 'ollama') {
+      continueByModel[key] = toolMatch({
         state: 'no-config',
         path: continueStatus.path,
         mismatches: []
       })
+      opencodeByModel[key] = matchOpenCodeModel(
+        ref,
+        modelProfileStore.get({ providerId: 'tabby', modelId: ref.modelId })
+      )
     } else {
-      continueByModel[name] = matchContinueModel(name)
+      const profile = modelProfileStore.get({ providerId: 'ollama', modelId: ref.modelId })
+      continueByModel[key] = matchContinueModel(ref, profile)
+      opencodeByModel[key] = matchOpenCodeModel(ref, profile)
     }
-    opencodeByModel[name] = matchOpenCodeModel(name)
   }
 
   return {
     continue: {
       path: continueStatus.path,
-      exists: supportsContinue && continueStatus.exists,
+      exists: continueStatus.exists,
       invalid: continueStatus.invalid,
       byModel: continueByModel
     },

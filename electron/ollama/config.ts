@@ -2,58 +2,28 @@ import { app } from 'electron'
 import {
   copyFileSync,
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
-  writeFileSync
 } from 'fs'
 import { dirname, join } from 'path'
-import type { BackendId } from '../backends/types'
+import { atomicWriteJson } from '../storage/atomic-json'
+import {
+  isBackendId,
+  type AppConfig,
+  type BackendConfigMap,
+  type BackendId,
+  type OllamaEnvConfig,
+  type TabbyConfig
+} from '../../shared/backend-contract'
+export type {
+  AppConfig,
+  AppLanguage,
+  BackendConfigMap,
+  OllamaEnvConfig,
+  TabbyConfig
+} from '../../shared/backend-contract'
 
-export interface OllamaEnvConfig {
-  OLLAMA_HOST: string
-  OLLAMA_CONTEXT_LENGTH: string
-  OLLAMA_KEEP_ALIVE: string
-  OLLAMA_MAX_LOADED_MODELS: string
-  OLLAMA_NUM_PARALLEL: string
-  OLLAMA_FLASH_ATTENTION: string
-  OLLAMA_KV_CACHE_TYPE: string
-  OLLAMA_DEBUG: string
-  OLLAMA_DEBUG_LOG_REQUESTS: string
-  LLAMA_ARG_CTX_CHECKPOINTS: string
-  /** Adresář s blobs/manifests; prázdné = výchozí Ollama (~/.ollama/models). */
-  OLLAMA_MODELS: string
-}
-
-export type AppLanguage = 'cs' | 'en'
-
-export interface TabbyConfig {
-  /** Checkout TabbyAPI (obsahuje main.py). */
-  installDir: string
-  /** Absolutní cesta k venv python.exe; prázdné = installDir/venv/Scripts/python.exe. */
-  pythonPath: string
-  /** Relativní nebo absolutní cesta k config.yml; prázdné = installDir/config.yml. */
-  configPath: string
-  host: string
-  port: number
-  /** Adresář modelů; prázdné = installDir/models. */
-  modelDir: string
-  autoStartServe: boolean
-}
-
-export interface AppConfig {
-  ollamaEnv: OllamaEnvConfig
-  autoStartServe: boolean
-  /** UI + tray jazyk; chybí ve starších configech → cs. */
-  language?: AppLanguage
-  configVersion?: number
-  /** Aktivní spravovaný backend — právě jeden. */
-  activeBackend?: BackendId
-  tabby?: TabbyConfig
-}
-
-const CONFIG_VERSION = 2
+const CONFIG_VERSION = 3
 
 export const DEFAULT_TABBY_INSTALL_DIR = 'D:\\AI\\Tabby'
 
@@ -67,10 +37,7 @@ export const DEFAULT_TABBY_CONFIG: TabbyConfig = {
   autoStartServe: false
 }
 
-const DEFAULT_CONFIG: AppConfig = {
-  configVersion: CONFIG_VERSION,
-  activeBackend: 'ollama',
-  ollamaEnv: {
+const DEFAULT_OLLAMA_ENV: OllamaEnvConfig = {
     OLLAMA_HOST: '127.0.0.1:11434',
     OLLAMA_CONTEXT_LENGTH: '131072',
     OLLAMA_KEEP_ALIVE: '30m',
@@ -82,7 +49,22 @@ const DEFAULT_CONFIG: AppConfig = {
     OLLAMA_DEBUG_LOG_REQUESTS: '1',
     LLAMA_ARG_CTX_CHECKPOINTS: '0',
     OLLAMA_MODELS: ''
+}
+
+const DEFAULT_PROVIDERS: BackendConfigMap = {
+  ollama: {
+    env: { ...DEFAULT_OLLAMA_ENV },
+    autoStartServe: true,
+    profileDefaults: { keepAlive: '30m', numCtx: 131072 }
   },
+  tabby: { ...DEFAULT_TABBY_CONFIG }
+}
+
+const DEFAULT_CONFIG: AppConfig = {
+  configVersion: CONFIG_VERSION,
+  activeBackend: 'ollama',
+  providers: structuredClone(DEFAULT_PROVIDERS),
+  ollamaEnv: { ...DEFAULT_OLLAMA_ENV },
   autoStartServe: true,
   language: 'cs',
   tabby: { ...DEFAULT_TABBY_CONFIG }
@@ -100,15 +82,7 @@ function backupConfig(path: string): string | null {
   return backup
 }
 
-function atomicWriteJson(path: string, data: unknown): void {
-  const dir = dirname(path)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-  renameSync(tmp, path)
-}
-
-function normalizeTabby(partial?: Partial<TabbyConfig> | null): TabbyConfig {
+export function normalizeTabby(partial?: Partial<TabbyConfig> | null): TabbyConfig {
   return {
     ...DEFAULT_TABBY_CONFIG,
     ...(partial ?? {}),
@@ -124,54 +98,90 @@ function normalizeTabby(partial?: Partial<TabbyConfig> | null): TabbyConfig {
 }
 
 function normalizeBackend(value: unknown): BackendId {
-  return value === 'tabby' ? 'tabby' : 'ollama'
+  return isBackendId(value) ? value : 'ollama'
 }
 
-/** Idempotentní migrace na CONFIG_VERSION; před zápisem zálohuje. */
-export function migrateConfig(parsed: Partial<AppConfig>): {
+type ParsedConfig = Partial<AppConfig> & {
+  providers?: Partial<{
+    ollama: Partial<BackendConfigMap['ollama']>
+    tabby: Partial<TabbyConfig>
+  }>
+  ollamaEnv?: Partial<OllamaEnvConfig>
+  tabby?: Partial<TabbyConfig>
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : fallback
+}
+
+function normalizeConfig(parsed: ParsedConfig, preferLegacyAliases: boolean): AppConfig {
+  const providerOllama = parsed.providers?.ollama
+  const legacyEnv = parsed.ollamaEnv
+  const envSource = preferLegacyAliases && legacyEnv ? legacyEnv : providerOllama?.env ?? legacyEnv
+  const env = { ...DEFAULT_OLLAMA_ENV, ...envSource }
+  const legacyContext = positiveInt(
+    Number.parseInt(env.OLLAMA_CONTEXT_LENGTH, 10),
+    DEFAULT_PROVIDERS.ollama.profileDefaults.numCtx
+  )
+  const profileDefaults = {
+    keepAlive:
+      providerOllama?.profileDefaults?.keepAlive?.trim() ||
+      env.OLLAMA_KEEP_ALIVE.trim() ||
+      DEFAULT_PROVIDERS.ollama.profileDefaults.keepAlive,
+    numCtx: positiveInt(providerOllama?.profileDefaults?.numCtx, legacyContext)
+  }
+  const ollama = {
+    env,
+    autoStartServe:
+      preferLegacyAliases && typeof parsed.autoStartServe === 'boolean'
+        ? parsed.autoStartServe
+        : typeof providerOllama?.autoStartServe === 'boolean'
+          ? providerOllama.autoStartServe
+          : typeof parsed.autoStartServe === 'boolean'
+            ? parsed.autoStartServe
+            : DEFAULT_PROVIDERS.ollama.autoStartServe,
+    profileDefaults
+  }
+  const tabby = normalizeTabby(
+    preferLegacyAliases && parsed.tabby ? parsed.tabby : parsed.providers?.tabby ?? parsed.tabby
+  )
+  return {
+    configVersion: CONFIG_VERSION,
+    activeBackend: normalizeBackend(parsed.activeBackend),
+    language: parsed.language === 'en' ? 'en' : 'cs',
+    providers: { ollama, tabby },
+    ollamaEnv: { ...ollama.env },
+    autoStartServe: ollama.autoStartServe,
+    tabby: { ...tabby }
+  }
+}
+
+function serializedConfig(config: AppConfig): Omit<AppConfig, 'ollamaEnv' | 'autoStartServe' | 'tabby'> {
+  return {
+    configVersion: CONFIG_VERSION,
+    activeBackend: normalizeBackend(config.activeBackend),
+    language: config.language === 'en' ? 'en' : 'cs',
+    providers: structuredClone(config.providers)
+  }
+}
+
+/** Idempotentní migrace na CONFIG_VERSION; před zápisem zálohuje původní soubor. */
+export function migrateConfig(parsed: ParsedConfig): {
   config: AppConfig
   migrated: boolean
   backupPath: string | null
 } {
-  const language =
-    parsed.language === 'en' || parsed.language === 'cs'
-      ? parsed.language
-      : DEFAULT_CONFIG.language
   const fromVersion = parsed.configVersion ?? 0
-  let migrated = fromVersion < CONFIG_VERSION
-
-  const config: AppConfig = {
-    ...DEFAULT_CONFIG,
-    ...parsed,
-    language,
-    activeBackend: normalizeBackend(parsed.activeBackend ?? DEFAULT_CONFIG.activeBackend),
-    ollamaEnv: { ...DEFAULT_CONFIG.ollamaEnv, ...parsed.ollamaEnv },
-    tabby: normalizeTabby(parsed.tabby)
-  }
-
-  if (fromVersion < 1) {
-    for (const [key, value] of Object.entries(DEFAULT_CONFIG.ollamaEnv) as Array<
-      [keyof OllamaEnvConfig, string]
-    >) {
-      if (config.ollamaEnv[key] === '') {
-        config.ollamaEnv[key] = value
-      }
-    }
-    migrated = true
-  }
-
-  if (fromVersion < 2) {
-    config.activeBackend = 'ollama'
-    config.tabby = normalizeTabby(parsed.tabby)
-    migrated = true
-  }
-
-  config.configVersion = CONFIG_VERSION
+  const migrated = fromVersion < CONFIG_VERSION || parsed.providers == null
+  const config = normalizeConfig(parsed, fromVersion < CONFIG_VERSION)
+  if (fromVersion < 2) config.activeBackend = 'ollama'
 
   let backupPath: string | null = null
   if (migrated) {
     backupPath = backupConfig(configPath())
-    atomicWriteJson(configPath(), config)
+    atomicWriteJson(configPath(), serializedConfig(config))
   }
 
   return { config, migrated, backupPath }
@@ -185,7 +195,7 @@ export function loadConfig(): AppConfig {
   }
   try {
     const raw = readFileSync(path, 'utf-8')
-    const parsed = JSON.parse(raw) as Partial<AppConfig>
+    const parsed = JSON.parse(raw) as ParsedConfig
     const { config, migrated } = migrateConfig(parsed)
     if (!migrated && (parsed.configVersion ?? 0) >= CONFIG_VERSION) {
       return config
@@ -204,15 +214,42 @@ export function loadConfig(): AppConfig {
 }
 
 export function saveConfig(config: AppConfig): void {
-  const normalized: AppConfig = {
-    ...DEFAULT_CONFIG,
-    ...config,
-    activeBackend: normalizeBackend(config.activeBackend),
-    ollamaEnv: { ...DEFAULT_CONFIG.ollamaEnv, ...config.ollamaEnv },
-    tabby: normalizeTabby(config.tabby),
-    configVersion: CONFIG_VERSION
+  const normalized = normalizeConfig(config, true)
+  atomicWriteJson(configPath(), serializedConfig(normalized))
+}
+
+export function getBackendSettings<I extends BackendId>(
+  id: I,
+  config: AppConfig = loadConfig()
+): BackendConfigMap[I] {
+  return structuredClone(config.providers[id])
+}
+
+export function saveBackendSettings<I extends BackendId>(
+  id: I,
+  patch: Partial<BackendConfigMap[I]>
+): BackendConfigMap[I] {
+  const config = loadConfig()
+  if (id === 'ollama') {
+    const current = config.providers.ollama
+    const incoming = patch as Partial<BackendConfigMap['ollama']>
+    config.providers.ollama = {
+      ...current,
+      ...incoming,
+      env: { ...current.env, ...incoming.env },
+      profileDefaults: { ...current.profileDefaults, ...incoming.profileDefaults }
+    }
+    config.ollamaEnv = { ...config.providers.ollama.env }
+    config.autoStartServe = config.providers.ollama.autoStartServe
+  } else {
+    config.providers.tabby = normalizeTabby({
+      ...config.providers.tabby,
+      ...(patch as Partial<TabbyConfig>)
+    })
+    config.tabby = { ...config.providers.tabby }
   }
-  atomicWriteJson(configPath(), normalized)
+  saveConfig(normalizeConfig(config, false))
+  return getBackendSettings(id)
 }
 
 export function getActiveBackend(config?: AppConfig): BackendId {

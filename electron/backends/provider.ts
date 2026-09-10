@@ -13,8 +13,23 @@ import type { LogVendor } from '../ollama/log-buffer'
 import type { MetricsClient } from '../ollama/metrics'
 import type { TabbyLoadOptions } from '../tabby/client'
 import type { BackendCapabilities, BackendId, BackendServeState } from './types'
+import type {
+  AcquisitionState,
+  BackendDescriptor,
+  CatalogModel,
+  ModelAcquisitionRequest,
+  ModelAcquisitionResult,
+  ModelCompatibilityDecision,
+  ModelProfile,
+  ModelRef,
+  ProviderActionName,
+  ProviderActionPayload,
+  ProviderActionResult
+} from '../../shared/backend-contract'
 
-export type BackendLoadOptions = ModelLoadOptions | TabbyLoadOptions
+export type BackendLoadOptions =
+  | ModelLoadOptions
+  | (Omit<TabbyLoadOptions, 'modelName'> & { modelName?: string })
 
 /**
  * Jednotný kontrakt runtime backendu. Provider normalizuje vendor-specific API
@@ -22,6 +37,7 @@ export type BackendLoadOptions = ModelLoadOptions | TabbyLoadOptions
  */
 export interface BackendProvider {
   readonly id: BackendId
+  readonly descriptor: BackendDescriptor
   readonly displayName: string
   readonly capabilities: BackendCapabilities
   readonly logVendor: LogVendor
@@ -48,6 +64,33 @@ export interface BackendProvider {
   getSpawnTime(): number | null
   getManagedPids(): Promise<number[]>
   metricsClient(): MetricsClient
+
+  /** Discovery nesmí startovat ani měnit managed inference runtime. */
+  discoverModels(): Promise<CatalogModel[]>
+  getModelMetadata(ref: ModelRef): Promise<CatalogModel | null>
+  decideModelCompatibility(
+    ref: ModelRef,
+    profile: ModelProfile
+  ): Promise<ModelCompatibilityDecision>
+  startForModel(profile: ModelProfile): Promise<BackendServeState>
+  restartForModel(profile: ModelProfile): Promise<BackendServeState>
+  clearRuntimeModelState(): void
+
+  initializeAcquisition(
+    persistenceDir: string,
+    onChanged: (state: AcquisitionState) => void
+  ): Promise<AcquisitionState[]>
+  resolveAcquisitionModelId(request: ModelAcquisitionRequest): string
+  acquireModel(
+    request: ModelAcquisitionRequest,
+    operationId: string,
+    onProgress: (state: Partial<AcquisitionState>) => void
+  ): Promise<ModelAcquisitionResult>
+  dismissAcquisition(operationId: string): Promise<void>
+  invokeAction<A extends ProviderActionName<this['id']>>(
+    action: A,
+    payload: ProviderActionPayload<this['id'], A>
+  ): Promise<ProviderActionResult<this['id'], A>>
 
   listModels(): Promise<ModelTag[]>
   listLoaded(): Promise<RunningModel[]>

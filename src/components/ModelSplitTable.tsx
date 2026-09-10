@@ -1,6 +1,8 @@
 import ModelOverflowMenu, { type OverflowAction } from './ModelOverflowMenu'
 import { useModelSpeedTest } from './useModelSpeedTest'
 import { useI18n } from '../i18n/I18nProvider'
+import type { BackendId } from '../../shared/backend-contract'
+import { modelRefKey } from '../../shared/backend-contract'
 import type { ModelSpeedTestResult } from '../types/api'
 
 export interface ModelSplitRow {
@@ -18,6 +20,8 @@ export interface ModelSplitTableProps {
   extraActions?: (name: string) => OverflowAction[]
   /** Zavolá se po dokončení testu rychlosti (refresh dat stránky). */
   onSpeedTestFinished?: () => void
+  /** Provider aktivního runtime pro speed test (řádky z /api/ps). */
+  speedTestProviderId?: BackendId
 }
 
 function formatMb(mb: number): string {
@@ -118,10 +122,13 @@ export default function ModelSplitTable({
   models,
   onDetails,
   extraActions,
-  onSpeedTestFinished
+  onSpeedTestFinished,
+  speedTestProviderId = 'ollama'
 }: ModelSplitTableProps): JSX.Element {
   const { t, formatTinyPercent } = useI18n()
   const speedTest = useModelSpeedTest(onSpeedTestFinished)
+
+  const refForName = (name: string) => ({ providerId: speedTestProviderId, modelId: name })
 
   const actionsFor = (name: string): OverflowAction[] => [
     {
@@ -131,10 +138,13 @@ export default function ModelSplitTable({
     },
     {
       id: 'speed-test',
-      label: speedTest.busyModel === name ? t('speedTest.running') : t('speedTest.action'),
+      label:
+        speedTest.busyModel === modelRefKey(refForName(name))
+          ? t('speedTest.running')
+          : t('speedTest.action'),
       title: t('speedTest.actionTitle'),
       disabled: speedTest.busyModel !== null,
-      onClick: () => speedTest.run(name)
+      onClick: () => speedTest.run(refForName(name))
     },
     ...(extraActions?.(name) ?? [])
   ]
@@ -191,7 +201,7 @@ export default function ModelSplitTable({
                 </td>
                 <SpeedCells
                   result={speedTest.resultFor(m.name)}
-                  running={speedTest.busyModel === m.name}
+                  running={speedTest.busyModel === modelRefKey(refForName(m.name))}
                 />
                 <td className="table-actions">
                   <ModelOverflowMenu modelName={m.name} actions={actionsFor(m.name)} />

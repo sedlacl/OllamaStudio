@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
+import { modelRefKey, type ModelRef } from '../../shared/backend-contract'
 import { api, type ModelSpeedTestResult } from '../types/api'
 
 export interface ModelSpeedTest {
@@ -8,7 +9,7 @@ export interface ModelSpeedTest {
   /** Poslední výsledky podle modelu (klíč je název modelu malými písmeny). */
   results: Record<string, ModelSpeedTestResult>
   resultFor: (name: string) => ModelSpeedTestResult | null
-  run: (name: string) => void
+  run: (ref: ModelRef) => void
   /** Modal s výsledkem / chybou; vykreslete ho v stránce. */
   dialog: ReactNode
 }
@@ -43,17 +44,18 @@ export function useModelSpeedTest(onFinished?: () => void): ModelSpeedTest {
   const resultFor = (name: string): ModelSpeedTestResult | null =>
     results[name.trim().toLowerCase()] ?? null
 
-  const run = (name: string): void => {
+  const run = (ref: ModelRef): void => {
     if (busyModel) return
-    setBusyModel(name)
+    const key = modelRefKey(ref)
+    setBusyModel(key)
     setResult(null)
     setError(null)
     void api()
-      .modelTestSpeed(name)
+      .modelTestSpeed(ref)
       .then((value) => setResult(value))
       .catch((e: unknown) => {
         setError({
-          name,
+          name: ref.modelId,
           message: e instanceof Error ? e.message : t('speedTest.failed')
         })
       })

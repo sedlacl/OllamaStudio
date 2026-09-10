@@ -1,43 +1,59 @@
 /// <reference types="vite/client" />
 
-export interface OllamaEnvConfig {
-  OLLAMA_HOST: string
-  OLLAMA_CONTEXT_LENGTH: string
-  OLLAMA_KEEP_ALIVE: string
-  OLLAMA_MAX_LOADED_MODELS: string
-  OLLAMA_NUM_PARALLEL: string
-  OLLAMA_FLASH_ATTENTION: string
-  OLLAMA_KV_CACHE_TYPE: string
-  OLLAMA_DEBUG: string
-  OLLAMA_DEBUG_LOG_REQUESTS: string
-  LLAMA_ARG_CTX_CHECKPOINTS: string
-  /** Adresář modelů (blobs/manifests); prázdné = výchozí Ollama / WSL autodetekce. */
-  OLLAMA_MODELS: string
-}
-
-export type AppLanguage = 'cs' | 'en'
-
-export type BackendId = 'ollama' | 'tabby'
-
-export interface TabbyConfig {
-  installDir: string
-  pythonPath: string
-  configPath: string
-  host: string
-  port: number
-  modelDir: string
-  autoStartServe: boolean
-}
-
-export interface AppConfig {
-  ollamaEnv: OllamaEnvConfig
-  autoStartServe: boolean
-  /** UI + tray jazyk; chybí ve starších configech → cs. */
-  language?: AppLanguage
-  configVersion?: number
-  activeBackend?: BackendId
-  tabby?: TabbyConfig
-}
+import type {
+  AcquisitionState,
+  AppConfig,
+  AppLanguage,
+  AggregatedModelCatalog,
+  BackendCapabilities,
+  BackendConfigMap,
+  BackendDescriptor,
+  BackendId,
+  LogScrubFileResult,
+  ModelProfile,
+  ModelAcquisitionRequest,
+  ModelAcquisitionResult,
+  ModelOperationRequest,
+  ModelRef,
+  ModelLoadResult,
+  OllamaEnvConfig,
+  OllamaUpdateInstallerStatus,
+  OllamaUpdateLaunchResult,
+  PresetScope,
+  ProviderActionName,
+  ProviderActionRequest,
+  ProviderActionResult,
+  TabbyConfig,
+  TabbyPreflightResult,
+  TabbyRuntimeLogScrubResult
+} from '../../shared/backend-contract'
+export type {
+  AcquisitionState,
+  AppConfig,
+  AppLanguage,
+  AggregatedModelCatalog,
+  BackendCapabilities,
+  BackendConfigMap,
+  BackendDescriptor,
+  BackendId,
+  LogScrubFileResult,
+  ModelProfile,
+  ModelAcquisitionRequest,
+  ModelAcquisitionResult,
+  ModelOperationRequest,
+  ModelRef,
+  ModelLoadResult,
+  OllamaEnvConfig,
+  OllamaUpdateInstallerStatus,
+  OllamaUpdateLaunchResult,
+  PresetScope,
+  ProviderActionName,
+  ProviderActionRequest,
+  ProviderActionResult,
+  TabbyConfig,
+  TabbyPreflightResult,
+  TabbyRuntimeLogScrubResult
+} from '../../shared/backend-contract'
 
 export interface ModelLoadOptions {
   keepAlive: string
@@ -116,19 +132,6 @@ export interface ServeState {
     hasAdminKey: boolean
     disableAuth: boolean
   }
-}
-
-export interface BackendCapabilities {
-  pullLibraryTag: boolean
-  cloneModel: boolean
-  deleteModel: boolean
-  keepAlive: boolean
-  multiLoaded: boolean
-  hfDownload: boolean
-  mtp: boolean
-  speedTestAutoAfterLoad: boolean
-  continueIntegration: boolean
-  opencodeIntegration: boolean
 }
 
 export interface TabbyLoadOptions {
@@ -253,16 +256,6 @@ export interface HfRefsResult {
   error?: string
 }
 
-export interface TabbyPreflightResult {
-  ok: boolean
-  installDir: string
-  pythonPath: string
-  configPath: string
-  mainPy: string
-  errors: string[]
-  warnings: string[]
-}
-
 export interface TabbyLoadPresetData {
   maxSeqLen: string
   cacheSize: string
@@ -352,20 +345,6 @@ export interface LogEntry {
     isError?: boolean
     isRequest?: boolean
   }
-}
-
-export interface LogScrubFileResult {
-  ok: boolean
-  path: string
-  linesRead: number
-  linesChanged: number
-  error?: string
-}
-
-export interface TabbyRuntimeLogScrubResult {
-  scrubbed: LogScrubFileResult[]
-  zipFiles: string[]
-  skippedZip: boolean
 }
 
 export type ActiveRequestPhase =
@@ -492,15 +471,11 @@ export interface ResourceUsageData {
 export type ModelLoadStatus = 'loading' | 'success' | 'error'
 
 export interface ModelLoadState {
+  ref: ModelRef
   name: string
   status: ModelLoadStatus
   error?: string
   startedAt: number
-}
-
-export interface ModelLoadResult {
-  ok: boolean
-  error?: string
 }
 
 export type PresetKind = 'load' | 'serve' | 'tabby-load'
@@ -540,12 +515,16 @@ export type PresetDataMap = {
 export interface Preset<K extends PresetKind = PresetKind> {
   id: string
   name: string
+  providerId: BackendId
+  scope: PresetScope
+  schemaVersion: number
   kind: K
   updatedAt: number
   data: PresetDataMap[K]
 }
 
 export interface ContinueModelEntry {
+  ref: ModelRef
   name: string
   model: string
   provider: string
@@ -562,6 +541,7 @@ export interface ContinueConfigStatus {
 }
 
 export interface OpenCodeModelEntry {
+  ref: ModelRef
   model: string
   name: string
   apiBase?: string
@@ -585,6 +565,7 @@ export interface ToolConfigMatch {
   expectedApiBase?: string
   expectedContextLength?: number
   expectedOutputLength?: number
+  contextTooSmall?: boolean
   mismatches: ToolConfigMismatch[]
 }
 
@@ -601,19 +582,44 @@ export interface IntegrationsStatus {
 }
 
 export interface Api {
+  getBackendDescriptors: () => Promise<BackendDescriptor[]>
+  getBackendSettings: <I extends BackendId>(id: I) => Promise<BackendConfigMap[I]>
+  saveBackendSettings: <I extends BackendId>(
+    id: I,
+    patch: Partial<BackendConfigMap[I]>
+  ) => Promise<BackendConfigMap[I]>
+  getModelProfile: <I extends BackendId>(
+    ref: ModelRef & { providerId: I }
+  ) => Promise<ModelProfile<I>>
+  saveModelProfile: <I extends BackendId>(
+    ref: ModelRef & { providerId: I },
+    profile: ModelProfile<I>
+  ) => Promise<ModelProfile<I>>
   getServeStatus: () => Promise<ServeState>
   getAppVersion: () => Promise<string>
   getDashboard: () => Promise<DashboardData>
   getResourceUsage: () => Promise<ResourceUsageData>
+  getModelCatalog: () => Promise<AggregatedModelCatalog>
+  startModelAcquisition: (
+    request: ModelAcquisitionRequest
+  ) => Promise<ModelAcquisitionResult>
+  getModelAcquisitions: () => Promise<AcquisitionState[]>
+  dismissModelAcquisition: (operationId: string) => Promise<void>
+  onModelAcquisitionChanged: (
+    cb: (state: AcquisitionState) => void
+  ) => () => void
+  invokeProviderAction: <
+    I extends BackendId,
+    A extends ProviderActionName<I>
+  >(
+    request: ProviderActionRequest<I, A>
+  ) => Promise<ProviderActionResult<I, A>>
   getModelsTags: () => Promise<ModelTag[]>
   getModelsPs: () => Promise<RunningModel[]>
   modelShow: (name: string) => Promise<ModelShow>
-  modelLoad: (
-    name: string,
-    options?: ModelLoadOptions | TabbyLoadOptions
-  ) => Promise<ModelLoadResult>
-  modelUnload: (name: string) => Promise<void>
-  modelTestSpeed: (name: string) => Promise<ModelSpeedTestResult>
+  modelLoad: (request: ModelOperationRequest) => Promise<ModelLoadResult>
+  modelUnload: (ref: ModelRef) => Promise<void>
+  modelTestSpeed: (ref: ModelRef) => Promise<ModelSpeedTestResult>
   getSpeedTests: () => Promise<Record<string, ModelSpeedTestResult>>
   /** Výsledek testu se změnil (ruční test, automatický po načtení, unload modelu). */
   onSpeedTestsChanged: (cb: () => void) => () => void
@@ -630,7 +636,7 @@ export interface Api {
   dismissTabbyDownload: () => Promise<TabbyDownloadStatusSnapshot>
   rememberTabbyDownloadForm: (form: TabbyDownloadFormSnapshot) => Promise<TabbyDownloadStatusSnapshot>
   onTabbyDownloadStatus: (cb: (data: TabbyDownloadStatusSnapshot) => void) => () => void
-  getModelLoadOptions: (name: string) => Promise<RecordedLoadOptions | null>
+  getModelLoadOptions: (ref: ModelRef) => Promise<RecordedLoadOptions | null>
   getModelLoadStatus: () => Promise<ModelLoadState[]>
   onModelLoadStatus: (cb: (state: ModelLoadState) => void) => () => void
   onPullProgress: (cb: (data: { name: string; progress: PullProgress }) => void) => () => void
@@ -659,11 +665,11 @@ export interface Api {
   deletePreset: (kind: PresetKind, id: string) => Promise<boolean>
   importPreset: <K extends PresetKind>(kind: K, json: string) => Promise<Preset<K>>
   getContinueStatus: () => Promise<ContinueConfigStatus>
-  upsertContinueModel: (modelName: string) => Promise<ContinueModelEntry>
-  removeContinueModel: (modelName: string) => Promise<boolean>
-  getIntegrationsStatus: (modelNames: string[]) => Promise<IntegrationsStatus>
-  upsertOpenCodeModel: (modelName: string) => Promise<OpenCodeModelEntry>
-  removeOpenCodeModel: (modelName: string) => Promise<boolean>
+  upsertContinueModel: (ref: ModelRef) => Promise<ContinueModelEntry>
+  removeContinueModel: (ref: ModelRef) => Promise<boolean>
+  getIntegrationsStatus: (refs: ModelRef[]) => Promise<IntegrationsStatus>
+  upsertOpenCodeModel: (ref: ModelRef) => Promise<OpenCodeModelEntry>
+  removeOpenCodeModel: (ref: ModelRef) => Promise<boolean>
   killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
   getAppLanguage: () => Promise<AppLanguage>
   setAppLanguage: (language: AppLanguage) => Promise<AppLanguage>

@@ -6,6 +6,36 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-09-10
+
+### Added
+
+- Společný offline katalog lokálních modelů Ollama a TabbyAPI funguje i při zastaveném backendu, rozlišuje poskytovatele a zachová dostupné výsledky, když jeden zdroj selže
+- Uložené profily pro každý model uchovávají jeho kontext, keep-alive a parametry načtení; stejnojmenné modely různých poskytovatelů se navzájem nepřepisují
+- Stahování z knihovny Ollama a Hugging Face používá jednotný průběh, stav po návratu na stránku a bezpečné řešení přerušených či kolidujících složek
+- Provider registry soustřeďuje nastavení, profil, stahování a doplňkové části UI, takže další vestavěný backend lze přidat bez větvení společných stránek
+- Indikátor OpenCode u modelu upozorní, když je zapsané okno pro agenta nepoužitelně malé — systémový prompt s tool schématy ho zaplní a session se kompaktuje hned od první zprávy, takže odpověď nikdy nepřijde
+- U dostupné aktualizace Ollamy lze otevřít viditelný terminál s pevným příkazem WinGet na Windows; na Linuxu se stejná volba nabídne jen při skutečně dostupném balíčku `ollama` v APT zdrojích a interaktivní sudo zůstává v terminálu
+
+### Changed
+
+- Načtení modelu automaticky aktivuje správný backend a podle uloženého profilu bezpečně rozhodne mezi znovupoužitím, reloadem modelu a restartem spravovaného runtime
+- Nastavení backendů a presety se migrují do verzovaného provider-scoped formátu; původní Ollama context a keep-alive zůstávají zachované jako výchozí profilové hodnoty
+- Stránky Modely, Server, Logy a Využití zdrojů používají společné provider kontrakty a schopnosti místo přímého rozhodování mezi Ollamou a TabbyAPI
+- Integrace OpenCode a Continue používají explicitní model včetně poskytovatele a jeho uloženého profilu, takže nezávisí na právě aktivním backendu
+- Zápis Tabby modelu do OpenCode už nepadá na výchozích 8192 tokenů, když model nebyl v tomto běhu načten. Okno se odvodí z `max_position_embeddings` modelu (zastropované na 32k); skutečný `max_seq_len` z načtení má i dál přednost, protože jen ten Tabby obslouží
+
+### Fixed
+
+- Ollama už nezobrazuje chybovou hlášku pro volitelné části provider UI, které nepotřebuje; chybějící povinný adapter zůstává viditelně signalizovaný
+
+## [1.4.4] — 2026-09-10
+
+### Added
+
+- Během spouštění TabbyAPI hlavička vysvětlí, že inicializace torch a CUDA obvykle trvá 60–90 s, a ukazuje běžící počet sekund od startu — hlášky ECONNREFUSED z klientů jsou do té doby očekávané
+- Po naběhnutí serveru je v logu doba startu (`[studio] tabby-serve: ready in Xs`), takže jde poznat, jestli se start proti obvyklému času zhoršil
+
 ## [1.4.3] — 2026-09-09
 
 ### Fixed

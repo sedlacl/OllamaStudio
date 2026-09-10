@@ -9,6 +9,12 @@ const providers: Record<BackendId, BackendProvider> = {
   tabby: tabbyProvider
 }
 
+for (const [id, provider] of Object.entries(providers) as Array<[BackendId, BackendProvider]>) {
+  if (provider.id !== id || provider.descriptor.id !== id) {
+    throw new Error(`Backend registry mismatch for ${id}`)
+  }
+}
+
 export function getProvider(id: BackendId): BackendProvider {
   return providers[id]
 }

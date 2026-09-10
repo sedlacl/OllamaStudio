@@ -4,7 +4,6 @@ import { join } from 'path'
 import { parseDocument, YAMLMap, YAMLSeq, isMap, isSeq } from 'yaml'
 import { tMain } from '../i18n'
 import { loadConfig } from './config'
-import { getLoadOptions } from './load-options-registry'
 import {
   apiBasesEquivalent,
   displayNameFor,
@@ -16,8 +15,10 @@ import {
   type ToolConfigMatch,
   type ToolConfigMismatch
 } from './tool-config-shared'
+import type { ModelProfile, ModelRef } from '../../shared/backend-contract'
 
 export interface ContinueModelEntry {
+  ref: ModelRef
   /** Display name v Continue (`name`) */
   name: string
   /** Ollama tag (`model`) */
@@ -66,7 +67,15 @@ function readEntryFromMap(map: YAMLMap): ContinueModelEntry | null {
       ? rolesNode.items.map((item) => String(item)).filter(Boolean)
       : undefined
 
-  return { name, model, provider, apiBase, contextLength, roles }
+  return {
+    ref: { providerId: 'ollama', modelId: model },
+    name,
+    model,
+    provider,
+    apiBase,
+    contextLength,
+    roles
+  }
 }
 
 function emptyDocumentYaml(): string {
@@ -134,8 +143,14 @@ export function getContinueConfigStatus(): ContinueConfigStatus {
   return { path, exists: true, invalid: false, models }
 }
 
-export function matchContinueModel(ollamaModel: string): ToolConfigMatch {
-  const settings = buildContinueSettingsFor(ollamaModel)
+export function matchContinueModel(
+  ref: ModelRef,
+  profile: ModelProfile<'ollama'>
+): ToolConfigMatch {
+  if (ref.providerId !== 'ollama') {
+    return toolMatch({ state: 'no-config', path: configYamlPath() })
+  }
+  const settings = buildContinueSettingsFor(ref, profile)
   const status = getContinueConfigStatus()
   const expected = {
     expectedApiBase: settings.apiBase,
@@ -150,7 +165,7 @@ export function matchContinueModel(ollamaModel: string): ToolConfigMatch {
   }
 
   const entry = status.models.find(
-    (m) => m.provider === 'ollama' && modelsMatch(m.model, ollamaModel)
+    (m) => m.provider === 'ollama' && modelsMatch(m.model, ref.modelId)
   )
   if (!entry) {
     return toolMatch({ state: 'missing', path: status.path, ...expected })
@@ -179,38 +194,36 @@ export function matchContinueModel(ollamaModel: string): ToolConfigMatch {
   })
 }
 
-export function findContinueModel(ollamaModel: string): ContinueModelEntry | null {
+export function findContinueModel(ref: ModelRef): ContinueModelEntry | null {
+  if (ref.providerId !== 'ollama') return null
   const status = getContinueConfigStatus()
   return (
     status.models.find(
-      (m) => m.provider === 'ollama' && modelsMatch(m.model, ollamaModel)
+      (m) => m.provider === 'ollama' && modelsMatch(m.model, ref.modelId)
     ) ?? null
   )
 }
 
 /** Aktuální settings OllamaStudio → hodnoty pro Continue záznam. */
-export function buildContinueSettingsFor(ollamaModel: string): {
+export function buildContinueSettingsFor(
+  ref: ModelRef,
+  profile: ModelProfile<'ollama'>
+): {
   model: string
   name: string
   apiBase: string
   contextLength: number | undefined
 } {
+  if (ref.providerId !== 'ollama') throw new Error('CONTINUE_UNSUPPORTED_PROVIDER')
   const config = loadConfig()
-  const base = ollamaModel.replace(/:latest$/i, '')
-  const recorded =
-    getLoadOptions(ollamaModel) ??
-    getLoadOptions(base) ??
-    getLoadOptions(`${base}:latest`)
-  const ctxFromLoad = recorded?.options.numCtx
-  const ctxFromServer = parseContextLength(config.ollamaEnv.OLLAMA_CONTEXT_LENGTH)
-  const existing = findContinueModel(ollamaModel)
-  const modelId = ollamaModel.replace(/:latest$/i, '')
+  const existing = findContinueModel(ref)
+  const modelId = ref.modelId.replace(/:latest$/i, '')
 
   return {
     model: modelId,
     name: existing?.name ?? displayNameFor(modelId),
     apiBase: ensureHttpBase(config.ollamaEnv.OLLAMA_HOST),
-    contextLength: ctxFromLoad ?? ctxFromServer ?? existing?.contextLength
+    contextLength: profile.numCtx ?? existing?.contextLength
   }
 }
 
@@ -224,11 +237,15 @@ function writeDocument(path: string, doc: ReturnType<typeof parseDocument>): voi
  * Přidá nebo aktualizuje ollama model v ~/.continue/config.yaml
  * podle aktuálních settings OllamaStudio (host, context length, load options).
  */
-export function upsertContinueModel(ollamaModel: string): ContinueModelEntry {
-  const trimmed = ollamaModel.trim()
+export function upsertContinueModel(
+  ref: ModelRef,
+  profile: ModelProfile<'ollama'>
+): ContinueModelEntry {
+  if (ref.providerId !== 'ollama') throw new Error('CONTINUE_UNSUPPORTED_PROVIDER')
+  const trimmed = ref.modelId.trim()
   if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
-  const settings = buildContinueSettingsFor(trimmed)
+  const settings = buildContinueSettingsFor(ref, profile)
   const { path, exists, invalid, doc } = loadDocument()
   if (exists && invalid) throw new Error(tMain('errors.continueInvalidConfig'))
   const seq = ensureModelsSeq(doc)
@@ -277,7 +294,8 @@ export function upsertContinueModel(ollamaModel: string): ContinueModelEntry {
   if (!doc.has('schema')) doc.set('schema', 'v1')
 
   writeDocument(path, doc)
-  return findContinueModel(trimmed) ?? {
+  return findContinueModel(ref) ?? {
+    ref: { providerId: 'ollama', modelId: settings.model },
     name: settings.name,
     model: settings.model,
     provider: 'ollama',
@@ -288,8 +306,9 @@ export function upsertContinueModel(ollamaModel: string): ContinueModelEntry {
 }
 
 /** Odebere ollama záznam odpovídající danému modelu. */
-export function removeContinueModel(ollamaModel: string): boolean {
-  const trimmed = ollamaModel.trim()
+export function removeContinueModel(ref: ModelRef): boolean {
+  if (ref.providerId !== 'ollama') return false
+  const trimmed = ref.modelId.trim()
   if (!trimmed) throw new Error(tMain('errors.modelNameEmpty'))
 
   const { path, exists, invalid, doc } = loadDocument()

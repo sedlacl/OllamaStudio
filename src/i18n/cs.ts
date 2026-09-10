@@ -46,11 +46,39 @@ export const cs = {
     error: 'Chyba'
   },
   layout: {
-    killConflict: 'Ukončit konfliktní procesy a spustit'
+    killConflict: 'Ukončit konfliktní procesy a spustit',
+    tabbyStartingHint:
+      'TabbyAPI se spouští — inicializace torch a CUDA obvykle trvá 60–90 s. Do té doby endpoint neposlouchá a klienti hlásí ECONNREFUSED.',
+    tabbyStartingElapsed: 'Spouští se {seconds} s'
   },
   backend: {
     ollama: 'Ollama',
     tabby: 'TabbyAPI'
+  },
+  providers: {
+    missingSlot: 'Provider {providerId} nemá UI slot „{slot}“ — obnovte aplikaci nebo doplňte renderer definici.',
+    ollama: {
+      serverInfo:
+        'Globální Ollama serve nastavení. Context a keep-alive pro konkrétní model nastavíte při načtení modelu (profil).',
+      confirmRestart: 'Uloží nastavení Ollama a restartuje serve proces.',
+      runtimeBinaryLabel: 'Cesta k ollama.exe',
+      unloadConfirm: 'Opravdu uvolnit model {name} z paměti?',
+      emptyCatalog: 'Žádné lokální modely Ollama — stáhněte tag níže.'
+    },
+    tabby: {
+      serverInfo:
+        'TabbyAPI běží jako Python proces. Před prvním startem ověřte instalaci tlačítkem Preflight.',
+      confirmRestart: 'Uloží nastavení Tabby a restartuje serve proces.',
+      runtimeBinaryLabel: 'Python (TabbyAPI)',
+      unloadConfirm: 'TabbyAPI drží v paměti jen jeden model. Uvolnit {name} a načíst jiný?',
+      emptyCatalog: 'Ve složce modelů Tabby zatím nic není — stáhněte model z Hugging Face níže.',
+      adoptedExisting: 'Studio převzalo existující Tabby proces (PID {pid}).',
+      externalProcess: 'Tabby běží mimo Studio (externí proces) — logy a ovládání mohou být omezené.'
+    }
+  },
+  errors: {
+    unknown: 'Neznámá chyba',
+    CATALOG_DISCOVERY_FAILED: 'Nepodařilo se načíst katalog modelů tohoto provideru.'
   },
   dashboard: {
     title: 'Přehled',
@@ -178,6 +206,8 @@ export const cs = {
     toolNoConfig: '{tool}: konfigurace nenalezena ({path}) — nástroj nemusí být nainstalovaný',
     toolInvalid: '{tool}: konfiguraci nelze přečíst ({path})',
     toolUnknown: '{tool}: stav konfigurace se načítá',
+    toolContextTooSmall:
+      'Pozor: okno {context} tokenů je pro agenta málo — systémový prompt s tool schématy ho zaplní a session se kompaktuje hned od první zprávy. Načtěte model s větším max_seq_len a zapište ho znovu.',
     mismatchApiBase: 'adresa serveru',
     mismatchContext: 'délka kontextu',
     mismatchOutput: 'max. výstup',
@@ -289,6 +319,23 @@ export const cs = {
     upToDate: 'Používáte poslední vydanou verzi Ollama.',
     updateCheckFailed: 'Kontrola aktualizace se nezdařila: {error}',
     openRelease: 'Otevřít stránku vydání',
+    detectingUpdateInstaller: 'Zjišťuji dostupný správce balíčků…',
+    updateViaManager: 'Aktualizovat / přeinstalovat přes {manager}',
+    openingUpdateTerminal: 'Otevírám terminál…',
+    updateCommand: 'V terminálu se spustí:',
+    updateTerminalOpened:
+      'Terminál byl otevřen. Potvrzení UAC nebo heslo sudo i průběh proběhnou přímo v něm.',
+    updateInstallerFailed: 'Terminál pro aktualizaci se nepodařilo otevřít.',
+    updateInstallerUnsupported:
+      'Pro tento systém není automatické otevření balíčkového terminálu podporované; použijte stránku vydání.',
+    updateTerminalMissing:
+      'APT balíček je dostupný, ale nebyl nalezen podporovaný grafický terminál; použijte stránku vydání.',
+    aptMissing:
+      'APT nebo sudo nejsou dostupné; Ollama navíc neposkytuje oficiální APT repozitář. Použijte stránku vydání.',
+    aptPackageMissing:
+      'V nakonfigurovaných APT zdrojích není balíček „ollama“. Ollama neposkytuje oficiální APT repozitář, proto příkaz nenabízíme; použijte stránku vydání.',
+    wingetMissing:
+      'WinGet nebo balíček Ollama.Ollama není v nakonfigurovaném zdroji dostupný; použijte stránku vydání.',
     backendLabel: 'Aktivní backend',
     backendHint: 'Přepnutí zastaví předchozí backend spravovaný OllamaStudio.',
     switchBackendTitle: 'Přepnout backend?',

@@ -1,7 +1,5 @@
 /** Čisté helpery pro Tabby HF download session — bez Electronu a I/O store. */
 
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
 import {
   formatByteCount,
   redactSecrets,
@@ -9,6 +7,7 @@ import {
   type FolderConflictInfo,
   type SafeSubdirResult
 } from './hf-download-helpers'
+import { atomicWriteJson } from '../storage/atomic-json'
 
 export const PERSISTED_DOWNLOAD_VERSION = 1
 export const PROGRESS_LOG_PERCENT_STEP = 5
@@ -260,12 +259,8 @@ export function parsePersistedDownloadFile(raw: string): PersistedDownloadFile |
 }
 
 export function writeAtomicJson(filePath: string, data: unknown): void {
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const tmp = `${filePath}.tmp`
-  const body = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
-  writeFileSync(tmp, body, 'utf-8')
-  renameSync(tmp, filePath)
+  const body = typeof data === 'string' ? JSON.parse(data) : data
+  atomicWriteJson(filePath, body)
 }
 
 export function classifyRecoveredSession(opts: {

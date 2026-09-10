@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import LoadedModelDetailsDialog from '../components/LoadedModelDetailsDialog'
 import ModelSplitTable from '../components/ModelSplitTable'
 import { useI18n } from '../i18n/I18nProvider'
+import { useBackendProviders } from '../providers/BackendProviderContext'
+import { providerDisplayNameById } from '../providers/i18n-helpers'
+import { isBackendId, type ModelRef } from '../../shared/backend-contract'
 import {
   api,
   type GpuAdapterInfo,
@@ -254,9 +257,10 @@ function ProcessTable({
 
 export default function ResourceUsage(): JSX.Element {
   const { t, formatTinyPercent } = useI18n()
+  const { descriptorsById } = useBackendProviders()
   const [data, setData] = useState<ResourceUsageData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [detailsModel, setDetailsModel] = useState<string | null>(null)
+  const [detailsModelRef, setDetailsModelRef] = useState<ModelRef | null>(null)
   const [killingPid, setKillingPid] = useState<number | null>(null)
   const [killError, setKillError] = useState<string | null>(null)
   const [killNotice, setKillNotice] = useState<string | null>(null)
@@ -360,7 +364,9 @@ export default function ResourceUsage(): JSX.Element {
 
   const ollamaGpuProcs = data?.backendProcesses ?? data?.ollamaProcesses ?? []
   const backendId = data?.backendId ?? 'ollama'
-  const backendName = backendId === 'tabby' ? t('backend.tabby') : t('backend.ollama')
+  const backendName = isBackendId(backendId)
+    ? providerDisplayNameById(t, backendId, descriptorsById)
+    : backendId
   const ollamaPids = new Set(ollamaGpuProcs.map((p) => p.pid))
   const otherGpuProcs =
     data?.gpuProcesses.filter((p) => !ollamaPids.has(p.pid) && p.pid !== servePid) ?? []
@@ -642,12 +648,24 @@ export default function ResourceUsage(): JSX.Element {
           <p className="metric-label" style={{ margin: '0 0 12px' }}>
             {t('resources.loadedSplitHint')}
           </p>
-          <ModelSplitTable models={data.loadedModels} onDetails={setDetailsModel} />
+          <ModelSplitTable
+            models={data.loadedModels}
+            speedTestProviderId={isBackendId(backendId) ? backendId : 'ollama'}
+            onDetails={(name) =>
+              setDetailsModelRef({
+                providerId: isBackendId(backendId) ? backendId : 'ollama',
+                modelId: name
+              })
+            }
+          />
         </div>
       )}
 
-      {detailsModel && (
-        <LoadedModelDetailsDialog modelName={detailsModel} onClose={() => setDetailsModel(null)} />
+      {detailsModelRef && (
+        <LoadedModelDetailsDialog
+          modelRef={detailsModelRef}
+          onClose={() => setDetailsModelRef(null)}
+        />
       )}
     </div>
   )

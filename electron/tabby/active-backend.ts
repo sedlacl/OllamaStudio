@@ -23,7 +23,10 @@ function clearBackendRuntimeState(): void {
 /**
  * Jeden aktivní backend — přepnutí zastaví Studiem vlastněný předchozí proces.
  */
-export async function switchActiveBackend(next: BackendId): Promise<BackendServeState> {
+async function switchBackend(
+  next: BackendId,
+  autoStartTarget: boolean
+): Promise<BackendServeState> {
   const config = loadConfig()
   const current = getActiveBackend(config)
   if (current === next) return getUnifiedServeState()
@@ -41,7 +44,18 @@ export async function switchActiveBackend(next: BackendId): Promise<BackendServe
 
   const nextProvider = getProvider(next)
   logBuffer.setVendor(nextProvider.logVendor)
-  return nextProvider.activate(nextProvider.shouldAutoStart(config))
+  return nextProvider.activate(autoStartTarget && nextProvider.shouldAutoStart(config))
+}
+
+export async function switchActiveBackend(next: BackendId): Promise<BackendServeState> {
+  return switchBackend(next, true)
+}
+
+/** Model coordinator si runtime spustí až s resolved profilem. */
+export async function switchActiveBackendForModel(
+  next: BackendId
+): Promise<BackendServeState> {
+  return switchBackend(next, false)
 }
 
 export function getUnifiedServeState(): BackendServeState {

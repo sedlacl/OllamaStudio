@@ -4,10 +4,12 @@ import { recordLoadOptions } from './load-options-registry'
 import { logBuffer } from './log-buffer'
 import { tMain } from '../i18n'
 import { sanitizeUnknownError } from '../security/sanitize-state'
+import { modelRefKey, type ModelRef } from '../../shared/backend-contract'
 
 export type ModelLoadStatus = 'loading' | 'success' | 'error'
 
 export interface ModelLoadState {
+  ref: ModelRef
   name: string
   status: ModelLoadStatus
   error?: string
@@ -30,11 +32,11 @@ function emitRequestsChanged(): void {
   getWindow()?.webContents.send('dashboard-requests-changed')
 }
 
-function finishLoadHistory(name: string, result: 'done' | 'error', error?: string): void {
-  const taskId = loadHistoryTasks.get(name)
+function finishLoadHistory(key: string, result: 'done' | 'error', error?: string): void {
+  const taskId = loadHistoryTasks.get(key)
   if (taskId == null) return
   logBuffer.finishManagedRequest(taskId, result, error)
-  loadHistoryTasks.delete(name)
+  loadHistoryTasks.delete(key)
   emitRequestsChanged()
 }
 
@@ -42,45 +44,54 @@ export function getActiveModelLoads(): ModelLoadState[] {
   return Array.from(activeLoads.values())
 }
 
-function beginLoad(name: string): { ok: false; error: string } | { ok: true; state: ModelLoadState } {
-  const existing = activeLoads.get(name)
+function asRef(value: string | ModelRef): ModelRef {
+  return typeof value === 'string' ? { providerId: 'ollama', modelId: value } : value
+}
+
+function beginLoad(value: string | ModelRef): { ok: false; error: string } | { ok: true; state: ModelLoadState } {
+  const ref = asRef(value)
+  const name = ref.modelId
+  const key = modelRefKey(ref)
+  const existing = activeLoads.get(key)
   if (existing?.status === 'loading') {
     return { ok: false, error: tMain('errors.modelAlreadyLoading', { name }) }
   }
-  const state: ModelLoadState = { name, status: 'loading', startedAt: Date.now() }
-  activeLoads.set(name, state)
+  const state: ModelLoadState = { ref, name, status: 'loading', startedAt: Date.now() }
+  activeLoads.set(key, state)
   emit(state)
   const historyTaskId = logBuffer.startManagedRequest('load', name)
-  loadHistoryTasks.set(name, historyTaskId)
+  loadHistoryTasks.set(key, historyTaskId)
   emitRequestsChanged()
   return { ok: true, state }
 }
 
 function finishLoad(
-  name: string,
+  ref: ModelRef,
   startedAt: number,
   result: 'done' | 'error',
   error?: string,
   onLoaded?: (name: string) => void
 ): void {
+  const name = ref.modelId
+  const key = modelRefKey(ref)
   if (result === 'done') {
-    const success: ModelLoadState = { name, status: 'success', startedAt }
-    activeLoads.set(name, success)
+    const success: ModelLoadState = { ref, name, status: 'success', startedAt }
+    activeLoads.set(key, success)
     emit(success)
-    finishLoadHistory(name, 'done')
+    finishLoadHistory(key, 'done')
     onLoaded?.(name)
     setTimeout(() => {
-      const current = activeLoads.get(name)
+      const current = activeLoads.get(key)
       if (current?.status === 'success' && current.startedAt === startedAt) {
-        activeLoads.delete(name)
+        activeLoads.delete(key)
       }
     }, 30_000)
     return
   }
-  const failed: ModelLoadState = { name, status: 'error', error, startedAt }
-  activeLoads.set(name, failed)
+  const failed: ModelLoadState = { ref, name, status: 'error', error, startedAt }
+  activeLoads.set(key, failed)
   emit(failed)
-  finishLoadHistory(name, 'error', error)
+  finishLoadHistory(key, 'error', error)
 }
 
 /**
@@ -88,19 +99,20 @@ function finishLoad(
  * IPC musí vrátit hned, jinak dialog zmizí a UI nic neukáže.
  */
 export function startBackgroundModelLoad(
-  name: string,
+  value: string | ModelRef,
   work: () => Promise<void>,
   onLoaded?: (name: string) => void
 ): { ok: boolean; error?: string } {
-  const started = beginLoad(name)
+  const ref = asRef(value)
+  const started = beginLoad(ref)
   if (!started.ok) return started
 
   void (async () => {
     try {
       await work()
-      finishLoad(name, started.state.startedAt, 'done', undefined, onLoaded)
+      finishLoad(ref, started.state.startedAt, 'done', undefined, onLoaded)
     } catch (err) {
-      finishLoad(name, started.state.startedAt, 'error', sanitizeUnknownError(err))
+      finishLoad(ref, started.state.startedAt, 'error', sanitizeUnknownError(err))
     }
   })()
 
@@ -109,21 +121,23 @@ export function startBackgroundModelLoad(
 
 export function startModelLoad(
   client: OllamaClient,
-  name: string,
+  value: string | ModelRef,
   options?: ModelLoadOptions,
   onLoaded?: (name: string) => void
 ): { ok: boolean; error?: string } {
+  const ref = asRef(value)
+  const name = ref.modelId
   const loadOptions = options ?? { keepAlive: '-1' }
   return startBackgroundModelLoad(
-    name,
+    ref,
     async () => {
       await client.load(name, loadOptions)
-      recordLoadOptions(name, loadOptions)
+      recordLoadOptions(ref, loadOptions)
     },
     onLoaded
   )
 }
 
-export function clearModelLoadState(name: string): void {
-  activeLoads.delete(name)
+export function clearModelLoadState(value: string | ModelRef): void {
+  activeLoads.delete(modelRefKey(asRef(value)))
 }

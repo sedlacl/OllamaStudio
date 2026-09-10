@@ -1,168 +1,43 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { StudioApi } from '../../shared/studio-api'
+import type {
+  AcquisitionState,
+  LogEntry,
+  ModelLoadState,
+  PullProgress,
+  TabbyDownloadProgress,
+  TabbyDownloadStatusSnapshot
+} from '../../src/types/api'
 
-export interface TabbyDownloadRequest {
-  repoId: string
-  revision?: string
-  folderName?: string
-  token?: string
-}
-
-export interface TabbyDownloadProgress {
-  operationId: string
-  status: 'running' | 'success' | 'error'
-  message?: string
-  percent?: number | null
-  bytesDownloaded?: number
-  bytesTotal?: number | null
-}
-
-export type TabbyDownloadSessionStatus =
-  | 'running'
-  | 'success'
-  | 'error'
-  | 'interrupted'
-  | 'conflict'
-
-export interface TabbyDownloadFormSnapshot {
-  repoId: string
-  revision: string
-  folderName: string
-}
-
-export interface TabbyDownloadSessionView {
-  sequence: number
-  operationId: string
-  status: TabbyDownloadSessionStatus
-  repoId: string
-  revision: string
-  folderName: string
-  startedAt: number
-  updatedAt: number
-  downloadedBytes: number
-  totalBytes: number | null
-  percent: number | null
-  error?: string
-  folderConflict?: TabbyDownloadFolderConflict
-  dismissed: boolean
-  bytesPerSec?: number | null
-  etaSeconds?: number | null
-}
-
-export interface TabbyDownloadStatusSnapshot {
-  sequence: number
-  session: TabbyDownloadSessionView | null
-  form: TabbyDownloadFormSnapshot
-}
-
-export interface HfRefsRequest {
-  repoId: string
-  token?: string
-}
-
-export interface HfRevision {
-  name: string
-  type: 'branch' | 'tag'
-}
-
-export interface HfRefsResult {
-  ok: boolean
-  revisions?: HfRevision[]
-  error?: string
-}
-
-export type FolderCompleteness = 'complete' | 'partial' | 'unknown'
-
-export interface TabbyDownloadFolderConflict {
-  folderName: string
-  bytesOnDisk: number
-  expectedBytes: number | null
-  completeness: FolderCompleteness
-  suggestedFolderName: string
-}
-
-export interface TabbyDownloadResult {
-  ok: boolean
-  downloadPath?: string
-  error?: string
-  folderConflict?: TabbyDownloadFolderConflict
-  alreadyRunning?: boolean
-}
-
-export interface Api {
-  getServeStatus: () => Promise<unknown>
-  getAppVersion: () => Promise<string>
-  getDashboard: () => Promise<unknown>
-  getResourceUsage: () => Promise<unknown>
-  getModelsTags: () => Promise<unknown>
-  getModelsPs: () => Promise<unknown>
-  modelShow: (name: string) => Promise<unknown>
-  modelLoad: (name: string, options?: unknown) => Promise<{ ok: boolean; error?: string }>
-  modelUnload: (name: string) => Promise<void>
-  modelTestSpeed: (name: string) => Promise<unknown>
-  getSpeedTests: () => Promise<unknown>
-  onSpeedTestsChanged: (cb: () => void) => () => void
-  checkOllamaUpdate: (force?: boolean) => Promise<unknown>
-  openExternal: (url: string) => Promise<void>
-  modelDelete: (name: string) => Promise<void>
-  modelCopy: (source: string, destination: string) => Promise<void>
-  modelPull: (name: string) => Promise<{ ok: boolean; error?: string }>
-  tabbyDownload: (req: TabbyDownloadRequest) => Promise<TabbyDownloadResult>
-  tabbyDeleteDownloadFolder: (folderName: string) => Promise<{ ok: boolean; error?: string }>
-  tabbyHfRefs: (req: HfRefsRequest) => Promise<HfRefsResult>
-  onTabbyDownloadProgress: (cb: (data: TabbyDownloadProgress) => void) => () => void
-  getTabbyDownloadStatus: () => Promise<TabbyDownloadStatusSnapshot>
-  dismissTabbyDownload: () => Promise<TabbyDownloadStatusSnapshot>
-  rememberTabbyDownloadForm: (form: TabbyDownloadFormSnapshot) => Promise<TabbyDownloadStatusSnapshot>
-  onTabbyDownloadStatus: (cb: (data: TabbyDownloadStatusSnapshot) => void) => () => void
-  getModelLoadOptions: (name: string) => Promise<unknown>
-  getModelLoadStatus: () => Promise<unknown>
-  onModelLoadStatus: (cb: (state: unknown) => void) => () => void
-  onPullProgress: (cb: (data: unknown) => void) => () => void
-  getServerConfig: () => Promise<unknown>
-  saveServerConfigAndRestart: (config: unknown) => Promise<unknown>
-  switchBackend: (backend: 'ollama' | 'tabby') => Promise<unknown>
-  getBackendCapabilities: () => Promise<unknown>
-  tabbyPreflight: () => Promise<unknown>
-  startServer: (forceKillConflict?: boolean) => Promise<unknown>
-  stopServer: () => Promise<unknown>
-  restartServer: (forceKillConflict?: boolean) => Promise<unknown>
-  getLogs: (limit?: number) => Promise<unknown>
-  clearLogs: (options?: { disk?: boolean }) => Promise<boolean>
-  scrubTabbyRuntimeLogs: () => Promise<{
-    scrubbed: Array<{ ok: boolean; path: string; linesRead: number; linesChanged: number; error?: string }>
-    zipFiles: string[]
-    skippedZip: boolean
-  }>
-  deleteTabbyRuntimeZipLogs: (zipPaths: string[]) => Promise<{ deleted: string[]; errors: string[] }>
-  subscribeLogs: (cb: (entry: unknown) => void) => () => void
-  subscribeDashboardRequests: (cb: () => void) => () => void
-  detectOllamaBinary: () => Promise<string | null>
-  listPresets: (kind: string) => Promise<unknown>
-  savePreset: (kind: string, name: string, data: unknown, id?: string) => Promise<unknown>
-  deletePreset: (kind: string, id: string) => Promise<boolean>
-  importPreset: (kind: string, json: string) => Promise<unknown>
-  getContinueStatus: () => Promise<unknown>
-  upsertContinueModel: (modelName: string) => Promise<unknown>
-  removeContinueModel: (modelName: string) => Promise<boolean>
-  getIntegrationsStatus: (modelNames: string[]) => Promise<unknown>
-  upsertOpenCodeModel: (modelName: string) => Promise<unknown>
-  removeOpenCodeModel: (modelName: string) => Promise<boolean>
-  killOllamaProcess: (pid: number) => Promise<{ ok: boolean; error?: string }>
-  getAppLanguage: () => Promise<'cs' | 'en'>
-  setAppLanguage: (language: 'cs' | 'en') => Promise<'cs' | 'en'>
-}
-
-const api: Api = {
+const api = {
+  getBackendDescriptors: () => ipcRenderer.invoke('get-backend-descriptors'),
+  getBackendSettings: (id) => ipcRenderer.invoke('get-backend-settings', id),
+  saveBackendSettings: (id, patch) => ipcRenderer.invoke('save-backend-settings', id, patch),
+  getModelProfile: (ref) => ipcRenderer.invoke('get-model-profile', ref),
+  saveModelProfile: (ref, profile) => ipcRenderer.invoke('save-model-profile', ref, profile),
   getServeStatus: () => ipcRenderer.invoke('get-serve-status'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getDashboard: () => ipcRenderer.invoke('get-dashboard'),
   getResourceUsage: () => ipcRenderer.invoke('get-resource-usage'),
+  getModelCatalog: () => ipcRenderer.invoke('get-model-catalog'),
+  startModelAcquisition: (request) =>
+    ipcRenderer.invoke('start-model-acquisition', request),
+  getModelAcquisitions: () => ipcRenderer.invoke('get-model-acquisitions'),
+  dismissModelAcquisition: (operationId) =>
+    ipcRenderer.invoke('dismiss-model-acquisition', operationId),
+  onModelAcquisitionChanged: (cb) => {
+    const handler = (_: unknown, state: AcquisitionState): void => cb(state)
+    ipcRenderer.on('model-acquisition-changed', handler)
+    return () => ipcRenderer.removeListener('model-acquisition-changed', handler)
+  },
+  invokeProviderAction: (request) =>
+    ipcRenderer.invoke('invoke-provider-action', request),
   getModelsTags: () => ipcRenderer.invoke('get-models-tags'),
   getModelsPs: () => ipcRenderer.invoke('get-models-ps'),
   modelShow: (name) => ipcRenderer.invoke('model-show', name),
-  modelLoad: (name, options) => ipcRenderer.invoke('model-load', name, options),
-  modelUnload: (name) => ipcRenderer.invoke('model-unload', name),
-  modelTestSpeed: (name) => ipcRenderer.invoke('model-test-speed', name),
+  modelLoad: (request) => ipcRenderer.invoke('model-load', request),
+  modelUnload: (ref) => ipcRenderer.invoke('model-unload', ref),
+  modelTestSpeed: (ref) => ipcRenderer.invoke('model-test-speed', ref),
   getSpeedTests: () => ipcRenderer.invoke('get-speed-tests'),
   onSpeedTestsChanged: (cb) => {
     const handler = (): void => cb()
@@ -191,15 +66,15 @@ const api: Api = {
     ipcRenderer.on('tabby-download-status', handler)
     return () => ipcRenderer.removeListener('tabby-download-status', handler)
   },
-  getModelLoadOptions: (name) => ipcRenderer.invoke('get-model-load-options', name),
+  getModelLoadOptions: (ref) => ipcRenderer.invoke('get-model-load-options', ref),
   getModelLoadStatus: () => ipcRenderer.invoke('get-model-load-status'),
   onModelLoadStatus: (cb) => {
-    const handler = (_: unknown, state: unknown) => cb(state)
+    const handler = (_: unknown, state: ModelLoadState) => cb(state)
     ipcRenderer.on('model-load-status', handler)
     return () => ipcRenderer.removeListener('model-load-status', handler)
   },
   onPullProgress: (cb) => {
-    const handler = (_: unknown, data: unknown) => cb(data)
+    const handler = (_: unknown, data: { name: string; progress: PullProgress }) => cb(data)
     ipcRenderer.on('pull-progress', handler)
     return () => ipcRenderer.removeListener('pull-progress', handler)
   },
@@ -217,7 +92,7 @@ const api: Api = {
   deleteTabbyRuntimeZipLogs: (zipPaths: string[]) =>
     ipcRenderer.invoke('delete-tabby-runtime-zip-logs', zipPaths),
   subscribeLogs: (cb) => {
-    const handler = (_: unknown, entry: unknown) => cb(entry)
+    const handler = (_: unknown, entry: LogEntry) => cb(entry)
     ipcRenderer.on('log-entry', handler)
     return () => ipcRenderer.removeListener('log-entry', handler)
   },
@@ -240,6 +115,6 @@ const api: Api = {
   killOllamaProcess: (pid) => ipcRenderer.invoke('kill-ollama-process', pid),
   getAppLanguage: () => ipcRenderer.invoke('get-app-language'),
   setAppLanguage: (language) => ipcRenderer.invoke('set-app-language', language)
-}
+} satisfies StudioApi
 
 contextBridge.exposeInMainWorld('ollamaStudio', api)

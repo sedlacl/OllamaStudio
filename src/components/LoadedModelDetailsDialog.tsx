@@ -1,16 +1,18 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
+import { useBackendProviders } from '../providers/BackendProviderContext'
+import { providerDisplayNameById } from '../providers/i18n-helpers'
 import {
   api,
-  type AppConfig,
   type ModelLoadOptions,
   type ModelShow,
   type RecordedLoadOptions,
   type RunningModel
 } from '../types/api'
+import type { ModelRef } from '../../shared/backend-contract'
 
 export interface LoadedModelDetailsDialogProps {
-  modelName: string
+  modelRef: ModelRef
   onClose: () => void
 }
 
@@ -39,7 +41,6 @@ function formatLoadOptionValue(value: unknown): string {
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   return String(value)
 }
-
 
 function DetailRow({
   label,
@@ -86,47 +87,6 @@ function KvGrid({ children }: { children: ReactNode }): JSX.Element {
   return <div className="detail-kv-grid">{children}</div>
 }
 
-function MonoBlock({ text, emptyLabel }: { text?: string | null; emptyLabel: string }): JSX.Element {
-  if (!text?.trim()) {
-    return <p className="detail-unavailable">{emptyLabel}</p>
-  }
-  return <pre className="detail-mono-block mono">{text}</pre>
-}
-
-function ObjectGrid({
-  data,
-  emptyLabel,
-  unavailableLabel
-}: {
-  data?: Record<string, unknown> | null
-  emptyLabel: string
-  unavailableLabel: string
-}): JSX.Element {
-  if (!data || Object.keys(data).length === 0) {
-    return <p className="detail-unavailable">{emptyLabel}</p>
-  }
-  const entries = Object.entries(data).sort(([a], [b]) => a.localeCompare(b))
-  return (
-    <KvGrid>
-      {entries.map(([key, value]) => {
-        const formatted =
-          value !== null && typeof value === 'object'
-            ? JSON.stringify(value, null, 2)
-            : formatValue(value, unavailableLabel)
-        const unavailable = formatted === unavailableLabel
-        return (
-          <DetailRow
-            key={key}
-            label={key}
-            value={formatted}
-            unavailable={unavailable}
-          />
-        )
-      })}
-    </KvGrid>
-  )
-}
-
 function findRunningModel(models: RunningModel[], name: string): RunningModel | null {
   const target = name.trim().toLowerCase()
   return (
@@ -147,18 +107,20 @@ const LOAD_OPTION_LABELS: Array<{ key: keyof ModelLoadOptions; label: string }> 
 ]
 
 export default function LoadedModelDetailsDialog({
-  modelName,
+  modelRef,
   onClose
 }: LoadedModelDetailsDialogProps): JSX.Element {
   const { t, formatNumber, formatDateTime } = useI18n()
+  const { renderSlot, descriptorsById, getDefinition } = useBackendProviders()
   const unavailable = t('details.unavailable')
+  const modelName = modelRef.modelId
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState<RunningModel | null>(null)
   const [show, setShow] = useState<ModelShow | null>(null)
-  const [config, setConfig] = useState<AppConfig | null>(null)
   const [recorded, setRecorded] = useState<RecordedLoadOptions | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle')
+  const [backendSettings, setBackendSettings] = useState<unknown>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -166,16 +128,19 @@ export default function LoadedModelDetailsDialog({
       setLoading(true)
       setError(null)
       try {
-        const [ps, showData, serverConfig, loadOpts] = await Promise.all([
+        const descriptor = descriptorsById[modelRef.providerId]
+        const [ps, showData, loadOpts, settings] = await Promise.all([
           api().getModelsPs(),
-          api().modelShow(modelName).catch(() => null),
-          api().getServerConfig(),
-          api().getModelLoadOptions(modelName)
+          descriptor?.acquisition === 'ollama-library'
+            ? api().modelShow(modelName).catch(() => null)
+            : Promise.resolve(null),
+          api().getModelLoadOptions(modelRef),
+          api().getBackendSettings(modelRef.providerId).catch(() => null)
         ])
         if (cancelled) return
         setRunning(findRunningModel(ps, modelName))
         setShow(showData)
-        setConfig(serverConfig)
+        setBackendSettings(settings)
         setRecorded(loadOpts)
       } catch (e) {
         if (!cancelled) {
@@ -189,28 +154,19 @@ export default function LoadedModelDetailsDialog({
     return () => {
       cancelled = true
     }
-  }, [modelName, t])
+  }, [modelName, modelRef, descriptorsById, t])
 
   const details = running?.details
-  const env = config?.ollamaEnv
+  const providerLabel = providerDisplayNameById(t, modelRef.providerId, descriptorsById)
+  const hasModelDetailsSlot = Boolean(getDefinition(modelRef.providerId)?.ModelDetails)
 
   const copyToJson = async (): Promise<void> => {
     const payload = {
-      modelName,
+      modelRef,
       exportedAt: new Date().toISOString(),
-      sources: {
-        runtime:
-          'Ollama /api/ps — actually loaded runner. size = RAM+VRAM after load, size_vram = GPU portion, context_length = n_ctx. Not the on-disk file size.',
-        model:
-          'Ollama /api/show — Modelfile PARAMETER, architecture model_info, template. Defaults baked into the model, not current runner options.',
-        serveConfig:
-          'OllamaStudio serve environment. Server defaults only; keep_alive and num_ctx from loadOptions override them on load.',
-        loadOptions:
-          'Options OllamaStudio sent with the last modelLoad in this app session (keep_alive -1 = forever).'
-      },
       runtime: running,
       model: show,
-      serveConfig: env ?? null,
+      backendSettings,
       loadOptions: recorded
     }
     try {
@@ -234,7 +190,9 @@ export default function LoadedModelDetailsDialog({
         <div className="load-dialog-header">
           <div>
             <h3 id="loaded-model-details-title">{t('details.title')}</h3>
-            <p className="load-dialog-subtitle mono">{modelName}</p>
+            <p className="load-dialog-subtitle mono">
+              {providerLabel} · {modelName}
+            </p>
           </div>
           <button className="dialog-close" onClick={onClose} aria-label={t('details.closeAria')}>
             ×
@@ -249,9 +207,7 @@ export default function LoadedModelDetailsDialog({
             <>
               <Section title={t('details.runtimeTitle')} sourceNote={t('details.runtimeNote')}>
                 {!running ? (
-                  <p className="detail-unavailable">
-                    {t('details.notInPs')}
-                  </p>
+                  <p className="detail-unavailable">{t('details.notInPs')}</p>
                 ) : (
                   <KvGrid>
                     <DetailRow label="name" value={formatValue(running.name, unavailable)} />
@@ -277,8 +233,16 @@ export default function LoadedModelDetailsDialog({
                       unavailable={running.context_length == null}
                     />
                     <DetailRow label="expires_at" value={formatValue(running.expires_at, unavailable)} />
-                    <DetailRow label="details.format" value={formatValue(details?.format, unavailable)} unavailable={!details?.format} />
-                    <DetailRow label="details.family" value={formatValue(details?.family, unavailable)} unavailable={!details?.family} />
+                    <DetailRow
+                      label="details.format"
+                      value={formatValue(details?.format, unavailable)}
+                      unavailable={!details?.format}
+                    />
+                    <DetailRow
+                      label="details.family"
+                      value={formatValue(details?.family, unavailable)}
+                      unavailable={!details?.family}
+                    />
                     <DetailRow
                       label="details.parameter_size"
                       value={formatValue(details?.parameter_size, unavailable)}
@@ -289,86 +253,21 @@ export default function LoadedModelDetailsDialog({
                       value={formatValue(details?.quantization_level, unavailable)}
                       unavailable={!details?.quantization_level}
                     />
-                    <DetailRow
-                      label="details.families"
-                      value={formatValue(details?.families, unavailable)}
-                      unavailable={!details?.families?.length}
-                    />
-                    <DetailRow
-                      label="details.parent_model"
-                      value={formatValue(details?.parent_model || undefined, unavailable)}
-                      unavailable={!details?.parent_model}
-                    />
                   </KvGrid>
                 )}
                 <p className="detail-epistemic-note">{t('details.runtimeSizeNote')}</p>
-                <p className="detail-epistemic-note">
-                  {t('details.runtimeEpistemic')}{' '}
-                  <span className="detail-unavailable">{unavailable}</span>.
-                </p>
               </Section>
 
-              <Section title={t('details.modelTitle')} sourceNote={t('details.modelNote')}>
-                {!show ? (
-                  <p className="detail-unavailable">{unavailable}</p>
-                ) : (
-                  <>
-                    <h5 className="detail-subsection">parameters</h5>
-                    <p className="field-help">{t('details.parametersNote')}</p>
-                    <MonoBlock text={show.parameters} emptyLabel={unavailable} />
+              {hasModelDetailsSlot &&
+                renderSlot(modelRef.providerId, 'ModelDetails', {
+                  modelId: modelName,
+                  show,
+                  config: backendSettings
+                })}
 
-                    <h5 className="detail-subsection">details</h5>
-                    <ObjectGrid data={show.details as Record<string, unknown> | undefined} emptyLabel={unavailable} unavailableLabel={unavailable} />
-
-                    <h5 className="detail-subsection">model_info</h5>
-                    <ObjectGrid data={show.model_info} emptyLabel={unavailable} unavailableLabel={unavailable} />
-
-                    <h5 className="detail-subsection">capabilities</h5>
-                    <KvGrid>
-                      <DetailRow
-                        label="capabilities"
-                        value={formatValue(show.capabilities, unavailable)}
-                        unavailable={!show.capabilities?.length}
-                      />
-                    </KvGrid>
-
-                    <h5 className="detail-subsection">template</h5>
-                    <MonoBlock text={show.template} emptyLabel={unavailable} />
-
-                    <h5 className="detail-subsection">modelfile</h5>
-                    <MonoBlock text={show.modelfile} emptyLabel={unavailable} />
-                  </>
-                )}
-              </Section>
-
-              <Section
-                title={t('details.serveTitle')}
-                sourceNote={t('details.serveNote')}
-              >
-                {!env ? (
-                  <p className="detail-unavailable">{t('details.configUnavailable')}</p>
-                ) : (
-                  <KvGrid>
-                    {(Object.keys(env) as Array<keyof typeof env>).map((key) => (
-                      <DetailRow
-                        key={key}
-                        label={key}
-                        value={env[key] !== '' ? env[key] : t('details.emptyDefault')}
-                        unavailable={env[key] === ''}
-                      />
-                    ))}
-                  </KvGrid>
-                )}
-              </Section>
-
-              <Section
-                title={t('details.loadOptsTitle')}
-                sourceNote={t('details.loadOptsNote')}
-              >
+              <Section title={t('details.loadOptsTitle')} sourceNote={t('details.loadOptsNote')}>
                 {!recorded ? (
-                  <p className="detail-unavailable">
-                    {t('details.loadOptsMissing')}
-                  </p>
+                  <p className="detail-unavailable">{t('details.loadOptsMissing')}</p>
                 ) : (
                   <>
                     <p className="detail-meta mono">

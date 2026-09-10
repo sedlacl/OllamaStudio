@@ -48,11 +48,39 @@ export const en: MessageTree = {
     error: 'Error'
   },
   layout: {
-    killConflict: 'Kill conflicting processes and start'
+    killConflict: 'Kill conflicting processes and start',
+    tabbyStartingHint:
+      'TabbyAPI is starting — torch and CUDA initialization usually takes 60–90 s. Until then the endpoint is not listening and clients report ECONNREFUSED.',
+    tabbyStartingElapsed: 'Starting for {seconds} s'
   },
   backend: {
     ollama: 'Ollama',
     tabby: 'TabbyAPI'
+  },
+  providers: {
+    missingSlot: 'Provider {providerId} has no UI slot “{slot}” — restart the app or add a renderer definition.',
+    ollama: {
+      serverInfo:
+        'Global Ollama serve settings. Per-model context and keep-alive are set when loading a model (profile).',
+      confirmRestart: 'Saves Ollama settings and restarts the serve process.',
+      runtimeBinaryLabel: 'Path to ollama.exe',
+      unloadConfirm: 'Unload model {name} from memory?',
+      emptyCatalog: 'No local Ollama models — pull a tag below.'
+    },
+    tabby: {
+      serverInfo:
+        'TabbyAPI runs as a Python process. Run Preflight before the first start.',
+      confirmRestart: 'Saves Tabby settings and restarts the serve process.',
+      runtimeBinaryLabel: 'Python (TabbyAPI)',
+      unloadConfirm: 'TabbyAPI keeps one model in memory. Unload {name} and load another?',
+      emptyCatalog: 'No models in the Tabby model folder yet — download from Hugging Face below.',
+      adoptedExisting: 'Studio adopted an existing Tabby process (PID {pid}).',
+      externalProcess: 'Tabby runs outside Studio (external process) — logs and control may be limited.'
+    }
+  },
+  errors: {
+    unknown: 'Unknown error',
+    CATALOG_DISCOVERY_FAILED: 'Could not load this provider’s model catalog.'
   },
   dashboard: {
     title: 'Overview',
@@ -180,6 +208,8 @@ export const en: MessageTree = {
     toolNoConfig: '{tool}: config not found ({path}) — the tool may not be installed',
     toolInvalid: '{tool}: config cannot be read ({path})',
     toolUnknown: '{tool}: config status is loading',
+    toolContextTooSmall:
+      'Warning: a {context} token window is too small for the agent — the system prompt with tool schemas fills it and the session compacts from the first message. Load the model with a larger max_seq_len and write it again.',
     mismatchApiBase: 'server address',
     mismatchContext: 'context length',
     mismatchOutput: 'output limit',
@@ -291,6 +321,23 @@ export const en: MessageTree = {
     upToDate: 'You are running the latest released Ollama.',
     updateCheckFailed: 'Update check failed: {error}',
     openRelease: 'Open release page',
+    detectingUpdateInstaller: 'Detecting an available package manager…',
+    updateViaManager: 'Update / reinstall via {manager}',
+    openingUpdateTerminal: 'Opening terminal…',
+    updateCommand: 'The terminal will run:',
+    updateTerminalOpened:
+      'The terminal was opened. UAC or sudo authentication and progress stay interactive there.',
+    updateInstallerFailed: 'The update terminal could not be opened.',
+    updateInstallerUnsupported:
+      'Opening a package-manager terminal is not supported on this system; use the release page.',
+    updateTerminalMissing:
+      'The APT package is available, but no supported graphical terminal was found; use the release page.',
+    aptMissing:
+      'APT or sudo is unavailable. Ollama also provides no official APT repository; use the release page.',
+    aptPackageMissing:
+      'No “ollama” package is present in the configured APT sources. Ollama provides no official APT repository, so no command is offered; use the release page.',
+    wingetMissing:
+      'WinGet or the Ollama.Ollama package is unavailable in the configured source; use the release page.',
     backendLabel: 'Active backend',
     backendHint: 'Switching stops the previously managed backend owned by OllamaStudio.',
     switchBackendTitle: 'Switch backend?',

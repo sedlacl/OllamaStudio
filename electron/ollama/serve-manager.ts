@@ -117,7 +117,10 @@ export class ServeManager {
     })
   }
 
-  async start(forceKillConflict = false): Promise<void> {
+  async start(
+    forceKillConflict = false,
+    runtimeOverrides: Readonly<Record<string, string>> = {}
+  ): Promise<void> {
     if (this.state.status === 'starting' || this.state.status === 'running') return
 
     const binary = await this.detectBinary()
@@ -155,7 +158,7 @@ export class ServeManager {
     })
 
     const config = loadConfig()
-    const env = buildSpawnEnv(config)
+    const env = { ...buildSpawnEnv(config), ...runtimeOverrides }
 
     try {
       await openStudioLogWriter(join(app.getPath('userData'), 'logs'), 'ollama-serve.log')
@@ -232,9 +235,12 @@ export class ServeManager {
     this.setState({ status: 'stopped', pid: null, spawnTime: null, error: null })
   }
 
-  async restart(forceKillConflict = false): Promise<void> {
+  async restart(
+    forceKillConflict = false,
+    runtimeOverrides: Readonly<Record<string, string>> = {}
+  ): Promise<void> {
     await this.stop()
-    await this.start(forceKillConflict)
+    await this.start(forceKillConflict, runtimeOverrides)
   }
 
   async saveConfigAndRestart(config: AppConfig): Promise<void> {
