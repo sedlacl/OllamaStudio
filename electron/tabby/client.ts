@@ -436,10 +436,50 @@ export class TabbyClient {
     }
   }
 
+  /**
+   * Krátký `/v1/chat/completions` pro MCP test query. Tokeny jen z `usage`.
+   */
+  async generateTestQuery(
+    modelId: string,
+    params: { prompt: string; maxTokens: number; timeoutMs: number }
+  ): Promise<{
+    text: string
+    thinking: string
+    ttftMs: number
+    totalMs: number
+    generatedTokens: number | null
+    tokensPerSecond: number | null
+    promptTokens: number | null
+  }> {
+    const current = await this.getCurrentModel()
+    if (!current || current.modelId !== modelId) {
+      throw new Error(`Model ${modelId} is not loaded`)
+    }
+
+    const run = await this.chatCompletion(
+      modelId,
+      params.prompt,
+      params.maxTokens,
+      params.timeoutMs
+    )
+    const generatedTokens = run.usageCompletionTokens
+    const genSeconds = Math.max(0.001, (run.totalMs - run.ttftMs) / 1000)
+    return {
+      text: run.response.trim(),
+      thinking: '',
+      ttftMs: run.ttftMs,
+      totalMs: run.totalMs,
+      generatedTokens,
+      tokensPerSecond: generatedTokens != null ? generatedTokens / genSeconds : null,
+      promptTokens: run.usagePromptTokens
+    }
+  }
+
   private async chatCompletion(
     model: string,
     prompt: string,
-    maxTokens: number
+    maxTokens: number,
+    timeoutMs = 300000
   ): Promise<{
     response: string
     ttftMs: number
@@ -458,7 +498,7 @@ export class TabbyClient {
         temperature: 0,
         stream: true
       }),
-      signal: AbortSignal.timeout(300000)
+      signal: AbortSignal.timeout(timeoutMs)
     })
     if (!res.ok) throw await httpError(res)
 

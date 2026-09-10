@@ -375,7 +375,34 @@ export const cs = {
     tabbyAdopted:
       'Studio převzalo už běžící TabbyAPI (PID {pid}). Stop i ukončení aplikace ji zastaví.',
     tabbyExternal:
-      'TabbyAPI běží mimo Studio. Přepnutí backendu ani ukončení aplikace ji nezastaví.'
+      'TabbyAPI běží mimo Studio. Přepnutí backendu ani ukončení aplikace ji nezastaví.',
+    mcp: {
+      sectionTitle: 'MCP server (localhost)',
+      hint:
+        'Streamable HTTP MCP pouze na 127.0.0.1 s bearer tokenem. Externí agenti (např. Cursor) mohou číst logy, metriky a spravovat backend — token nikdy nesdílejte mimo tento počítač.',
+      enabled: 'Zapnout MCP server při běhu Studia',
+      port: 'Port',
+      portInvalid: 'Port musí být v rozsahu 1024–65535.',
+      status: 'Stav serveru',
+      statusStopped: 'Vypnuto',
+      statusStarting: 'Spouští se',
+      statusListening: 'Naslouchá',
+      statusError: 'Chyba',
+      token: 'Bearer token',
+      showToken: 'Zobrazit',
+      hideToken: 'Skrýt',
+      copyToken: 'Kopírovat token',
+      tokenCopied: 'Token zkopírován',
+      regenerateToken: 'Vygenerovat nový token',
+      regenerateConfirmTitle: 'Nový MCP token?',
+      regenerateConfirmBody:
+        'Stávající token přestane platit. Klienti s původním tokenem se nepřipojí, dokud neaktualizujete mcp.json.',
+      cursorSnippet: 'Snippet pro Cursor mcp.json',
+      copyCursorSnippet: 'Kopírovat snippet',
+      snippetCopied: 'Snippet zkopírován',
+      save: 'Uložit MCP nastavení',
+      saving: 'Ukládám…'
+    }
   },
   logs: {
     title: 'Logy serve',

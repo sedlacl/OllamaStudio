@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto'
 import { app } from 'electron'
 import {
   copyFileSync,
@@ -12,6 +13,7 @@ import {
   type AppConfig,
   type BackendConfigMap,
   type BackendId,
+  type McpConfig,
   type OllamaEnvConfig,
   type TabbyConfig
 } from '../../shared/backend-contract'
@@ -24,6 +26,32 @@ export type {
 } from '../../shared/backend-contract'
 
 const CONFIG_VERSION = 3
+
+export const DEFAULT_MCP_PORT = 3847
+const MCP_PORT_MIN = 1024
+const MCP_PORT_MAX = 65535
+
+export function generateMcpToken(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+export function normalizeMcpPort(value: unknown, fallback = DEFAULT_MCP_PORT): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  const rounded = Math.round(value)
+  if (rounded < MCP_PORT_MIN || rounded > MCP_PORT_MAX) return fallback
+  return rounded
+}
+
+export function normalizeMcp(partial?: Partial<McpConfig> | null, options?: { ensureToken?: boolean }): McpConfig {
+  const ensureToken = options?.ensureToken ?? true
+  const tokenRaw = partial?.token?.trim() ?? ''
+  const token = tokenRaw || (ensureToken ? generateMcpToken() : '')
+  return {
+    enabled: partial?.enabled === true,
+    port: normalizeMcpPort(partial?.port),
+    token
+  }
+}
 
 export const DEFAULT_TABBY_INSTALL_DIR = 'D:\\AI\\Tabby'
 
@@ -63,6 +91,7 @@ const DEFAULT_PROVIDERS: BackendConfigMap = {
 const DEFAULT_CONFIG: AppConfig = {
   configVersion: CONFIG_VERSION,
   activeBackend: 'ollama',
+  mcp: normalizeMcp({ enabled: false, port: DEFAULT_MCP_PORT, token: '' }),
   providers: structuredClone(DEFAULT_PROVIDERS),
   ollamaEnv: { ...DEFAULT_OLLAMA_ENV },
   autoStartServe: true,
@@ -106,6 +135,7 @@ type ParsedConfig = Partial<AppConfig> & {
     ollama: Partial<BackendConfigMap['ollama']>
     tabby: Partial<TabbyConfig>
   }>
+  mcp?: Partial<McpConfig>
   ollamaEnv?: Partial<OllamaEnvConfig>
   tabby?: Partial<TabbyConfig>
 }
@@ -151,6 +181,7 @@ function normalizeConfig(parsed: ParsedConfig, preferLegacyAliases: boolean): Ap
     configVersion: CONFIG_VERSION,
     activeBackend: normalizeBackend(parsed.activeBackend),
     language: parsed.language === 'en' ? 'en' : 'cs',
+    mcp: normalizeMcp(parsed.mcp),
     providers: { ollama, tabby },
     ollamaEnv: { ...ollama.env },
     autoStartServe: ollama.autoStartServe,
@@ -163,6 +194,7 @@ function serializedConfig(config: AppConfig): Omit<AppConfig, 'ollamaEnv' | 'aut
     configVersion: CONFIG_VERSION,
     activeBackend: normalizeBackend(config.activeBackend),
     language: config.language === 'en' ? 'en' : 'cs',
+    mcp: normalizeMcp(config.mcp),
     providers: structuredClone(config.providers)
   }
 }
@@ -174,7 +206,9 @@ export function migrateConfig(parsed: ParsedConfig): {
   backupPath: string | null
 } {
   const fromVersion = parsed.configVersion ?? 0
-  const migrated = fromVersion < CONFIG_VERSION || parsed.providers == null
+  const needsMcpToken = !(parsed.mcp?.token?.trim())
+  const migrated =
+    fromVersion < CONFIG_VERSION || parsed.providers == null || needsMcpToken
   const config = normalizeConfig(parsed, fromVersion < CONFIG_VERSION)
   if (fromVersion < 2) config.activeBackend = 'ollama'
 
@@ -223,6 +257,31 @@ export function getBackendSettings<I extends BackendId>(
   config: AppConfig = loadConfig()
 ): BackendConfigMap[I] {
   return structuredClone(config.providers[id])
+}
+
+export function getMcpSettings(config: AppConfig = loadConfig()): McpConfig {
+  return normalizeMcp(config.mcp)
+}
+
+export function saveMcpSettings(patch: Partial<Pick<McpConfig, 'enabled' | 'port'>>): McpConfig {
+  const config = loadConfig()
+  config.mcp = normalizeMcp({
+    ...config.mcp,
+    ...patch,
+    token: config.mcp?.token
+  })
+  saveConfig(config)
+  return getMcpSettings(config)
+}
+
+export function regenerateMcpToken(): McpConfig {
+  const config = loadConfig()
+  config.mcp = normalizeMcp({
+    ...config.mcp,
+    token: generateMcpToken()
+  })
+  saveConfig(config)
+  return getMcpSettings(config)
 }
 
 export function saveBackendSettings<I extends BackendId>(

@@ -377,7 +377,34 @@ export const en: MessageTree = {
     tabbyAdopted:
       'Studio adopted an already running TabbyAPI (PID {pid}). Stop and quitting the app will stop it.',
     tabbyExternal:
-      'TabbyAPI is running outside Studio. Switching backend or quitting the app will not stop it.'
+      'TabbyAPI is running outside Studio. Switching backend or quitting the app will not stop it.',
+    mcp: {
+      sectionTitle: 'MCP server (localhost)',
+      hint:
+        'Streamable HTTP MCP on 127.0.0.1 only, protected by a bearer token. External agents (e.g. Cursor) can read logs, metrics, and manage the backend — never share the token off this machine.',
+      enabled: 'Enable MCP server while Studio is running',
+      port: 'Port',
+      portInvalid: 'Port must be between 1024 and 65535.',
+      status: 'Server status',
+      statusStopped: 'Stopped',
+      statusStarting: 'Starting',
+      statusListening: 'Listening',
+      statusError: 'Error',
+      token: 'Bearer token',
+      showToken: 'Show',
+      hideToken: 'Hide',
+      copyToken: 'Copy token',
+      tokenCopied: 'Token copied',
+      regenerateToken: 'Generate new token',
+      regenerateConfirmTitle: 'New MCP token?',
+      regenerateConfirmBody:
+        'The current token will stop working. Clients using the old token must update mcp.json.',
+      cursorSnippet: 'Cursor mcp.json snippet',
+      copyCursorSnippet: 'Copy snippet',
+      snippetCopied: 'Snippet copied',
+      save: 'Save MCP settings',
+      saving: 'Saving…'
+    }
   },
   logs: {
     title: 'Serve logs',

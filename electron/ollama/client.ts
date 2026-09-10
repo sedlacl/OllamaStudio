@@ -446,6 +446,55 @@ export class OllamaClient {
   }
 
   /**
+   * Krátký `/api/generate` pro MCP test query. Runner options z načtení,
+   * aby Ollama nerestartovala model.
+   */
+  async generateTestQuery(
+    name: string,
+    params: {
+      prompt: string
+      maxTokens: number
+      timeoutMs: number
+      loadOptions?: ModelLoadOptions | null
+    }
+  ): Promise<{
+    text: string
+    thinking: string
+    ttftMs: number
+    totalMs: number
+    generatedTokens: number | null
+    tokensPerSecond: number | null
+    promptTokens: number | null
+  }> {
+    const config = loadConfig()
+    const keepAlive =
+      params.loadOptions?.keepAlive ?? (config.ollamaEnv.OLLAMA_KEEP_ALIVE.trim() || '5m')
+    const runnerOptions = params.loadOptions ? buildRunnerOptions(params.loadOptions) : {}
+    const run = await this.streamGenerate(name, {
+      prompt: params.prompt,
+      keepAlive,
+      timeoutMs: params.timeoutMs,
+      options: { ...runnerOptions, num_predict: params.maxTokens, temperature: 0 }
+    })
+    const generatedTokens =
+      typeof run.final.eval_count === 'number' ? run.final.eval_count : null
+    const evalSeconds = (run.final.eval_duration ?? 0) / 1e9
+    const promptTokens =
+      typeof run.final.prompt_eval_count === 'number' ? run.final.prompt_eval_count : null
+    const text = run.response.trim() || run.thinking.trim()
+    return {
+      text,
+      thinking: run.thinking.trim(),
+      ttftMs: run.ttftMs,
+      totalMs: run.totalMs,
+      generatedTokens,
+      tokensPerSecond:
+        generatedTokens != null && evalSeconds > 0 ? generatedTokens / evalSeconds : null,
+      promptTokens
+    }
+  }
+
+  /**
    * Ollama hlásí v `prompt_eval_count` celý prompt, ale v `prompt_eval_duration` jen
    * čas tokenů, které runner nenašel v prompt cache — u modelů s dlouhou šablonou
    * pak podíl vychází i o řád vyšší. Měříme proto dvěma běhy se společným prefixem:
@@ -489,6 +538,7 @@ export class OllamaClient {
       prompt: string
       keepAlive: string
       options: Record<string, number | boolean>
+      timeoutMs?: number
     }
   ): Promise<{
     response: string
@@ -508,7 +558,7 @@ export class OllamaClient {
         keep_alive: encodeKeepAlive(request.keepAlive),
         options: request.options
       }),
-      signal: AbortSignal.timeout(300000)
+      signal: AbortSignal.timeout(request.timeoutMs ?? 300000)
     })
     if (!res.ok) throw await httpError(res)
 

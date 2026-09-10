@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
 import { useBackendProviders } from '../providers/BackendProviderContext'
 import { providerDisplayName } from '../providers/i18n-helpers'
+import { McpServerSection } from '../components/McpServerSection'
 import {
   api,
   type BackendConfigMap,
@@ -165,6 +166,8 @@ export default function Server(): JSX.Element {
       )}
 
       {settingsEditor}
+
+      <McpServerSection />
 
       <div className="btn-row" style={{ marginTop: 16 }}>
         <button className="btn btn-primary" onClick={() => setConfirmRestart(true)} disabled={saving}>

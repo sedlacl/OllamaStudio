@@ -79,6 +79,9 @@ const api = {
     return () => ipcRenderer.removeListener('pull-progress', handler)
   },
   getServerConfig: () => ipcRenderer.invoke('get-server-config'),
+  getMcpSettings: () => ipcRenderer.invoke('get-mcp-settings'),
+  saveMcpSettings: (patch) => ipcRenderer.invoke('save-mcp-settings', patch),
+  regenerateMcpToken: () => ipcRenderer.invoke('regenerate-mcp-token'),
   saveServerConfigAndRestart: (config) => ipcRenderer.invoke('save-server-config-and-restart', config),
   switchBackend: (backend) => ipcRenderer.invoke('switch-backend', backend),
   getBackendCapabilities: () => ipcRenderer.invoke('get-backend-capabilities'),

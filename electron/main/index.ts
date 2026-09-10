@@ -17,11 +17,15 @@ import {
 import {
   getActiveBackend,
   getBackendSettings,
+  getMcpSettings,
   loadConfig,
+  regenerateMcpToken,
   saveConfig,
   saveBackendSettings,
+  saveMcpSettings,
   type AppConfig
 } from '../ollama/config'
+import { getMcpRuntimeState } from '../mcp/runtime-state'
 import {
   clearAllLoadOptions,
   getLoadOptions,
@@ -678,6 +682,26 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('get-server-config', () => loadConfig())
+
+  ipcMain.handle('get-mcp-settings', () => ({
+    settings: getMcpSettings(),
+    runtime: getMcpRuntimeState()
+  }))
+
+  ipcMain.handle('save-mcp-settings', (_e, patch: unknown) => {
+    const raw = patch && typeof patch === 'object' ? (patch as Record<string, unknown>) : {}
+    const next = saveMcpSettings({
+      ...(typeof raw.enabled === 'boolean' ? { enabled: raw.enabled } : {}),
+      ...(typeof raw.port === 'number' && Number.isFinite(raw.port) ? { port: raw.port } : {})
+    })
+    return { settings: next, runtime: getMcpRuntimeState() }
+  })
+
+  ipcMain.handle('regenerate-mcp-token', () => {
+    const settings = regenerateMcpToken()
+    return { settings, runtime: getMcpRuntimeState() }
+  })
+
   ipcMain.handle('save-server-config-and-restart', async (_e, config: AppConfig) => {
     const existing = loadConfig()
     const merged: AppConfig = {
@@ -688,6 +712,7 @@ function registerIpc(): void {
           : existing.language ?? 'cs',
       activeBackend:
         config.activeBackend === 'tabby' ? 'tabby' : existing.activeBackend ?? 'ollama',
+      mcp: config.mcp ?? existing.mcp,
       tabby: config.tabby ?? existing.tabby
     }
     syncLocaleFromConfig(merged)

@@ -10,6 +10,9 @@ import type {
   BackendDescriptor,
   BackendId,
   LogScrubFileResult,
+  McpConfig,
+  McpRuntimeState,
+  McpSettingsSnapshot,
   ModelProfile,
   ModelAcquisitionRequest,
   ModelAcquisitionResult,
@@ -37,6 +40,9 @@ export type {
   BackendDescriptor,
   BackendId,
   LogScrubFileResult,
+  McpConfig,
+  McpRuntimeState,
+  McpSettingsSnapshot,
   ModelProfile,
   ModelAcquisitionRequest,
   ModelAcquisitionResult,
@@ -641,6 +647,11 @@ export interface Api {
   onModelLoadStatus: (cb: (state: ModelLoadState) => void) => () => void
   onPullProgress: (cb: (data: { name: string; progress: PullProgress }) => void) => () => void
   getServerConfig: () => Promise<AppConfig>
+  getMcpSettings: () => Promise<McpSettingsSnapshot>
+  saveMcpSettings: (
+    patch: Partial<Pick<McpConfig, 'enabled' | 'port'>>
+  ) => Promise<McpSettingsSnapshot>
+  regenerateMcpToken: () => Promise<McpSettingsSnapshot>
   saveServerConfigAndRestart: (config: AppConfig) => Promise<ServeState>
   switchBackend: (backend: BackendId) => Promise<ServeState>
   getBackendCapabilities: () => Promise<BackendCapabilities>

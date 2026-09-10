@@ -40,10 +40,32 @@ export interface BackendConfigMap {
 
 export type BackendId = keyof BackendConfigMap
 
+export interface McpConfig {
+  enabled: boolean
+  port: number
+  token: string
+}
+
+export type McpRuntimeStatus = 'stopped' | 'starting' | 'listening' | 'error'
+
+export interface McpRuntimeState {
+  status: McpRuntimeStatus
+  port: number | null
+  url: string | null
+  error: string | null
+  startedAt: number | null
+}
+
+export interface McpSettingsSnapshot {
+  settings: McpConfig
+  runtime: McpRuntimeState
+}
+
 export interface AppConfig {
   configVersion?: number
   activeBackend?: BackendId
   language?: AppLanguage
+  mcp?: McpConfig
   providers: BackendConfigMap
   /** @deprecated Přechodový read/write alias pro starší renderer a moduly. */
   ollamaEnv: OllamaEnvConfig
