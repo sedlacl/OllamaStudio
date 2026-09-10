@@ -155,6 +155,10 @@ export interface TabbyLoadOptions {
   outputChunking?: boolean
   vision?: boolean
   promptTemplate?: string
+  agent?: {
+    enabled: boolean
+    toolFormat?: string
+  }
   /** Zapíše draft_mode do tabby_config.yml před loadem. */
   mtp?: {
     enabled: boolean
@@ -272,6 +276,7 @@ export interface TabbyLoadPresetData {
   chunkSize: string
   outputChunking: boolean
   vision: boolean
+  agentEnabled: boolean
   mtpEnabled: boolean
   draftNumTokens: string
 }

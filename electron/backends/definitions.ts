@@ -88,6 +88,7 @@ export function normalizeModelProfile<I extends BackendId>(
     gpuSplitAuto: true,
     outputChunking: false,
     vision: false,
+    agent: { enabled: false },
     mtp: { enabled: false, draftNumTokens: 4 }
   }
   for (const key of ['maxSeqLen', 'cacheSize', 'chunkSize'] as const) {
@@ -111,6 +112,15 @@ export function normalizeModelProfile<I extends BackendId>(
   else {
     const ropeAlpha = finitePositive(obj.ropeAlpha)
     if (ropeAlpha != null) profile.ropeAlpha = ropeAlpha
+  }
+  if (obj.agent && typeof obj.agent === 'object') {
+    const agent = obj.agent as Record<string, unknown>
+    profile.agent = {
+      enabled: agent.enabled === true,
+      ...(typeof agent.toolFormat === 'string' && agent.toolFormat.trim()
+        ? { toolFormat: agent.toolFormat.trim() }
+        : {})
+    }
   }
   if (obj.mtp && typeof obj.mtp === 'object') {
     const mtp = obj.mtp as Record<string, unknown>

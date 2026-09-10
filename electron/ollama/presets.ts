@@ -43,6 +43,7 @@ export interface TabbyLoadPresetData {
   chunkSize: string
   outputChunking: boolean
   vision: boolean
+  agentEnabled: boolean
   mtpEnabled: boolean
   draftNumTokens: string
 }
@@ -137,6 +138,7 @@ function validatePresetData<K extends PresetKind>(kind: K, value: unknown): Pres
     chunkSize: typeof data.chunkSize === 'string' ? data.chunkSize : '',
     outputChunking: data.outputChunking === true,
     vision: data.vision === true,
+    agentEnabled: data.agentEnabled === true,
     mtpEnabled: data.mtpEnabled === true,
     draftNumTokens: typeof data.draftNumTokens === 'string' ? data.draftNumTokens : ''
   } as PresetDataMap[K]

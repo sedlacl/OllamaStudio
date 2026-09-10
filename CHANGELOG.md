@@ -6,6 +6,12 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-09-10
+
+### Added
+
+- Tabby load umí zapnout Qwen reasoning a XML tool parser (`qwen3_5`), aby OpenCode oddělil think od odpovědi a uměl pouštět tooly
+
 ## [1.7.3] — 2026-09-10
 
 ### Fixed

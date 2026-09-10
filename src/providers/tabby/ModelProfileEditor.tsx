@@ -23,6 +23,7 @@ interface TabbyLoadForm {
   chunkSize: string
   outputChunking: boolean
   vision: boolean
+  agentEnabled: boolean
   mtpEnabled: boolean
   draftNumTokens: string
 }
@@ -40,6 +41,7 @@ function initialForm(): TabbyLoadForm {
     chunkSize: '',
     outputChunking: false,
     vision: false,
+    agentEnabled: false,
     mtpEnabled: false,
     draftNumTokens: '4'
   }
@@ -60,6 +62,7 @@ function presetToForm(data: TabbyLoadPresetData): TabbyLoadForm {
     chunkSize: data.chunkSize ?? '',
     outputChunking: !!data.outputChunking,
     vision: !!data.vision,
+    agentEnabled: !!data.agentEnabled,
     mtpEnabled: !!data.mtpEnabled,
     draftNumTokens: data.draftNumTokens ?? '4'
   }
@@ -118,6 +121,7 @@ export default function TabbyModelProfileEditor({
           chunkSize: profile.chunkSize == null ? '' : String(profile.chunkSize),
           outputChunking: profile.outputChunking ?? false,
           vision: profile.vision ?? false,
+          agentEnabled: profile.agent?.enabled ?? false,
           mtpEnabled: profile.mtp?.enabled ?? false,
           draftNumTokens: profile.mtp?.draftNumTokens == null ? '4' : String(profile.mtp.draftNumTokens)
         })
@@ -186,6 +190,7 @@ export default function TabbyModelProfileEditor({
       chunkSize,
       outputChunking: form.outputChunking,
       vision: form.vision,
+      agent: form.agentEnabled ? { enabled: true, toolFormat: 'qwen3_5' } : { enabled: false },
       mtp: form.mtpEnabled
         ? {
             enabled: true,
@@ -382,6 +387,19 @@ export default function TabbyModelProfileEditor({
 
           <div className="load-section">
             <div className="load-section-heading">{t('loadTabbyDialog.sectionMtp')}</div>
+
+            <div className="load-setting-row">
+              <div>
+                <label htmlFor="tabby-agent">{t('loadTabbyDialog.agentEnabled')}</label>
+                <span className="field-help">{t('loadTabbyDialog.agentEnabledHelp')}</span>
+              </div>
+              <input
+                id="tabby-agent"
+                type="checkbox"
+                checked={form.agentEnabled}
+                onChange={(e) => update('agentEnabled', e.target.checked)}
+              />
+            </div>
 
             <div className="load-setting-row">
               <div>

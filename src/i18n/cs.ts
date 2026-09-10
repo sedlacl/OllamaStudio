@@ -704,6 +704,9 @@ export const cs = {
     vision: 'Vision',
     visionHelp: 'Načíst vision větve modelu.',
     sectionMtp: 'MTP (draft mode)',
+    agentEnabled: 'OpenCode / tooly (Qwen)',
+    agentEnabledHelp:
+      'Zapíše do tabby_config.yml reasoning + tool_format qwen3_5, aby OpenCode schoval think a dostal OpenAI tool_calls.',
     mtpEnabled: 'Zapnout MTP',
     mtpEnabledHelp: 'Zapíše draft_mode do tabby_config.yml před loadem.',
     draftNumTokens: 'Draft tokens',

@@ -706,6 +706,9 @@ export const en: MessageTree = {
     vision: 'Vision',
     visionHelp: 'Load vision branches of the model.',
     sectionMtp: 'MTP (draft mode)',
+    agentEnabled: 'OpenCode / tools (Qwen)',
+    agentEnabledHelp:
+      'Writes reasoning + tool_format qwen3_5 into tabby_config.yml so OpenCode splits think and gets OpenAI tool_calls.',
     mtpEnabled: 'Enable MTP',
     mtpEnabledHelp: 'Writes draft_mode to tabby_config.yml before load.',
     draftNumTokens: 'Draft tokens',

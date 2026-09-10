@@ -380,6 +380,11 @@ export interface TabbyModelProfile {
   outputChunking?: boolean
   vision?: boolean
   promptTemplate?: string
+  /** Reasoning parser + XML tools → OpenAI `reasoning` / `tool_calls` (OpenCode). */
+  agent?: {
+    enabled: boolean
+    toolFormat?: string
+  }
   mtp?: {
     enabled: boolean
     draftNumTokens?: number

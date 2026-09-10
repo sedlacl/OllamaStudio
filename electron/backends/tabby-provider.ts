@@ -40,7 +40,7 @@ import {
   enrichTabbyModelSummaries,
   invalidateLocalModelCache
 } from '../tabby/local-model-info'
-import { writeModelMtpConfig } from '../tabby/model-config'
+import { writeModelAgentConfig, writeModelMtpConfig } from '../tabby/model-config'
 import { preflightTabby, tabbyServeManager } from '../tabby/serve-manager'
 import { TABBY_DEFAULT_CONTEXT_LENGTH } from '../ollama/opencode-config'
 import {
@@ -101,6 +101,10 @@ type TabbyStudioLoadOptions = TabbyLoadOptions & {
     enabled: boolean
     draftNumTokens?: number
     dynamicDraft?: boolean
+  }
+  agent?: {
+    enabled: boolean
+    toolFormat?: string
   }
 }
 
@@ -501,6 +505,9 @@ export class TabbyProvider implements BackendProvider {
             draftNumTokens: tabbyOptions.mtp.draftNumTokens,
             dynamicDraft: tabbyOptions.mtp.dynamicDraft
           })
+        }
+        if (tabbyOptions.agent) {
+          writeModelAgentConfig(tabbyOptions.modelName, tabbyOptions.agent)
         }
 
         const current = await tabbyClient.getCurrentModel()
