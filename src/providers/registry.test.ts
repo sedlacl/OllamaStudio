@@ -87,6 +87,7 @@ describe('renderer provider registry', () => {
 
     for (const slot of OPTIONAL_RENDERER_SLOTS) {
       expect(renderProviderSlot('ollama', slot, {}, registry), slot).toBeNull()
+      expect(renderProviderSlot('ollama', slot, {}, {}), `${slot} without definition`).toBeNull()
     }
 
     const requiredMissing = {

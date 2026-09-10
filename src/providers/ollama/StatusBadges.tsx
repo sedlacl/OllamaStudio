@@ -161,6 +161,11 @@ export default function OllamaStatusBadges({ serve: _serve }: {
               {t('server.updateCommand')} <span className="mono">{installer.command}</span>
             </div>
           )}
+          {installer?.available && installer.manager === 'apt' && (
+            <div className="metric-label" style={{ marginTop: 8 }}>
+              {t('server.aptThirdPartyNotice')}
+            </div>
+          )}
           {!installer && !installerError && (
             <div className="metric-label" style={{ marginTop: 8 }}>
               {t('server.detectingUpdateInstaller')}

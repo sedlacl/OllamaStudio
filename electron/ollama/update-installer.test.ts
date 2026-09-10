@@ -51,7 +51,6 @@ describe('Ollama update installer', () => {
       '--exact',
       '--source',
       'winget',
-      '--accept-source-agreements',
       '--disable-interactivity'
     ])
   })
@@ -111,17 +110,16 @@ describe('Ollama update installer', () => {
       ok: args[0] === '--version' || args.includes('Ollama.Ollama'),
       stdout: ''
     }))
-    const unref = vi.fn()
-    const spawnProcess = vi.fn(() => ({ unref }))
+    const launchProcess = vi.fn(async () => true)
 
     await expect(
       openOllamaUpdateTerminal({
         platform: 'win32',
         probe,
-        spawnProcess
+        launchProcess
       })
     ).resolves.toEqual({ ok: true })
-    expect(spawnProcess).toHaveBeenCalledWith(
+    expect(launchProcess).toHaveBeenCalledWith(
       expect.stringMatching(/[\\/]System32[\\/]cmd\.exe$/),
       [
         '/d',
@@ -130,6 +128,5 @@ describe('Ollama update installer', () => {
       ],
       { detached: true, stdio: 'ignore', windowsHide: false }
     )
-    expect(unref).toHaveBeenCalled()
   })
 })

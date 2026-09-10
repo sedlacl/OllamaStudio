@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { existsSync } from 'fs'
 
 import type {
@@ -29,7 +29,7 @@ export interface UpdateInstallerDependencies {
   platform?: NodeJS.Platform
   probe?: (file: string, args: readonly string[]) => Promise<ProbeResult>
   fileExists?: (path: string) => boolean
-  spawnProcess?: (
+  launchProcess?: (
     file: string,
     args: readonly string[],
     options: {
@@ -37,7 +37,7 @@ export interface UpdateInstallerDependencies {
       stdio: 'ignore'
       windowsHide: false
     }
-  ) => Pick<ChildProcess, 'unref'>
+  ) => Promise<boolean>
 }
 
 interface LaunchCommand {
@@ -73,6 +73,34 @@ function defaultProbe(file: string, args: readonly string[]): Promise<ProbeResul
         })
       }
     )
+  })
+}
+
+function defaultLaunchProcess(
+  file: string,
+  args: readonly string[],
+  options: {
+    detached: true
+    stdio: 'ignore'
+    windowsHide: false
+  }
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    const child = spawn(file, [...args], options)
+    child.once('error', () => {
+      if (!settled) {
+        settled = true
+        resolve(false)
+      }
+    })
+    child.once('spawn', () => {
+      if (!settled) {
+        settled = true
+        child.unref()
+        resolve(true)
+      }
+    })
   })
 }
 
@@ -146,7 +174,6 @@ export async function detectOllamaUpdateInstaller(
       '--exact',
       '--source',
       'winget',
-      '--accept-source-agreements',
       '--disable-interactivity'
     ])
     if (!packageResult.ok) {
@@ -210,13 +237,16 @@ export async function openOllamaUpdateTerminal(
   }
 
   try {
-    const child = (dependencies.spawnProcess ?? spawn)(command.file, [...command.args], {
+    const launched = await (dependencies.launchProcess ?? defaultLaunchProcess)(
+      command.file,
+      command.args,
+      {
       detached: true,
       stdio: 'ignore',
       windowsHide: false
-    })
-    child.unref()
-    return { ok: true }
+      }
+    )
+    return launched ? { ok: true } : { ok: false, reason: 'launch-failed' }
   } catch {
     return { ok: false, reason: 'launch-failed' }
   }

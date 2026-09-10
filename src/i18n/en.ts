@@ -336,6 +336,8 @@ export const en: MessageTree = {
       'APT or sudo is unavailable. Ollama also provides no official APT repository; use the release page.',
     aptPackageMissing:
       'No “ollama” package is present in the configured APT sources. Ollama provides no official APT repository, so no command is offered; use the release page.',
+    aptThirdPartyNotice:
+      'Ollama provides no official APT repository; this uses only the “ollama” package already offered by your configured sources.',
     wingetMissing:
       'WinGet or the Ollama.Ollama package is unavailable in the configured source; use the release page.',
     backendLabel: 'Active backend',

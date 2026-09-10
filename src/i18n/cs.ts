@@ -334,6 +334,8 @@ export const cs = {
       'APT nebo sudo nejsou dostupné; Ollama navíc neposkytuje oficiální APT repozitář. Použijte stránku vydání.',
     aptPackageMissing:
       'V nakonfigurovaných APT zdrojích není balíček „ollama“. Ollama neposkytuje oficiální APT repozitář, proto příkaz nenabízíme; použijte stránku vydání.',
+    aptThirdPartyNotice:
+      'Ollama neposkytuje oficiální APT repozitář; použije se pouze balíček „ollama“, který už nabízejí vaše nakonfigurované zdroje.',
     wingetMissing:
       'WinGet nebo balíček Ollama.Ollama není v nakonfigurovaném zdroji dostupný; použijte stránku vydání.',
     backendLabel: 'Aktivní backend',

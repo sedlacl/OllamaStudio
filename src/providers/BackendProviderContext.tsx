@@ -37,10 +37,7 @@ export function renderProviderSlot(
   registry: Record<string, RendererProviderDefinition<any>> = RENDERER_PROVIDERS
 ): ReactNode {
   const definition = registry[providerId]
-  if (!definition) {
-    return <MissingProviderSlot providerId={providerId} slot={String(slot)} />
-  }
-  const Component = definition[slot] as ComponentType<Record<string, unknown>> | undefined
+  const Component = definition?.[slot] as ComponentType<Record<string, unknown>> | undefined
   if (!Component) {
     return isRequiredRendererSlot(slot) ? (
       <MissingProviderSlot providerId={providerId} slot={String(slot)} />
