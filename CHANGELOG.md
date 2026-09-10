@@ -6,7 +6,17 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
-## [1.8.0] — 2026-09-10
+## [1.9.0] — 2026-09-10
+
+### Added
+
+- Historie requestů u Tabby ukazuje rychlost i tokeny — z metrik se čtou prompt i generate T/s, prompt tokeny, doba běhu a délka kontextu
+
+### Fixed
+
+- Metriky Tabby se už neztrácejí, když Rich konzole zalomí řádek uprostřed `Metrics (ID: …)`; Tabby navíc startuje se širokou konzolí, takže k zalamování nedochází
+- Rozdělení GPU/CPU u nahraného Tabby modelu se odvozuje z load logu, takže plně GPU model už nehlásí falešný CPU offload z RAM working setu procesu
+- Streamované requesty (`Received/Finished … streaming request`) se v historii párují správně
 
 ### Added
 

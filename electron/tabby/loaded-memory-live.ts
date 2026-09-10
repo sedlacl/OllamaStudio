@@ -6,7 +6,8 @@ import {
   getGpuProcessesFromPerfCounters,
   getGpuProcessesFromSmi
 } from '../ollama/metrics'
-import { ollamaSizeFromProcessSplit, vramMbForPids } from './loaded-memory'
+import { getTabbyLoadFacts, isGpuOnlyLoad } from './load-facts'
+import { ollamaSizeFromLoadFacts, vramMbForPids } from './loaded-memory'
 
 const execFileAsync = promisify(execFile)
 
@@ -82,5 +83,9 @@ export async function tabbyProcessSize(
   pids: number[]
 ): Promise<{ size: number; sizeVram: number }> {
   const split = await estimateProcessMemorySplit(pids)
-  return ollamaSizeFromProcessSplit(split.ramBytes, split.vramBytes)
+  return ollamaSizeFromLoadFacts(
+    split.ramBytes,
+    split.vramBytes,
+    isGpuOnlyLoad(getTabbyLoadFacts())
+  )
 }

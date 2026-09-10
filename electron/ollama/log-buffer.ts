@@ -7,7 +7,8 @@ import {
   sanitizeSecrets,
   sanitizeTabbyKeyLine
 } from '../security/secret-redactor'
-import { parseTabbyLogLine } from '../tabby/log-parser'
+import { noteTabbyLogLine, resetTabbyLoadFacts } from '../tabby/load-facts'
+import { assembleTabbyLogLine, parseTabbyLogLine } from '../tabby/log-parser'
 
 export type LogLevel = 'info' | 'error' | 'warn' | 'debug'
 
@@ -34,6 +35,8 @@ export interface ParsedLogEvent {
   isUnload?: boolean
   isError?: boolean
   isRequest?: boolean
+  /** Prompt tokeny (cached + nové) z Tabby metrik. */
+  promptTokens?: number
   slotId?: number
   taskId?: number
   phase?: ActiveRequestPhase
@@ -208,6 +211,8 @@ export class LogBuffer {
   private nextManagedTaskId = -2
   private vendor: LogVendor = 'ollama'
   private tabbyRequestIds = new Map<string, number>()
+  /** Rozpracovaný logický řádek Tabby — Rich zalamuje na šířku konzole. */
+  private tabbyPending = ''
   private readonly nowFn: () => number
   private readonly maxHistory: number
   private readonly streamStates: Record<LogStream, StreamRedactorState> = {
@@ -291,6 +296,7 @@ export class LogBuffer {
       this.streamStates[stream] = createStreamState()
     }
     this.pendingSensitiveNextLine = false
+    this.tabbyPending = ''
   }
 
   private processStreamText(stream: LogStream, text: string): void {
@@ -461,11 +467,14 @@ export class LogBuffer {
     this.pendingRequestKind = null
     this.nextManagedTaskId = -2
     this.tabbyRequestIds.clear()
+    this.tabbyPending = ''
+    resetTabbyLoadFacts()
   }
 
   private createEntry(stream: 'stdout' | 'stderr', line: string): LogEntry {
+    const timestamp = this.now()
     const parsed =
-      this.vendor === 'tabby' ? this.parseTabbyLine(line) : parseLine(line)
+      this.vendor === 'tabby' ? this.parseTabbyLine(line, timestamp) : parseLine(line)
     const explicitLevel = parseExplicitLevel(line)
     // Runner slot lines arrive on stderr without level=; they are not errors.
     const stderrIsError =
@@ -500,7 +509,7 @@ export class LogBuffer {
 
     return {
       id: this.nextId++,
-      timestamp: this.now(),
+      timestamp,
       stream,
       text: line,
       level,
@@ -509,8 +518,10 @@ export class LogBuffer {
     }
   }
 
-  private parseTabbyLine(line: string): ParsedLogEvent {
-    const t = parseTabbyLogLine(line)
+  private parseTabbyLine(line: string, at: number): ParsedLogEvent {
+    this.tabbyPending = assembleTabbyLogLine(this.tabbyPending, line)
+    noteTabbyLogLine(line, at)
+    const t = parseTabbyLogLine(line, this.tabbyPending)
     return {
       isLoad: t.isLoad,
       isUnload: t.isUnload,
@@ -522,6 +533,7 @@ export class LogBuffer {
       elapsedSeconds: t.elapsedSeconds,
       nTokens: t.generationTokens,
       tokenKind: t.generationTokens != null ? 'generation' : undefined,
+      promptTokens: t.promptTokens,
       taskId: t.requestId ? this.tabbyTaskId(t.requestId) : undefined
     }
   }
@@ -617,6 +629,7 @@ export class LogBuffer {
         req.nTokens = p.nTokens
         req.generationTokens = p.nTokens
       }
+      if (p.promptTokens != null) req.promptTokens = p.promptTokens
       if (p.elapsedSeconds != null) req.elapsedSeconds = p.elapsedSeconds
       if (p.generationTokensPerSec != null) {
         req.generationTokensPerSec = p.generationTokensPerSec
