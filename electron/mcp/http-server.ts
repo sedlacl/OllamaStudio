@@ -17,6 +17,7 @@ import { createStudioMcpServer } from './tools'
 const MCP_HOST = '127.0.0.1'
 const MCP_PATH = '/mcp'
 const MAX_REQUEST_BYTES = 1024 * 1024
+const MAX_SESSIONS = 32
 
 interface McpSession {
   server: McpServer
@@ -42,7 +43,7 @@ export function isBearerAuthorized(
 ): boolean {
   if (!expectedToken) return false
   const value = headerValue(authorization)
-  const match = value?.match(/^Bearer ([A-Za-z0-9_-]+)$/)
+  const match = value?.match(/^Bearer ([^\s]+)$/)
   if (!match) return false
   const supplied = Buffer.from(match[1], 'utf8')
   const expected = Buffer.from(expectedToken, 'utf8')
@@ -242,8 +243,16 @@ export class McpHttpServer {
       return
     }
     if (!isBearerAuthorized(request.headers.authorization, config.token)) {
-      writeRpcError(response, 401, 'Unauthorized')
-      response.setHeader('WWW-Authenticate', 'Bearer')
+      writeJson(
+        response,
+        401,
+        {
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'Unauthorized' },
+          id: null
+        },
+        { 'WWW-Authenticate': 'Bearer' }
+      )
       return
     }
     if (request.method !== 'POST' && request.method !== 'GET' && request.method !== 'DELETE') {
@@ -252,6 +261,7 @@ export class McpHttpServer {
       return
     }
 
+    const body = request.method === 'POST' ? await readJsonBody(request) : undefined
     const sessionId = headerValue(request.headers['mcp-session-id'])
     if (sessionId) {
       const existing = this.sessions.get(sessionId)
@@ -259,7 +269,7 @@ export class McpHttpServer {
         writeRpcError(response, 404, 'Unknown MCP session')
         return
       }
-      await existing.transport.handleRequest(request, response)
+      await existing.transport.handleRequest(request, response, body)
       return
     }
 
@@ -267,9 +277,12 @@ export class McpHttpServer {
       writeRpcError(response, 400, 'Missing MCP session ID')
       return
     }
-    const body = await readJsonBody(request)
     if (!isInitializeBody(body)) {
       writeRpcError(response, 400, 'A new MCP session must start with initialize')
+      return
+    }
+    if (this.sessions.size >= MAX_SESSIONS) {
+      writeRpcError(response, 429, 'Too many MCP sessions')
       return
     }
 
@@ -277,8 +290,12 @@ export class McpHttpServer {
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
       enableJsonResponse: true,
-      onsessioninitialized: (id) => this.sessions.set(id, session),
-      onsessionclosed: (id) => this.sessions.delete(id)
+      onsessioninitialized: (id) => {
+        this.sessions.set(id, session)
+      },
+      onsessionclosed: (id) => {
+        this.sessions.delete(id)
+      }
     })
     const mcpServer = createStudioMcpServer(this.appVersion())
     session = { server: mcpServer, transport }

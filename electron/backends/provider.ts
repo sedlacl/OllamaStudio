@@ -109,7 +109,15 @@ export interface BackendProvider {
       maxTokens: number
       timeoutMs: number
     }
-  ): Promise<import('../mcp/test-query').TestQueryProviderResult>
+  ): Promise<{
+    text: string
+    thinking: string
+    ttftMs: number
+    totalMs: number
+    generatedTokens: number | null
+    tokensPerSecond: number | null
+    promptTokens: number | null
+  }>
   checkForUpdate(force?: boolean): Promise<OllamaUpdateInfo>
   deleteModel(modelId: string): Promise<void>
   cloneModel(source: string, destination: string): Promise<void>

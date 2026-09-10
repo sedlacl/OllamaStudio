@@ -381,7 +381,7 @@ export const en: MessageTree = {
     mcp: {
       sectionTitle: 'MCP server (localhost)',
       hint:
-        'Streamable HTTP MCP on 127.0.0.1 only, protected by a bearer token. External agents (e.g. Cursor) can read logs, metrics, and manage the backend — never share the token off this machine.',
+        'Streamable HTTP MCP on 127.0.0.1 only, protected by a bearer token. External agents (e.g. Cursor) can read logs, metrics, and manage the backend — never share the token off this machine. Set the OLLAMA_STUDIO_MCP_TOKEN environment variable for Cursor (see snippet below) and restart Cursor after changes.',
       enabled: 'Enable MCP server while Studio is running',
       port: 'Port',
       portInvalid: 'Port must be between 1024 and 65535.',
@@ -391,6 +391,8 @@ export const en: MessageTree = {
       statusListening: 'Listening',
       statusError: 'Error',
       token: 'Bearer token',
+      tokenHelp:
+        'Copy the token into the OLLAMA_STUDIO_MCP_TOKEN environment variable (system or user scope). Use this for one-time setup — the snippet below never contains the real token.',
       showToken: 'Show',
       hideToken: 'Hide',
       copyToken: 'Copy token',
@@ -398,8 +400,10 @@ export const en: MessageTree = {
       regenerateToken: 'Generate new token',
       regenerateConfirmTitle: 'New MCP token?',
       regenerateConfirmBody:
-        'The current token will stop working. Clients using the old token must update mcp.json.',
+        'The current token will stop working. Update OLLAMA_STUDIO_MCP_TOKEN and restart Cursor — keep the env placeholder from the snippet in mcp.json.',
       cursorSnippet: 'Cursor mcp.json snippet',
+      cursorSnippetHelp:
+        'The snippet only includes the ${env:OLLAMA_STUDIO_MCP_TOKEN} placeholder. Put the real token in the environment variable, not in mcp.json.',
       copyCursorSnippet: 'Copy snippet',
       snippetCopied: 'Snippet copied',
       save: 'Save MCP settings',

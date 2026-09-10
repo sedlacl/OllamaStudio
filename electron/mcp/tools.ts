@@ -13,6 +13,15 @@ import {
   studioMcpHandlers,
   type StudioMcpHandlers
 } from './handlers'
+import {
+  TEST_QUERY_DEFAULT_MAX_TOKENS,
+  TEST_QUERY_DEFAULT_TIMEOUT_MS,
+  TEST_QUERY_MAX_MAX_TOKENS,
+  TEST_QUERY_MAX_PROMPT_CHARS,
+  TEST_QUERY_MAX_TIMEOUT_MS,
+  TEST_QUERY_MIN_MAX_TOKENS,
+  TEST_QUERY_MIN_TIMEOUT_MS
+} from './test-query'
 
 const SECRET_FIELD =
   /^(?:authorization|token|hf_?token|api_?key|admin_?key|password|secret|access_?token)$/i
@@ -115,6 +124,7 @@ export const STUDIO_TOOL_NAMES = [
   'load_model',
   'unload_model',
   'run_speed_test',
+  'run_test_query',
   'acquire_model',
   'start_server',
   'stop_server',
@@ -133,11 +143,7 @@ export const STUDIO_TOOL_NAMES = [
   'delete_preset'
 ] as const
 
-/**
- * Registers the stable Studio tool set. run_test_query is intentionally kept
- * outside this module's handler surface so its parallel provider implementation
- * can add one adjacent registration without changing existing tools.
- */
+/** Registers the stable Studio tool set. */
 export function registerStudioTools(
   server: McpServer,
   handlers: StudioMcpHandlers = studioMcpHandlers
@@ -273,6 +279,34 @@ export function registerStudioTools(
       annotations: mutating
     },
     (ref) => execute(() => handlers.runSpeedTest(ref as ModelRef))
+  )
+
+  server.registerTool(
+    'run_test_query',
+    {
+      description:
+        'Run a short non-streaming test prompt through a provider model and return bounded text plus available latency and token metrics.',
+      inputSchema: {
+        ...modelRefShape,
+        prompt: z.string().trim().min(1).max(TEST_QUERY_MAX_PROMPT_CHARS),
+        maxTokens: z
+          .number()
+          .int()
+          .min(TEST_QUERY_MIN_MAX_TOKENS)
+          .max(TEST_QUERY_MAX_MAX_TOKENS)
+          .optional()
+          .default(TEST_QUERY_DEFAULT_MAX_TOKENS),
+        timeoutMs: z
+          .number()
+          .int()
+          .min(TEST_QUERY_MIN_TIMEOUT_MS)
+          .max(TEST_QUERY_MAX_TIMEOUT_MS)
+          .optional()
+          .default(TEST_QUERY_DEFAULT_TIMEOUT_MS)
+      },
+      annotations: mutating
+    },
+    (input) => execute(() => handlers.runTestQuery(input))
   )
 
   server.registerTool(
@@ -511,7 +545,10 @@ export function registerStudioTools(
   )
 }
 
-export function createStudioMcpServer(version: string): McpServer {
+export function createStudioMcpServer(
+  version: string,
+  handlers: StudioMcpHandlers = studioMcpHandlers
+): McpServer {
   const server = new McpServer(
     { name: 'OllamaStudio', version },
     {
@@ -519,6 +556,6 @@ export function createStudioMcpServer(version: string): McpServer {
         'Inspect status and resources before mutating runtime state. Destructive tools are explicitly marked.'
     }
   )
-  registerStudioTools(server)
+  registerStudioTools(server, handlers)
   return server
 }

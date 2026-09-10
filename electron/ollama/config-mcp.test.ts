@@ -84,12 +84,16 @@ describe('MCP config', () => {
     expect(stored.mcp.token).toBe(second.token)
   })
 
-  it('cursor snippet uses localhost url and bearer header', () => {
-    const snippet = buildCursorMcpJsonSnippet({ port: 3847, token: 'test-token' })
+  it('cursor snippet uses localhost url and env bearer placeholder', () => {
+    const snippet = buildCursorMcpJsonSnippet({ port: 3847 })
+    expect(snippet).not.toContain('test-token')
+    expect(snippet).toContain('${env:OLLAMA_STUDIO_MCP_TOKEN}')
     const parsed = JSON.parse(snippet) as {
       mcpServers: Record<string, { url: string; headers: { Authorization: string } }>
     }
     expect(parsed.mcpServers['ollama-studio'].url).toBe('http://127.0.0.1:3847/mcp')
-    expect(parsed.mcpServers['ollama-studio'].headers.Authorization).toBe('Bearer test-token')
+    expect(parsed.mcpServers['ollama-studio'].headers.Authorization).toBe(
+      'Bearer ${env:OLLAMA_STUDIO_MCP_TOKEN}'
+    )
   })
 })

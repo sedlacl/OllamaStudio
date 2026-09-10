@@ -41,6 +41,11 @@ export function getSpeedTests(): Record<string, ModelSpeedTestResult> {
   return out
 }
 
+export function getSpeedTest(ref: ModelRef): ModelSpeedTestResult | null {
+  const stored = registry.get(modelRefKey(ref))
+  return stored ? sanitizeSpeedTestResult(stored.result) : null
+}
+
 export function clearAllSpeedTests(): void {
   registry.clear()
 }

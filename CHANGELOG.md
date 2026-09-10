@@ -6,6 +6,25 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.6.1] — 2026-09-10
+
+### Security
+
+- Snippet pro Cursor `mcp.json` už neobsahuje skutečný bearer token — pouze placeholder `${env:OLLAMA_STUDIO_MCP_TOKEN}`; token se nastavuje výhradně přes proměnnou prostředí
+
+## [1.6.0] — 2026-09-10
+
+### Added
+
+- Lokální Streamable HTTP MCP server na `127.0.0.1` s bearer tokenem, jeho rotací a stavem přímo na stránce Server
+- Sada 29 MCP nástrojů pro stav Studia, logy, prostředky, modely, profily, stahování, testovací dotazy, benchmarky, integrace a správu backendů
+- Testovací dotaz nad Ollama i TabbyAPI vrací omezený a redigovaný text spolu s dostupnými metrikami TTFT, TPS a počtu tokenů
+
+### Changed
+
+- Nastavení MCP se bezpečně migruje do konfigurace aplikace, změna portu či tokenu ukončí staré relace a okamžitě přepne běžící server
+- Společné provider kontrakty nyní zpřístupňují jednotný testovací dotaz pro Ollama i TabbyAPI
+
 ## [1.5.0] — 2026-09-10
 
 ### Added

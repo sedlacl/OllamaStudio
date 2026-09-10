@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n/I18nProvider'
 import { api, type McpConfig, type McpRuntimeState, type McpSettingsSnapshot } from '../types/api'
 import { buildCursorMcpJsonSnippet } from '../../shared/mcp-cursor-snippet'
@@ -21,6 +21,14 @@ function runtimeStatusKey(
 const MCP_PORT_MIN = 1024
 const MCP_PORT_MAX = 65535
 
+function parseMcpPort(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null
+  const port = Number(value)
+  return Number.isSafeInteger(port) && port >= MCP_PORT_MIN && port <= MCP_PORT_MAX
+    ? port
+    : null
+}
+
 export function McpServerSection(): JSX.Element {
   const { t } = useI18n()
   const [snapshot, setSnapshot] = useState<McpSettingsSnapshot | null>(null)
@@ -31,8 +39,10 @@ export function McpServerSection(): JSX.Element {
   const [confirmRegenerate, setConfirmRegenerate] = useState(false)
   const [tokenRevealed, setTokenRevealed] = useState(false)
   const [copyNotice, setCopyNotice] = useState<'token' | 'snippet' | null>(null)
+  const initialized = useRef(false)
 
   const applySnapshot = useCallback((next: McpSettingsSnapshot): void => {
+    initialized.current = true
     setSnapshot(next)
     setDraftEnabled(next.settings.enabled)
     setDraftPort(String(next.settings.port))
@@ -41,7 +51,10 @@ export function McpServerSection(): JSX.Element {
   const refresh = useCallback((): void => {
     void api()
       .getMcpSettings()
-      .then(applySnapshot)
+      .then((next) => {
+        if (initialized.current) setSnapshot(next)
+        else applySnapshot(next)
+      })
       .catch(() => {})
   }, [applySnapshot])
 
@@ -51,24 +64,21 @@ export function McpServerSection(): JSX.Element {
     return () => window.clearInterval(poll)
   }, [refresh])
 
-  const portValid = useMemo(() => {
-    const n = Number.parseInt(draftPort, 10)
-    return Number.isFinite(n) && n >= MCP_PORT_MIN && n <= MCP_PORT_MAX
-  }, [draftPort])
+  const parsedPort = useMemo(() => parseMcpPort(draftPort), [draftPort])
+  const portValid = parsedPort !== null
 
   const dirty = useMemo(() => {
     if (!snapshot) return false
-    const port = Number.parseInt(draftPort, 10)
-    return draftEnabled !== snapshot.settings.enabled || port !== snapshot.settings.port
-  }, [draftEnabled, draftPort, snapshot])
+    return draftEnabled !== snapshot.settings.enabled || parsedPort !== snapshot.settings.port
+  }, [draftEnabled, parsedPort, snapshot])
 
   const handleSave = async (): Promise<void> => {
-    if (!portValid) return
+    if (parsedPort === null) return
     setSaving(true)
     try {
       const next = await api().saveMcpSettings({
         enabled: draftEnabled,
-        port: Number.parseInt(draftPort, 10)
+        port: parsedPort
       })
       applySnapshot(next)
     } finally {
@@ -97,10 +107,7 @@ export function McpServerSection(): JSX.Element {
   const settings: McpConfig | null = snapshot?.settings ?? null
   const runtime = snapshot?.runtime
 
-  const snippet =
-    settings != null
-      ? buildCursorMcpJsonSnippet({ port: settings.port, token: settings.token })
-      : ''
+  const snippet = settings != null ? buildCursorMcpJsonSnippet({ port: settings.port }) : ''
 
   return (
     <div className="card" style={{ marginBottom: 16 }}>
@@ -150,6 +157,9 @@ export function McpServerSection(): JSX.Element {
       {settings && (
         <div className="form-field">
           <label htmlFor="mcp-token">{t('server.mcp.token')}</label>
+          <p className="field-help" style={{ marginBottom: 8 }}>
+            {t('server.mcp.tokenHelp')}
+          </p>
           <div className="btn-row" style={{ alignItems: 'stretch', flexWrap: 'wrap' }}>
             <input
               id="mcp-token"
@@ -179,6 +189,9 @@ export function McpServerSection(): JSX.Element {
       {settings && (
         <div className="form-field">
           <span className="metric-label">{t('server.mcp.cursorSnippet')}</span>
+          <p className="field-help" style={{ marginBottom: 8 }}>
+            {t('server.mcp.cursorSnippetHelp')}
+          </p>
           <pre className="mono" style={{ maxHeight: 160, overflow: 'auto', fontSize: 12 }}>
             {snippet}
           </pre>

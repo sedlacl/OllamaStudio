@@ -10,10 +10,7 @@ import {
 } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
-import {
-  type ModelSpeedTestResult,
-  type ServeConnectionStatus
-} from '../ollama/client'
+import { type ServeConnectionStatus } from '../ollama/client'
 import {
   getActiveBackend,
   getBackendSettings,
@@ -25,18 +22,21 @@ import {
   saveMcpSettings,
   type AppConfig
 } from '../ollama/config'
+import { McpHttpServer } from '../mcp/http-server'
 import { getMcpRuntimeState } from '../mcp/runtime-state'
 import {
+  deleteStudioModel,
+  runModelSpeedTest
+} from '../mcp/handlers'
+import {
   clearAllLoadOptions,
-  getLoadOptions,
-  removeLoadOptions
+  getLoadOptions
 } from '../ollama/load-options-registry'
 import { logBuffer, type LogEntry } from '../ollama/log-buffer'
 import {
   clearStudioLogs,
   prepareStudioLogScrub
 } from '../security/studio-log-persistence'
-import { sanitizeSpeedTestResult } from '../security/sanitize-state'
 import { registerTabbyAuthSecrets, releaseTabbyAuthSecrets, watchTabbyAuth } from '../tabby/auth'
 import {
   getActiveModelLoads,
@@ -55,9 +55,7 @@ import {
 } from '../ollama/opencode-config'
 import {
   clearAllSpeedTests,
-  getSpeedTests,
-  recordSpeedTest,
-  removeSpeedTest
+  getSpeedTests
 } from '../ollama/speed-test-registry'
 import {
   deletePreset,
@@ -98,7 +96,6 @@ import { invokeProviderAction } from '../backends/provider-actions'
 import {
   type AcquisitionState,
   isBackendId,
-  modelRefKey,
   type ModelOperationRequest,
   type ModelRef
 } from '../../shared/backend-contract'
@@ -115,8 +112,7 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let loadedModelCount = 0
 let tabbyAuthWatchRelease: (() => void) | null = null
-/** Testy rychlosti běžící právě teď — dva naráz by si na runneru překážely. */
-const speedTestsInFlight = new Set<string>()
+const mcpHttpServer = new McpHttpServer(() => app.getVersion())
 
 function activeBackendUrl(): string {
   return getActiveProvider().getBaseUrl()
@@ -186,25 +182,6 @@ function emitAcquisitionChanged(state: AcquisitionState): void {
     },
     form: { repoId, revision, folderName }
   })
-}
-
-async function runSpeedTest(ref: ModelRef): Promise<ModelSpeedTestResult> {
-  const name = ref.modelId
-  const key = modelRefKey(ref)
-  if (speedTestsInFlight.has(key)) {
-    throw new Error(tMain('errors.speedTestRunning', { name }))
-  }
-  speedTestsInFlight.add(key)
-  try {
-    const result = sanitizeSpeedTestResult(
-      await modelCoordinator.test(ref)
-    )
-    recordSpeedTest(ref, result)
-    mainWindow?.webContents.send('speed-tests-changed')
-    return result
-  } finally {
-    speedTestsInFlight.delete(key)
-  }
 }
 
 function syncLocaleFromConfig(config?: AppConfig): Locale {
@@ -516,9 +493,13 @@ function registerIpc(): void {
       if (!provider) throw new Error('Invalid model reference')
       const onLoaded = provider.capabilities.speedTestAutoAfterLoad
         ? (loaded: ModelRef) => {
-            void runSpeedTest(loaded).catch(() => {
-              /* test je doplněk načtení, chybu uživateli nehlásíme */
-            })
+            void runModelSpeedTest(loaded)
+              .then(() => {
+                mainWindow?.webContents.send('speed-tests-changed')
+              })
+              .catch(() => {
+                /* test je doplněk načtení, chybu uživateli nehlásíme */
+              })
           }
         : undefined
       return modelCoordinator.load(request, onLoaded)
@@ -536,7 +517,9 @@ function registerIpc(): void {
 
   ipcMain.handle('model-test-speed', async (_e, ref: ModelRef) => {
     try {
-      return await runSpeedTest(ref)
+      const result = await runModelSpeedTest(ref)
+      mainWindow?.webContents.send('speed-tests-changed')
+      return result
     } catch (err) {
       throw serializeIpcError('model-test-speed', err, activeBackendUrl())
     }
@@ -558,9 +541,7 @@ function registerIpc(): void {
   ipcMain.handle('model-delete', async (_e, name: string) => {
     try {
       const provider = getActiveProvider()
-      await provider.deleteModel(name)
-      removeLoadOptions({ providerId: provider.id, modelId: name })
-      removeSpeedTest({ providerId: provider.id, modelId: name })
+      await deleteStudioModel({ providerId: provider.id, modelId: name })
     } catch (err) {
       throw serializeIpcError('model-delete', err, activeBackendUrl())
     }
@@ -688,17 +669,19 @@ function registerIpc(): void {
     runtime: getMcpRuntimeState()
   }))
 
-  ipcMain.handle('save-mcp-settings', (_e, patch: unknown) => {
+  ipcMain.handle('save-mcp-settings', async (_e, patch: unknown) => {
     const raw = patch && typeof patch === 'object' ? (patch as Record<string, unknown>) : {}
     const next = saveMcpSettings({
       ...(typeof raw.enabled === 'boolean' ? { enabled: raw.enabled } : {}),
       ...(typeof raw.port === 'number' && Number.isFinite(raw.port) ? { port: raw.port } : {})
     })
+    await mcpHttpServer.applyConfig(next)
     return { settings: next, runtime: getMcpRuntimeState() }
   })
 
-  ipcMain.handle('regenerate-mcp-token', () => {
+  ipcMain.handle('regenerate-mcp-token', async () => {
     const settings = regenerateMcpToken()
+    await mcpHttpServer.applyConfig(settings)
     return { settings, runtime: getMcpRuntimeState() }
   })
 
@@ -719,6 +702,7 @@ function registerIpc(): void {
     clearAllLoadOptions()
     clearAllSpeedTests()
     const state = await saveConfigAndRestartActive(merged)
+    await mcpHttpServer.applyConfig(getMcpSettings())
     syncLogVendor()
     updateTrayMenu()
     return state
@@ -867,6 +851,7 @@ app.whenReady().then(async () => {
   )
   createTray()
   registerIpc()
+  await mcpHttpServer.applyConfig(getMcpSettings())
 
   for (const provider of getAllProviders()) {
     provider.subscribe(() => {
@@ -907,7 +892,10 @@ app.on('before-quit', (event) => {
   if (quittingAfterShutdown) return
   event.preventDefault()
   quittingAfterShutdown = true
-  void shutdownAllBackends().finally(() => {
+  void Promise.all([
+    shutdownAllBackends(),
+    mcpHttpServer.stop()
+  ]).finally(() => {
     app.quit()
   })
 })

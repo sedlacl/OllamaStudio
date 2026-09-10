@@ -12,12 +12,12 @@ import { modelCatalog } from '../backends/model-catalog'
 import { modelCoordinator } from '../backends/model-coordinator'
 import { modelProfileStore } from '../backends/model-profile-store'
 import { getActiveProvider, getProvider } from '../backends/registry'
+import { tMain } from '../i18n'
 import {
   getActiveBackend,
   saveBackendSettings
 } from '../ollama/config'
 import {
-  getContinueConfigStatus,
   removeContinueModel,
   upsertContinueModel
 } from '../ollama/continue-config'
@@ -32,12 +32,11 @@ import {
   type PresetKind
 } from '../ollama/presets'
 import {
-  getSpeedTests,
+  getSpeedTest,
   recordSpeedTest,
   removeSpeedTest
 } from '../ollama/speed-test-registry'
 import {
-  getOpenCodeConfigStatus,
   removeOpenCodeModel,
   upsertOpenCodeModel
 } from '../ollama/opencode-config'
@@ -50,6 +49,10 @@ import {
   stopActiveBackend,
   switchActiveBackend
 } from '../tabby/active-backend'
+import {
+  runTestQuery as executeTestQuery,
+  TestQueryError
+} from './test-query'
 
 const speedTestsInFlight = new Set<string>()
 
@@ -75,7 +78,9 @@ function cleanRef(ref: ModelRef): ModelRef {
 export async function runModelSpeedTest(ref: ModelRef) {
   const normalized = cleanRef(ref)
   const key = modelRefKey(normalized)
-  if (speedTestsInFlight.has(key)) throw new Error('SPEED_TEST_ALREADY_RUNNING')
+  if (speedTestsInFlight.has(key)) {
+    throw new Error(tMain('errors.speedTestRunning', { name: normalized.modelId }))
+  }
   speedTestsInFlight.add(key)
   try {
     const result = sanitizeSpeedTestResult(await modelCoordinator.test(normalized))
@@ -99,8 +104,7 @@ export async function deleteStudioModel(ref: ModelRef): Promise<{ ok: true }> {
 }
 
 function speedTestFor(ref: ModelRef): unknown {
-  const tests = getSpeedTests()
-  return tests[ref.modelId.trim().toLocaleLowerCase('en-US')] ?? null
+  return getSpeedTest(ref)
 }
 
 function limitLogText(text: string): string {
@@ -133,10 +137,15 @@ export const studioMcpHandlers = {
       if (input.category && entry.category !== input.category) return false
       return !needle || entry.text.toLocaleLowerCase('en-US').includes(needle)
     })
-    const entries = matching.slice(-limit).map((entry) => ({
-      ...entry,
-      text: limitLogText(entry.text)
-    }))
+    const entries = []
+    let outputChars = 0
+    for (let index = matching.length - 1; index >= 0 && entries.length < limit; index -= 1) {
+      const entry = matching[index]
+      const text = limitLogText(entry.text)
+      if (entries.length > 0 && outputChars + text.length > 200_000) break
+      outputChars += text.length
+      entries.unshift({ ...entry, text })
+    }
     return {
       entries,
       returned: entries.length,
@@ -231,6 +240,10 @@ export const studioMcpHandlers = {
     return runModelSpeedTest(ref)
   },
 
+  runTestQuery(input: unknown) {
+    return executeTestQuery(input)
+  },
+
   acquireModel(request: ModelAcquisitionRequest) {
     return modelAcquisitionManager.start(request)
   },
@@ -283,7 +296,11 @@ export const studioMcpHandlers = {
   upsertContinue(ref: ModelRef) {
     const normalized = cleanRef(ref)
     if (normalized.providerId !== 'ollama') throw new Error('CONTINUE_UNSUPPORTED_PROVIDER')
-    return upsertContinueModel(normalized, modelProfileStore.get(normalized))
+    const ollamaRef: ModelRef & { providerId: 'ollama' } = {
+      providerId: 'ollama',
+      modelId: normalized.modelId
+    }
+    return upsertContinueModel(ollamaRef, modelProfileStore.get(ollamaRef))
   },
 
   removeContinue(ref: ModelRef) {
@@ -309,18 +326,14 @@ export const studioMcpHandlers = {
 
   deletePreset(kind: PresetKind, id: string) {
     return { deleted: deletePreset(kind, id) }
-  },
-
-  integrationFilesStatus() {
-    return {
-      continue: getContinueConfigStatus(),
-      opencode: getOpenCodeConfigStatus()
-    }
   }
 }
 
 export type StudioMcpHandlers = typeof studioMcpHandlers
 
 export function formatMcpHandlerError(error: unknown): string {
+  if (error instanceof TestQueryError) {
+    return `${error.code}: ${sanitizeUnknownError(error)}`
+  }
   return sanitizeUnknownError(error)
 }

@@ -379,7 +379,7 @@ export const cs = {
     mcp: {
       sectionTitle: 'MCP server (localhost)',
       hint:
-        'Streamable HTTP MCP pouze na 127.0.0.1 s bearer tokenem. Externí agenti (např. Cursor) mohou číst logy, metriky a spravovat backend — token nikdy nesdílejte mimo tento počítač.',
+        'Streamable HTTP MCP pouze na 127.0.0.1 s bearer tokenem. Externí agenti (např. Cursor) mohou číst logy, metriky a spravovat backend — token nikdy nesdílejte mimo tento počítač. Do Cursoru nastavte proměnnou prostředí OLLAMA_STUDIO_MCP_TOKEN (viz snippet níže) a po změně restartujte Cursor.',
       enabled: 'Zapnout MCP server při běhu Studia',
       port: 'Port',
       portInvalid: 'Port musí být v rozsahu 1024–65535.',
@@ -389,6 +389,8 @@ export const cs = {
       statusListening: 'Naslouchá',
       statusError: 'Chyba',
       token: 'Bearer token',
+      tokenHelp:
+        'Token zkopírujte do systémové proměnné OLLAMA_STUDIO_MCP_TOKEN (nebo do uživatelského prostředí). Slouží jen pro jednorázové nastavení — snippet níže ho neobsahuje.',
       showToken: 'Zobrazit',
       hideToken: 'Skrýt',
       copyToken: 'Kopírovat token',
@@ -396,8 +398,10 @@ export const cs = {
       regenerateToken: 'Vygenerovat nový token',
       regenerateConfirmTitle: 'Nový MCP token?',
       regenerateConfirmBody:
-        'Stávající token přestane platit. Klienti s původním tokenem se nepřipojí, dokud neaktualizujete mcp.json.',
+        'Stávající token přestane platit. Aktualizujte hodnotu OLLAMA_STUDIO_MCP_TOKEN a restartujte Cursor — v mcp.json stačí ponechat env placeholder ze snippetu.',
       cursorSnippet: 'Snippet pro Cursor mcp.json',
+      cursorSnippetHelp:
+        'Snippet obsahuje pouze placeholder ${env:OLLAMA_STUDIO_MCP_TOKEN}. Skutečný token vložte do proměnné prostředí, ne do souboru mcp.json.',
       copyCursorSnippet: 'Kopírovat snippet',
       snippetCopied: 'Snippet zkopírován',
       save: 'Uložit MCP nastavení',
