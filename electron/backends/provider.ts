@@ -102,6 +102,14 @@ export interface BackendProvider {
   ): { ok: boolean; error?: string }
   unloadModel(modelId: string): Promise<void>
   testSpeed(modelId: string): Promise<ModelSpeedTestResult>
+  runTestQuery(
+    modelId: string,
+    params: {
+      prompt: string
+      maxTokens: number
+      timeoutMs: number
+    }
+  ): Promise<import('../mcp/test-query').TestQueryProviderResult>
   checkForUpdate(force?: boolean): Promise<OllamaUpdateInfo>
   deleteModel(modelId: string): Promise<void>
   cloneModel(source: string, destination: string): Promise<void>

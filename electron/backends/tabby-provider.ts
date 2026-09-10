@@ -530,6 +530,13 @@ export class TabbyProvider implements BackendProvider {
     return (await tabbyClient.testSpeed(modelId)) as ModelSpeedTestResult
   }
 
+  runTestQuery(
+    modelId: string,
+    params: { prompt: string; maxTokens: number; timeoutMs: number }
+  ) {
+    return tabbyClient.generateTestQuery(modelId, params)
+  }
+
   async checkForUpdate(_force = false): Promise<OllamaUpdateInfo> {
     return {
       current: 'TabbyAPI',

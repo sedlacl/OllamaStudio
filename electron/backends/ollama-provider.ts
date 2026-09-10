@@ -327,6 +327,18 @@ export class OllamaProvider implements BackendProvider {
     )
   }
 
+  runTestQuery(
+    modelId: string,
+    params: { prompt: string; maxTokens: number; timeoutMs: number }
+  ) {
+    return ollamaClient.generateTestQuery(modelId, {
+      ...params,
+      loadOptions:
+        getLoadOptions({ providerId: this.id, modelId })?.options ??
+        modelProfileStore.get({ providerId: this.id, modelId })
+    })
+  }
+
   checkForUpdate(force = false) {
     return ollamaClient.checkForUpdate({ force })
   }
