@@ -6,6 +6,17 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-09-11
+
+### Added
+
+- „Nastavit v OpenCode" u Tabby modelu rovnou zapne agentní režim — nastaví modelu reasoning i parser tool callů, zapamatuje si to v profilu a načtený model kvůli tomu načte znovu
+
+### Fixed
+
+- Ikonka `OC` u modelu, který v OpenCode configu není, už nesvítí oranžově kvůli varování o malém kontextu — varování platí jen pro skutečně zapsané modely
+- Logy Tabby už nezaplavují ASGI tracebacky (`Cannot call write() when UVStream is closing`) — status polly z Přehledu se během generování nezruší po 5 s
+
 ## [1.10.0] — 2026-09-11
 
 ### Added

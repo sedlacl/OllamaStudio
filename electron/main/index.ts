@@ -38,6 +38,9 @@ import {
   prepareStudioLogScrub
 } from '../security/studio-log-persistence'
 import { registerTabbyAuthSecrets, releaseTabbyAuthSecrets, watchTabbyAuth } from '../tabby/auth'
+import { ensureTabbyAgentMode } from '../tabby/agent-mode'
+import { tabbyClient } from '../tabby/client'
+import { tabbyProvider } from '../backends/tabby-provider'
 import {
   getActiveModelLoads,
   initModelLoadManager
@@ -836,7 +839,7 @@ function registerIpc(): void {
         : []
     )
   )
-  ipcMain.handle('opencode-upsert-model', (_e, ref: ModelRef) => {
+  ipcMain.handle('opencode-upsert-model', async (_e, ref: ModelRef) => {
     if (
       !ref ||
       (ref.providerId !== 'ollama' && ref.providerId !== 'tabby') ||
@@ -844,7 +847,32 @@ function registerIpc(): void {
     ) {
       throw new Error('Invalid model reference')
     }
-    return upsertOpenCodeModel(ref, modelProfileStore.get(ref))
+    const entry = upsertOpenCodeModel(ref, modelProfileStore.get(ref))
+    if (ref.providerId !== 'tabby') return entry
+
+    // Bez reasoning a tool parseru dostane OpenCode think a <tool_call> jako
+    // text, takže samotný zápis do opencode.json by agentní režim nerozjel.
+    const tabbyRef = { providerId: 'tabby' as const, modelId: ref.modelId }
+    const agent = await ensureTabbyAgentMode(ref.modelId, {
+      getProfile: () => modelProfileStore.get(tabbyRef),
+      saveProfile: (profile) => {
+        modelProfileStore.save(tabbyRef, profile)
+      },
+      isLoaded: async () => {
+        const current = await tabbyClient.getCurrentModel()
+        return current?.modelId === ref.modelId
+      },
+      reload: (profile) => {
+        tabbyProvider.loadModel(ref.modelId, {
+          modelName: ref.modelId,
+          ...profile
+        })
+      }
+    })
+    return {
+      ...entry,
+      agentMode: { enabled: true, reloading: agent.reloading }
+    }
   })
   ipcMain.handle('opencode-remove-model', (_e, ref: ModelRef) => {
     if (

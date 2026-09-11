@@ -12,6 +12,19 @@ const STATE_CLASS: Record<ToolConfigState, string> = {
   invalid: 'tool-indicator-invalid'
 }
 
+/**
+ * Model je v konfiguraci nástroje. Varování o malém kontextu se počítá
+ * i z očekávaných hodnot, takže bez téhle podmínky svítí i u modelu,
+ * který v configu vůbec není.
+ */
+function isConfigured(match: ToolConfigMatch | undefined): boolean {
+  return match?.state === 'current' || match?.state === 'stale'
+}
+
+export function showsContextWarning(match: ToolConfigMatch | undefined): boolean {
+  return isConfigured(match) && match?.contextTooSmall === true
+}
+
 function mismatchLabel(kind: ToolConfigMismatch, t: (key: MessageKey) => string): string {
   if (kind === 'apiBase') return t('models.mismatchApiBase')
   if (kind === 'outputLength') return t('models.mismatchOutput')
@@ -27,7 +40,7 @@ export function toolConfigTooltip(
   if (!match) return t('models.toolUnknown', { tool: toolName })
 
   const base = stateTooltip(toolName, match, t)
-  if (!match.contextTooSmall) return base
+  if (!showsContextWarning(match)) return base
   return `${base}\n${t('models.toolContextTooSmall', {
     context: match.contextLength ?? match.expectedContextLength ?? 0
   })}`
@@ -78,7 +91,7 @@ function ToolIndicator({
   const short = tool === 'continue' ? t('models.toolContinueShort') : t('models.toolOpenCodeShort')
   return (
     <span
-      className={`tool-indicator ${match?.contextTooSmall ? STATE_CLASS.stale : STATE_CLASS[state]}`}
+      className={`tool-indicator ${showsContextWarning(match) ? STATE_CLASS.stale : STATE_CLASS[state]}`}
       title={title}
       aria-label={title}
     >

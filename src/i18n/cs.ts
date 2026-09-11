@@ -166,6 +166,9 @@ export const cs = {
     opencodeRemoveConfirm: 'Odebrat „{name}" z OpenCode konfigurace?',
     continueUpserted: 'Continue: model „{name}" ({model}) byl {action} podle aktuálních settings.',
     opencodeUpserted: 'OpenCode: model „{name}" ({model}) byl {action} podle aktuálních settings.',
+    opencodeAgentReady: 'Agentní režim (reasoning + tooly) je pro tento model zapnutý.',
+    opencodeAgentReloading:
+      'Zapnul jsem agentní režim (reasoning + tooly) a model se kvůli tomu načítá znovu.',
     continueUpdated: 'aktualizován',
     continueUploaded: 'nahrán',
     continueRemoved: 'Continue: model „{name}" byl odebrán.',
@@ -712,6 +715,7 @@ export const cs = {
     outputChunkingHelp: 'Chunkovaný výstup generace.',
     vision: 'Vision',
     visionHelp: 'Načíst vision větve modelu.',
+    sectionAgent: 'Agentní režim (OpenCode)',
     sectionMtp: 'MTP (draft mode)',
     agentEnabled: 'OpenCode / tooly (Qwen)',
     agentEnabledHelp:

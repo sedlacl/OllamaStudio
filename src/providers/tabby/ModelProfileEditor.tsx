@@ -386,7 +386,7 @@ export default function TabbyModelProfileEditor({
           </div>
 
           <div className="load-section">
-            <div className="load-section-heading">{t('loadTabbyDialog.sectionMtp')}</div>
+            <div className="load-section-heading">{t('loadTabbyDialog.sectionAgent')}</div>
 
             <div className="load-setting-row">
               <div>
@@ -400,6 +400,10 @@ export default function TabbyModelProfileEditor({
                 onChange={(e) => update('agentEnabled', e.target.checked)}
               />
             </div>
+          </div>
+
+          <div className="load-section">
+            <div className="load-section-heading">{t('loadTabbyDialog.sectionMtp')}</div>
 
             <div className="load-setting-row">
               <div>

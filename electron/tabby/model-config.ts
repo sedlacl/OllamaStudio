@@ -94,8 +94,42 @@ export function applyModelAgentYaml(
   )
 }
 
+/**
+ * Je v modelovém configu agentní režim doopravdy zapnutý? Samotné
+ * `reasoning: true` nestačí — bez `tool_format` Tabby tool cally neparsuje
+ * a OpenCode dostane XML místo `tool_calls`.
+ */
+export function modelAgentYamlEnabled(raw: string): boolean {
+  const lines = raw.split('\n')
+  const start = lines.findIndex((line) => /^model\s*:/.test(line))
+  if (start < 0) return false
+
+  let reasoning = false
+  let toolFormat = false
+  for (const line of lines.slice(start + 1)) {
+    if (/^[A-Za-z_][\w]*\s*:/.test(line)) break
+    const pair = line.match(/^\s{2}([A-Za-z_][\w]*)\s*:\s*(.*)$/)
+    if (!pair) continue
+    if (pair[1] === 'reasoning') reasoning = pair[2].trim() === 'true'
+    if (pair[1] === 'tool_format') toolFormat = pair[2].trim().length > 0
+  }
+  return reasoning && toolFormat
+}
+
 function modelConfigPath(modelDir: string, modelName: string): string {
   return join(modelDir, modelName, 'tabby_config.yml')
+}
+
+/** Stav agentního režimu z modelového tabby_config.yml (chybějící soubor = vypnuto). */
+export function readModelAgentEnabled(modelName: string, tabby?: TabbyConfig): boolean {
+  const cfg = tabby ?? loadConfig().tabby!
+  const path = modelConfigPath(resolveTabbyModelDir(cfg), modelName)
+  if (!existsSync(path)) return false
+  try {
+    return modelAgentYamlEnabled(readFileSync(path, 'utf-8'))
+  } catch {
+    return false
+  }
 }
 
 function backup(path: string): void {

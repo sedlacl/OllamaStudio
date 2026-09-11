@@ -31,6 +31,14 @@ export interface OpenCodeModelEntry {
   contextLength?: number
   outputLength?: number
   providerId: string
+  /**
+   * Tabby: stav agentního režimu po zápisu. `reloading` znamená, že se model
+   * načítá znovu, aby Tabby reasoning a tool parser opravdu použila.
+   */
+  agentMode?: {
+    enabled: boolean
+    reloading: boolean
+  }
 }
 
 /** Strop `limit.output` v OpenCode — vyšší hodnoty si stejně sráží na 32k. */

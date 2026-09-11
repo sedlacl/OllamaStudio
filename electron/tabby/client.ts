@@ -9,6 +9,15 @@ import { sanitizeUnknownError } from '../security/sanitize-state'
 import { adminAuthHeaders, apiAuthHeaders } from './auth'
 import type { LoadedModelSummary, ModelSummary } from '../backends/types'
 
+/**
+ * Tabby obsluhuje HTTP jedním event loopem, který inference během generování
+ * na několik sekund zablokuje. Status polly (každých 5 s z Přehledu) proto
+ * musí čekat dýl, než trvá stall — jinak je Studio zruší, uvicorn pak píše do
+ * zavřeného socketu a winloop to vyhodí jako `Cannot call write() when
+ * UVStream is closing` plus celý ASGI traceback do logu.
+ */
+const STATUS_TIMEOUT_MS = 20_000
+
 export interface TabbyLoadOptions {
   modelName: string
   maxSeqLen?: number
@@ -127,7 +136,7 @@ export class TabbyClient {
   async ping(): Promise<boolean> {
     try {
       const res = await studioFetch(`${this.baseUrl}/health`, {
-        signal: AbortSignal.timeout(5000)
+        signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
       })
       return res.ok
     } catch {
@@ -166,6 +175,8 @@ export class TabbyClient {
     headers?: Record<string, string>
   ): Promise<{ reached: boolean; status: number | null; json: unknown | null }> {
     try {
+      // Startovní identifikace listeneru zůstává krátká — na portu může sedět
+      // cizí služba, která neodpoví vůbec, a Studio na tom staví adopt/konflikt.
       const res = await studioFetch(`${this.baseUrl}${path}`, {
         headers,
         signal: AbortSignal.timeout(5000)
@@ -185,7 +196,7 @@ export class TabbyClient {
 
   async getHealth(): Promise<{ status: string; issues: unknown[] }> {
     const res = await studioFetch(`${this.baseUrl}/health`, {
-      signal: AbortSignal.timeout(5000)
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
     })
     if (!res.ok) throw await httpError(res)
     return (await res.json()) as { status: string; issues: unknown[] }
@@ -214,7 +225,7 @@ export class TabbyClient {
   async getCurrentModel(): Promise<LoadedModelSummary | null> {
     const res = await studioFetch(`${this.baseUrl}/v1/model`, {
       headers: this.apiHeaders(),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS)
     })
     if (res.status === 503) return null
     if (!res.ok) {

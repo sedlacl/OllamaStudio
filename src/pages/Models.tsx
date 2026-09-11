@@ -429,12 +429,17 @@ export default function Models(): JSX.Element {
     setError(null)
     try {
       const entry = await api().upsertOpenCodeModel(ref)
+      const upserted = t('models.opencodeUpserted', {
+        name: entry.name,
+        model: entry.model,
+        action: wasPresent ? t('models.continueUpdated') : t('models.continueUploaded')
+      })
       setLoadNotice(
-        t('models.opencodeUpserted', {
-          name: entry.name,
-          model: entry.model,
-          action: wasPresent ? t('models.continueUpdated') : t('models.continueUploaded')
-        })
+        entry.agentMode?.reloading
+          ? `${upserted} ${t('models.opencodeAgentReloading')}`
+          : entry.agentMode?.enabled
+            ? `${upserted} ${t('models.opencodeAgentReady')}`
+            : upserted
       )
       await refreshIntegrations(catalog.models.map(modelRefOf))
     } catch (e) {

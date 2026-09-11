@@ -168,6 +168,9 @@ export const en: MessageTree = {
     opencodeRemoveConfirm: 'Remove “{name}” from OpenCode config?',
     continueUpserted: 'Continue: model “{name}” ({model}) was {action} using current settings.',
     opencodeUpserted: 'OpenCode: model “{name}” ({model}) was {action} using current settings.',
+    opencodeAgentReady: 'Agent mode (reasoning + tools) is enabled for this model.',
+    opencodeAgentReloading:
+      'Agent mode (reasoning + tools) was enabled, so the model is reloading.',
     continueUpdated: 'updated',
     continueUploaded: 'added',
     continueRemoved: 'Continue: model “{name}” was removed.',
@@ -714,6 +717,7 @@ export const en: MessageTree = {
     outputChunkingHelp: 'Chunked generation output.',
     vision: 'Vision',
     visionHelp: 'Load vision branches of the model.',
+    sectionAgent: 'Agent mode (OpenCode)',
     sectionMtp: 'MTP (draft mode)',
     agentEnabled: 'OpenCode / tools (Qwen)',
     agentEnabledHelp:

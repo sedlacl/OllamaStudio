@@ -579,6 +579,11 @@ export interface OpenCodeModelEntry {
   apiBase?: string
   contextLength?: number
   outputLength?: number
+  /** Tabby: agentní režim (reasoning + tool parser); `reloading` = model se načítá znovu. */
+  agentMode?: {
+    enabled: boolean
+    reloading: boolean
+  }
   providerId: string
 }
 
