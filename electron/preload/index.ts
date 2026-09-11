@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { StudioApi } from '../../shared/studio-api'
 import type {
   AcquisitionState,
+  AppUpdateState,
   LogEntry,
   ModelLoadState,
   PullProgress,
@@ -17,6 +18,14 @@ const api = {
   saveModelProfile: (ref, profile) => ipcRenderer.invoke('save-model-profile', ref, profile),
   getServeStatus: () => ipcRenderer.invoke('get-serve-status'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkAppUpdate: () => ipcRenderer.invoke('check-app-update'),
+  downloadAppUpdate: () => ipcRenderer.invoke('download-app-update'),
+  restartAndInstallAppUpdate: () => ipcRenderer.invoke('restart-install-app-update'),
+  onAppUpdateChanged: (cb) => {
+    const handler = (_: unknown, state: AppUpdateState): void => cb(state)
+    ipcRenderer.on('app-update-changed', handler)
+    return () => ipcRenderer.removeListener('app-update-changed', handler)
+  },
   getDashboard: () => ipcRenderer.invoke('get-dashboard'),
   getResourceUsage: () => ipcRenderer.invoke('get-resource-usage'),
   getModelCatalog: () => ipcRenderer.invoke('get-model-catalog'),

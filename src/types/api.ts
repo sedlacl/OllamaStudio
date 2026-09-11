@@ -109,6 +109,27 @@ export interface OllamaUpdateInfo {
   error?: string
 }
 
+export type AppUpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'installing'
+  | 'up-to-date'
+  | 'unsupported'
+  | 'error'
+
+export interface AppUpdateState {
+  status: AppUpdateStatus
+  currentVersion: string
+  latestVersion: string | null
+  releaseName: string | null
+  releaseUrl: string | null
+  progressPercent: number | null
+  error: string | null
+}
+
 export interface ServeState {
   status: 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
   pid: number | null
@@ -608,6 +629,10 @@ export interface Api {
   ) => Promise<ModelProfile<I>>
   getServeStatus: () => Promise<ServeState>
   getAppVersion: () => Promise<string>
+  checkAppUpdate: () => Promise<AppUpdateState>
+  downloadAppUpdate: () => Promise<AppUpdateState>
+  restartAndInstallAppUpdate: () => Promise<AppUpdateState>
+  onAppUpdateChanged: (cb: (state: AppUpdateState) => void) => () => void
   getDashboard: () => Promise<DashboardData>
   getResourceUsage: () => Promise<ResourceUsageData>
   getModelCatalog: () => Promise<AggregatedModelCatalog>

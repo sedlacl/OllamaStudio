@@ -64,6 +64,7 @@ import {
   savePreset,
   type PresetKind
 } from '../ollama/presets'
+import { studioAppUpdater } from './app-updater'
 import {
   getActiveCapabilities,
   getUnifiedServeState,
@@ -374,6 +375,11 @@ function registerIpc(): void {
   ipcMain.handle('get-serve-status', () => getUnifiedServeState())
 
   ipcMain.handle('get-app-version', () => app.getVersion())
+  ipcMain.handle('check-app-update', () => studioAppUpdater.check())
+  ipcMain.handle('download-app-update', () => studioAppUpdater.install())
+  ipcMain.handle('restart-install-app-update', () =>
+    studioAppUpdater.restartAndInstall()
+  )
 
   ipcMain.handle('get-backend-capabilities', () => getActiveCapabilities())
 
@@ -866,6 +872,11 @@ app.whenReady().then(async () => {
   }
   await prepareStudioLogScrub(logsDir)
   createWindow()
+  studioAppUpdater.subscribe((state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app-update-changed', state)
+    }
+  })
   initModelLoadManager(() => mainWindow)
   await modelAcquisitionManager.initialize(
     app.getPath('userData'),

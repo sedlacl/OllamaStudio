@@ -6,6 +6,13 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-09-11
+
+### Added
+
+- OllamaStudio při spuštění zkontroluje nové GitHub vydání a nabídne jeho stažení
+- Staženou aktualizaci lze po potvrzení nainstalovat restartem aplikace
+
 ## [1.9.0] — 2026-09-10
 
 ### Added

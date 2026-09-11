@@ -547,6 +547,20 @@ button {
   margin-top: 4px;
 }
 
+.app-update-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.app-update-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .empty-state {
   color: var(--text-muted);
   padding: 24px;

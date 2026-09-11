@@ -51,7 +51,16 @@ export const en: MessageTree = {
     killConflict: 'Kill conflicting processes and start',
     tabbyStartingHint:
       'TabbyAPI is starting — torch and CUDA initialization usually takes 60–90 s. Until then the endpoint is not listening and clients report ECONNREFUSED.',
-    tabbyStartingElapsed: 'Starting for {seconds} s'
+    tabbyStartingElapsed: 'Starting for {seconds} s',
+    appUpdateAvailable:
+      'OllamaStudio {latest} is available; you are running {current}.',
+    appUpdateDownloading: 'Downloading OllamaStudio {version}… {percent}%',
+    appUpdateReady: 'OllamaStudio {version} is downloaded and ready to install.',
+    appUpdateInstalling: 'Closing the app and starting the update…',
+    appUpdateFailed: 'OllamaStudio update failed: {error}',
+    appUpdateRelease: 'Release notes',
+    appUpdateDownload: 'Download update',
+    appUpdateRestart: 'Restart and install'
   },
   backend: {
     ollama: 'Ollama',

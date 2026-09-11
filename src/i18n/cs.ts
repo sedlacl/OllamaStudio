@@ -49,7 +49,16 @@ export const cs = {
     killConflict: 'Ukončit konfliktní procesy a spustit',
     tabbyStartingHint:
       'TabbyAPI se spouští — inicializace torch a CUDA obvykle trvá 60–90 s. Do té doby endpoint neposlouchá a klienti hlásí ECONNREFUSED.',
-    tabbyStartingElapsed: 'Spouští se {seconds} s'
+    tabbyStartingElapsed: 'Spouští se {seconds} s',
+    appUpdateAvailable:
+      'Je dostupný OllamaStudio {latest}; používáte verzi {current}.',
+    appUpdateDownloading: 'Stahuji OllamaStudio {version}… {percent} %',
+    appUpdateReady: 'OllamaStudio {version} je stažený a připravený k instalaci.',
+    appUpdateInstalling: 'Ukončuji aplikaci a spouštím aktualizaci…',
+    appUpdateFailed: 'Aktualizace OllamaStudio se nezdařila: {error}',
+    appUpdateRelease: 'Poznámky k vydání',
+    appUpdateDownload: 'Stáhnout aktualizaci',
+    appUpdateRestart: 'Restartovat a nainstalovat'
   },
   backend: {
     ollama: 'Ollama',

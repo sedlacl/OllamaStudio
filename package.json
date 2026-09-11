@@ -1,6 +1,6 @@
 {
   "name": "ollamastudio",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "OllamaStudio — desktopový hostitel Ollama a TabbyAPI",
   "main": "./out/main/index.js",
   "author": "OllamaStudio",
@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "electron-updater": "^6.8.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
@@ -47,6 +48,11 @@
   "build": {
     "appId": "com.ollamastudio.app",
     "productName": "OllamaStudio",
+    "publish": {
+      "provider": "github",
+      "owner": "sedlacl",
+      "repo": "OllamaStudio"
+    },
     "directories": {
       "output": "release"
     },
@@ -62,6 +68,7 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },

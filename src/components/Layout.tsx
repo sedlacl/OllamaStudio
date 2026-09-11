@@ -5,6 +5,7 @@ import { useBackendProviders } from '../providers/BackendProviderContext'
 import { providerDisplayNameById } from '../providers/i18n-helpers'
 import { api, type ServeState } from '../types/api'
 import { isBackendId } from '../../shared/backend-contract'
+import AppUpdateNotice from './AppUpdateNotice'
 
 function statusClass(status: string): string {
   if (status === 'running') return 'status-running'
@@ -114,6 +115,7 @@ export default function Layout(): JSX.Element {
         </div>
       </header>
       <main className="app-main">
+        <AppUpdateNotice />
         {descriptors.map((descriptor) =>
           renderSlot(descriptor.id, 'LayoutNotice', {
             serve,
