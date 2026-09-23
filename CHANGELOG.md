@@ -6,6 +6,12 @@ verze ze [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [Unreleased]
 
+## [1.11.1] — 2026-09-23
+
+### Fixed
+
+- MCP tooly `save_backend_settings` a `acquire_model` jdou konečně volat z MCP klientů (Claude Code, Cursor) — klient dřív dostal prázdné schéma parametrů, a tak nešlo předat `patch` ani parametry stahování
+
 ## [1.11.0] — 2026-09-11
 
 ### Added

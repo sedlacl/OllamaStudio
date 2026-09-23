@@ -111,6 +111,73 @@ const ollamaEnvShape = {
   OLLAMA_MODELS: z.string().max(4096).optional()
 }
 
+const acquireVariants = z.discriminatedUnion('providerId', [
+  z
+    .object({
+      providerId: z.literal('ollama'),
+      source: z.literal('library'),
+      modelId
+    })
+    .strict(),
+  z
+    .object({
+      providerId: z.literal('tabby'),
+      source: z.literal('hugging-face'),
+      modelId: modelId.optional(),
+      repoId: shortText,
+      revision: z.string().trim().max(512).optional(),
+      folderName: z.string().trim().max(512).optional(),
+      token: z.string().trim().max(8192).optional()
+    })
+    .strict()
+])
+
+const ollamaSettingsPatch = z
+  .object({
+    autoStartServe: z.boolean().optional(),
+    env: z.object(ollamaEnvShape).strict().optional(),
+    profileDefaults: z
+      .object({
+        keepAlive: z.string().trim().min(1).max(128).optional(),
+        numCtx: z.number().int().min(1).max(16_777_216).optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict()
+
+const tabbySettingsPatch = z
+  .object({
+    installDir: z.string().max(4096).optional(),
+    pythonPath: z.string().max(4096).optional(),
+    configPath: z.string().max(4096).optional(),
+    host: z.string().trim().min(1).max(253).optional(),
+    port: z.number().int().min(1).max(65_535).optional(),
+    modelDir: z.string().max(4096).optional(),
+    autoStartServe: z.boolean().optional()
+  })
+  .strict()
+
+const backendSettingsVariants = z.discriminatedUnion('providerId', [
+  z.object({ providerId: z.literal('ollama'), patch: ollamaSettingsPatch }).strict(),
+  z.object({ providerId: z.literal('tabby'), patch: tabbySettingsPatch }).strict()
+])
+
+/**
+ * The SDK publishes only object schemas in tools/list (a union becomes an empty
+ * `properties` object), so tools with per-provider inputs expose a flat object and
+ * enforce the provider pairing against the discriminated union here.
+ */
+function matchesVariant(variants: z.ZodType) {
+  return (value: unknown, ctx: z.RefinementCtx) => {
+    const result = variants.safeParse(value)
+    if (result.success) return
+    for (const issue of result.error.issues) {
+      ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path })
+    }
+  }
+}
+
 export const STUDIO_TOOL_NAMES = [
   'studio_status',
   'get_logs',
@@ -314,29 +381,26 @@ export function registerStudioTools(
     {
       description:
         'Start an Ollama library pull or Tabby Hugging Face download. Secrets are accepted but never returned.',
-      inputSchema: z.discriminatedUnion('providerId', [
-        z
-          .object({
-            providerId: z.literal('ollama'),
-            source: z.literal('library'),
-            modelId
-          })
-          .strict(),
-        z
-          .object({
-            providerId: z.literal('tabby'),
-            source: z.literal('hugging-face'),
-            modelId: modelId.optional(),
-            repoId: shortText,
-            revision: z.string().trim().max(512).optional(),
-            folderName: z.string().trim().max(512).optional(),
-            token: z.string().trim().max(8192).optional()
-          })
-          .strict()
-      ]),
+      inputSchema: z
+        .object({
+          providerId,
+          source: z
+            .enum(['library', 'hugging-face'])
+            .describe('library for ollama, hugging-face for tabby'),
+          modelId: modelId.optional().describe('Required for ollama'),
+          repoId: shortText.optional().describe('Hugging Face repo, required for tabby'),
+          revision: z.string().trim().max(512).optional(),
+          folderName: z.string().trim().max(512).optional(),
+          token: z.string().trim().max(8192).optional()
+        })
+        .strict()
+        .superRefine(matchesVariant(acquireVariants)),
       annotations: mutating
     },
-    (request) => execute(() => handlers.acquireModel(request as ModelAcquisitionRequest))
+    (request) =>
+      execute(() =>
+        handlers.acquireModel(acquireVariants.parse(request) as ModelAcquisitionRequest)
+      )
   )
 
   server.registerTool(
@@ -387,46 +451,22 @@ export function registerStudioTools(
     {
       description:
         'Persist validated backend settings. Restart the backend separately when changed fields require it.',
-      inputSchema: z.discriminatedUnion('providerId', [
-        z
-          .object({
-            providerId: z.literal('ollama'),
-            patch: z
-              .object({
-                autoStartServe: z.boolean().optional(),
-                env: z.object(ollamaEnvShape).strict().optional(),
-                profileDefaults: z
-                  .object({
-                    keepAlive: z.string().trim().min(1).max(128).optional(),
-                    numCtx: z.number().int().min(1).max(16_777_216).optional()
-                  })
-                  .strict()
-                  .optional()
-              })
-              .strict()
-          })
-          .strict(),
-        z
-          .object({
-            providerId: z.literal('tabby'),
-            patch: z
-              .object({
-                installDir: z.string().max(4096).optional(),
-                pythonPath: z.string().max(4096).optional(),
-                configPath: z.string().max(4096).optional(),
-                host: z.string().trim().min(1).max(253).optional(),
-                port: z.number().int().min(1).max(65_535).optional(),
-                modelDir: z.string().max(4096).optional(),
-                autoStartServe: z.boolean().optional()
-              })
-              .strict()
-          })
-          .strict()
-      ]),
+      inputSchema: z
+        .object({
+          providerId,
+          patch: z
+            .union([ollamaSettingsPatch, tabbySettingsPatch])
+            .describe('Settings patch matching the selected provider')
+        })
+        .strict()
+        .superRefine(matchesVariant(backendSettingsVariants)),
       annotations: mutating
     },
-    ({ providerId: id, patch }) =>
-      execute(() => handlers.saveBackendSettings(id as BackendId, patch))
+    (input) =>
+      execute(() => {
+        const { providerId: id, patch } = backendSettingsVariants.parse(input)
+        return handlers.saveBackendSettings(id as BackendId, patch)
+      })
   )
 
   server.registerTool(

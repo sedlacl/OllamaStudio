@@ -99,4 +99,60 @@ describe('Studio MCP tool registry', () => {
     })
     expect(invalid.isError).toBe(true)
   })
+
+  it('publishes object input schemas for per-provider tools', async () => {
+    const client = await connectedPair()
+    const { tools } = await client.listTools()
+    const schemaOf = (name: string) => tools.find((tool) => tool.name === name)?.inputSchema
+    expect(Object.keys(schemaOf('save_backend_settings')?.properties ?? {})).toEqual([
+      'providerId',
+      'patch'
+    ])
+    expect(schemaOf('acquire_model')?.properties).toHaveProperty('repoId')
+    expect(schemaOf('acquire_model')?.required).toEqual(['providerId', 'source'])
+  })
+
+  it('dispatches save_backend_settings and rejects a patch of the other provider', async () => {
+    const handler = vi
+      .spyOn(studioMcpHandlers, 'saveBackendSettings')
+      .mockResolvedValue({} as Awaited<ReturnType<typeof studioMcpHandlers.saveBackendSettings>>)
+    const client = await connectedPair()
+    const ok = await client.callTool({
+      name: 'save_backend_settings',
+      arguments: { providerId: 'ollama', patch: { env: { OLLAMA_KV_CACHE_TYPE: 'q8_0' } } }
+    })
+    expect(ok.isError).not.toBe(true)
+    expect(handler).toHaveBeenCalledWith('ollama', { env: { OLLAMA_KV_CACHE_TYPE: 'q8_0' } })
+
+    const mismatched = await client.callTool({
+      name: 'save_backend_settings',
+      arguments: { providerId: 'ollama', patch: { port: 5000 } }
+    })
+    expect(mismatched.isError).toBe(true)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+
+  it('requires provider-specific acquire_model fields', async () => {
+    const handler = vi
+      .spyOn(studioMcpHandlers, 'acquireModel')
+      .mockResolvedValue({} as Awaited<ReturnType<typeof studioMcpHandlers.acquireModel>>)
+    const client = await connectedPair()
+    const ok = await client.callTool({
+      name: 'acquire_model',
+      arguments: { providerId: 'ollama', source: 'library', modelId: ' qwen3:8b ' }
+    })
+    expect(ok.isError).not.toBe(true)
+    expect(handler).toHaveBeenCalledWith({
+      providerId: 'ollama',
+      source: 'library',
+      modelId: 'qwen3:8b'
+    })
+
+    const missingRepo = await client.callTool({
+      name: 'acquire_model',
+      arguments: { providerId: 'tabby', source: 'hugging-face' }
+    })
+    expect(missingRepo.isError).toBe(true)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
 })
