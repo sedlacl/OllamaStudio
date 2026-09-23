@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ollama-studio": {
+      "type": "http",
+      "url": "http://127.0.0.1:3847/mcp",
+      "headers": {
+        "Authorization": "Bearer ${OLLAMA_STUDIO_MCP_TOKEN}"
+      }
+    }
+  }
+}
